@@ -35,6 +35,10 @@ jobs:
           HUGO_CACHEDIR: ${{ runner.temp }}/hugo_cache
           HUGO_ENVIRONMENT: production
         run: |
+          # The job container runs as root while the mounted workspace is owned
+          # by the runner user; git otherwise refuses to read the repository
+          # (dubious ownership), which breaks Hugo's .GitInfo and lastmod.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           hugo --source docs --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
