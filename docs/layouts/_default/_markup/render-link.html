@@ -1,0 +1,12 @@
+{{- $dest := .Destination -}}
+{{- $u := urls.Parse $dest -}}
+{{- $isMarkdownLink := and (not $u.IsAbs) (strings.HasSuffix $u.Path ".md") -}}
+{{- if $isMarkdownLink -}}
+  {{- with .Page.GetPage $u.Path -}}
+    <a href="{{ .RelPermalink }}{{ with $u.Fragment }}#{{ . }}{{ end }}"{{ with $.Title }} title="{{ . }}"{{ end }}>{{ $.Text | safeHTML }}</a>
+  {{- else -}}
+    <a href="{{ $dest }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>
+  {{- end -}}
+{{- else -}}
+  <a href="{{ $dest }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>
+{{- end -}}

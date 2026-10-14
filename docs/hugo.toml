@@ -1,0 +1,17 @@
+baseURL = "https://aries1980.github.io/lodo/"
+locale = "en-gb"
+title = "Lodo"
+theme = "hugo-geekdoc"
+
+disableKinds = ["taxonomy", "term"]
+enableGitInfo = true
+enableRobotsTXT = true
+
+[params]
+  geekdocDescription = "Personal, local-first scheduler for a Logseq TODO list."
+  geekdocRepo = "https://github.com/aries1980/lodo"
+  geekdocEditPath = "edit/main"
+  geekdocPageLastmod = true
+  geekdocSearch = true
+  geekdocSearchShowParent = true
+  geekdocSearchShowDescription = true

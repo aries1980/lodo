@@ -29,27 +29,30 @@ flowchart LR
 
 ## Documentation
 
-- [`docs/specs/glossary.md`](docs/specs/glossary.md) — the language. Start here.
-- [`docs/specs/overview.md`](docs/specs/overview.md) — concept map and pipeline.
-- [`docs/specs/scope.md`](docs/specs/scope.md) — what's in v0.1 and what's deferred.
-- [`docs/specs/tasks.md`](docs/specs/tasks.md) — what a Task is and how it's written in Logseq.
-- [`docs/specs/time-maps.md`](docs/specs/time-maps.md) — preferred hours, in the graph.
-- [`docs/specs/scheduling.md`](docs/specs/scheduling.md) — ordering, objective, infeasibility.
-- [`docs/specs/calendar.md`](docs/specs/calendar.md) — Google Calendar integration.
-- [`docs/specs/logseq-integration.md`](docs/specs/logseq-integration.md) — reading the graph.
-- [`docs/specs/configuration.md`](docs/specs/configuration.md) — config and secrets.
-- [`docs/specs/cli.md`](docs/specs/cli.md) — commands and flags.
-- [`docs/ADRs/`](docs/ADRs/) — the decisions worth remembering, with reasons.
+The documentation is a self-contained Hugo site under [`docs/`](docs/): content in
+`docs/content/`, no build tooling at the repository root. The pages:
+
+- [`docs/content/specs/glossary.md`](docs/content/specs/glossary.md) — the language. Start here.
+- [`docs/content/specs/overview.md`](docs/content/specs/overview.md) — concept map and pipeline.
+- [`docs/content/specs/scope.md`](docs/content/specs/scope.md) — what's in v0.1 and what's deferred.
+- [`docs/content/specs/tasks.md`](docs/content/specs/tasks.md) — what a Task is and how it's written in Logseq.
+- [`docs/content/specs/time-maps.md`](docs/content/specs/time-maps.md) — preferred hours, in the graph.
+- [`docs/content/specs/scheduling.md`](docs/content/specs/scheduling.md) — ordering, objective, infeasibility.
+- [`docs/content/specs/calendar.md`](docs/content/specs/calendar.md) — Google Calendar integration.
+- [`docs/content/specs/logseq-integration.md`](docs/content/specs/logseq-integration.md) — reading the graph.
+- [`docs/content/specs/configuration.md`](docs/content/specs/configuration.md) — config and secrets.
+- [`docs/content/specs/cli.md`](docs/content/specs/cli.md) — commands and flags.
+- [`docs/content/ADRs/`](docs/content/ADRs/) — the decisions worth remembering, with reasons.
 
 ## Previewing the documentation site
 
-The docs are a Hugo site (content in `docs/`, config in `hugo.toml`, theme vendored in
-`themes/`). Preview it with the same container image CI uses — see
+The site root is [`docs/`](docs/): content in `docs/content/`, config in `docs/hugo.toml`,
+theme vendored in `docs/themes/`. Preview it with the same container image CI uses — see
 `.github/workflows/hugo.yml` for the current tag (currently `v0.168.0`):
 
 ```sh
 podman run --rm -it \
-  -v "$PWD:/project:Z" \
+  -v "$PWD/docs:/project:Z" \
   -p 1313:1313 \
   ghcr.io/gohugoio/hugo:v0.168.0 \
   server --bind 0.0.0.0
@@ -69,5 +72,5 @@ Notes:
 - For a one-off production-parity build instead of a live server:
 
 ```sh
-podman run --rm -v "$PWD:/project:Z" ghcr.io/gohugoio/hugo:v0.168.0 --minify
+podman run --rm -v "$PWD/docs:/project:Z" ghcr.io/gohugoio/hugo:v0.168.0 --minify
 ```
