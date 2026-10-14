@@ -4,7 +4,8 @@ weight: 60
 ---
 
 
-> Status: **draft (v0.1).** Ordering is settled; objective and stability are still open.
+> Status: **draft (v0.1).** Ordering and the placement objective are settled — the
+> comparator is in [ADR 0010](../ADRs/0010-placement-comparator.md).
 
 How Lodo turns Tasks into Blocks. Inputs are Tasks ([`tasks.md`](./tasks.md)), their
 Time Maps ([`time-maps.md`](./time-maps.md)), the Calendar's busy time, and the
@@ -13,7 +14,8 @@ Scheduling granularity and window ([`configuration.md`](./configuration.md)).
 ## Ordering
 
 Only the *order in which Tasks are considered* is settled here; how a Task is placed is
-covered by the objective (below, open).
+covered by the objective below, whose comparator is settled in
+[ADR 0010](../ADRs/0010-placement-comparator.md).
 
 1. **Pins are placed first**, at their exact time. They are immovable, so everything else
    schedules around them — as does the busy time from External Events.
@@ -48,6 +50,10 @@ flowchart TD
 
 **Front-load.** Place each Task as early as its constraints (Plan window, Time Maps,
 busy time) allow — SkedPal's "as early as possible" / fuzzy planning, not just-in-time.
+
+Between candidate placements, completeness comes first, then the comparator in
+[ADR 0010](../ADRs/0010-placement-comparator.md): placed hours, start day, Block count,
+earliest start, largest-first sizes.
 
 ## Stability
 

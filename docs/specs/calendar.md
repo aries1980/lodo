@@ -82,7 +82,9 @@ the missing hours elsewhere once the Task's inputs change. A moved
 event becomes a Pinned Block and stays pinned at the user-chosen time — through unrelated changes to the Task's
 own inputs, adopting the Task's current duration and title — until its event is deleted. Both are treated as intent: Lodo does not
 silently recreate work the user removed. `lodo check` lists stood-down Blocks so they stay
-visible.
+visible. Whether a Task's inputs have changed is judged against Lodo's snapshot of its
+resolved inputs — direct and inherited properties, plus its text — taken on the run that
+recorded the disposition.
 
 Adoption is also what makes `schedule` writing the calendar **before** the store safe: a
 crash between the two leaves `lodo=true` events with no local row, which the next run

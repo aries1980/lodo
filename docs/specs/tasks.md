@@ -64,7 +64,9 @@ like flexible Tasks with maximum urgency — never silently dropped and never st
 ### Pin — *exactly when*
 
 A `scheduled::` on the Task is a Pin. It overrides Plan and Priority: Lodo places the
-Task at that moment and does not move it. Times belong to Pins; windows are days.
+Task at that moment and does not move it. Times belong to Pins; windows are days. A
+Pin's time is used exactly as authored — it need not align with the scheduling
+granularity — and it blocks every slot it overlaps.
 
 ### Time Map — *which hours of the week*
 
@@ -96,7 +98,9 @@ A Task's duration may span several Blocks when one contiguous window cannot hold
   day — Lodo prefers fewer, larger Blocks over strictly earliest fragments.
 - **Minimum Block floor:** Lodo never emits a Block smaller than two granularity units
   (e.g. 30m at 15m granularity). Hours that would fragment below the floor are left
-  unplaced and reported as shortfall rather than emitted as calendar confetti.
+  unplaced and reported as shortfall rather than emitted as calendar confetti. The floor
+  governs *fragments*: a Task whose whole duration rounds up to a single granularity
+  unit is emitted as that one unit.
 
 ## Deferred
 

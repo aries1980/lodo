@@ -45,6 +45,8 @@ tier   := green | yellow | red        ; optional; absent = green
 - `Mon-Fri 09:00-11:00` — weekday mornings.
 - `Mon,Wed,Fri 18:00-19:00` — listed days.
 - `Sat-Sun 08:00-20:00 yellow` — a tiered weekend window.
+- A window lies within one day: its start is before its end. A window crossing midnight
+  is reported as unparseable, never guessed at.
 
 ### Tiers
 

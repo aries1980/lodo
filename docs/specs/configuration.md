@@ -43,7 +43,8 @@ calendar:
   id: primary           # the single output Calendar
 ```
 
-- **`scheduling.granularity`** — the quantum of the Schedule. See
+- **`scheduling.granularity`** — the quantum of the Schedule. A whole number of minutes
+  that divides 60 (e.g. `15m`, `20m`, `30m`). See
   [`tasks.md`](./tasks.md#splitting-into-blocks).
 - **`scheduling.window_days`** — the rolling horizon. Nothing beyond it is scheduled or
   synced.
