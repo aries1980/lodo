@@ -27,10 +27,32 @@ flowchart LR
     LODO <-->|assignments| DB
 ```
 
+## Development
+
+All tooling runs in containers via podman, so there is nothing to install locally beyond
+podman itself — no Go, no Hugo, no `make`. [`scripts/dev.sh`](scripts/dev.sh) is the
+entry point:
+
+```sh
+./scripts/dev.sh build   # build the CLI to ./dist/lodo
+./scripts/dev.sh test    # go test ./...
+./scripts/dev.sh vet     # go vet ./...
+./scripts/dev.sh fmt     # gofmt ./cmd ./internal
+./scripts/dev.sh lint    # golangci-lint
+./scripts/dev.sh tidy    # go mod tidy
+```
+
+The containers run as your own user (rootless podman remaps the UID with
+`--userns=keep-id`, and `--user` overrides whatever `USER` the image declares), so files
+written by the tools — build output, module caches under `/tmp`, the fetched docs theme —
+are owned by you, not root.
+
 ## Documentation
 
 The documentation is a self-contained Hugo site under [`docs/`](docs/): content in
-`docs/content/`, no build tooling at the repository root. The pages:
+`docs/content/`, config in `docs/hugo.toml`. The geekdoc theme is pinned in
+[`scripts/dev.sh`](scripts/dev.sh) and fetched into the gitignored `docs/themes/` on
+demand. The pages:
 
 - [`docs/content/specs/glossary.md`](docs/content/specs/glossary.md) — the language. Start here.
 - [`docs/content/specs/overview.md`](docs/content/specs/overview.md) — concept map and pipeline.
@@ -46,31 +68,17 @@ The documentation is a self-contained Hugo site under [`docs/`](docs/): content 
 
 ## Previewing the documentation site
 
-The site root is [`docs/`](docs/): content in `docs/content/`, config in `docs/hugo.toml`,
-theme vendored in `docs/themes/`. Preview it with the same container image CI uses — see
-`.github/workflows/hugo.yml` for the current tag (currently `v0.168.0`):
-
 ```sh
-podman run --rm -it \
-  -v "$PWD/docs:/project:Z" \
-  -p 1313:1313 \
-  ghcr.io/gohugoio/hugo:v0.168.0 \
-  server --bind 0.0.0.0
+./scripts/dev.sh docs        # live server on http://localhost:1313/lodo/
+./scripts/dev.sh docs-build  # one-off minified build into docs/public/
+./scripts/dev.sh docs-theme  # only (re)fetch the pinned theme
 ```
+
+The first two use the same `ghcr.io/gohugoio/hugo` image as CI — see
+[`.github/workflows/hugo.yml`](.github/workflows/hugo.yml) for the current tag (currently
+`v0.168.0`). `docs-theme` downloads the pinned geekdoc release tarball, verifies its
+checksum, and extracts it into `docs/themes/hugo-geekdoc/`; the directory is gitignored.
+The `--bind 0.0.0.0` needed to make the published port reachable is wired into the script.
 
 Then open <http://localhost:1313/lodo/> — note the `/lodo/` subpath, which comes from
 `baseURL` in `hugo.toml`.
-
-Notes:
-
-- `--bind 0.0.0.0` is required; without it the server only listens on the container's
-  loopback interface and the published port stays unreachable.
-- `:Z` relabels the mount for SELinux (Fedora/RHEL); it is a no-op elsewhere.
-- The image runs as the `hugo` user (uid 1000). If you hit permission errors on
-  `resources/` or `public/`, re-run with `--user root` (as CI does); files it creates
-  will then be root-owned.
-- For a one-off production-parity build instead of a live server:
-
-```sh
-podman run --rm -v "$PWD/docs:/project:Z" ghcr.io/gohugoio/hugo:v0.168.0 --minify
-```
