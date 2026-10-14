@@ -26,10 +26,11 @@ Task its own dedicated calendar entry is called Time Blocking, never "a block".
 
 **Pinned Block**:
 A Block that Lodo placed but the user subsequently moved by hand in the calendar.
-Lodo keeps it at the user-chosen time and schedules other work around it.
+Lodo keeps it at the user-chosen time and span, and schedules other work around it.
 _Avoid_: locked block, fixed block, override
-_Note_: Only the time is pinned, not the size or title — a Pinned Block adopts the Task's
-current duration and text on recompute. It persists until its event is deleted — surviving unrelated changes
+_Note_: The time *and span* are pinned, not the title — a Pinned Block stays where
+the user put it, at the length they gave it, and adopts the Task's current text on
+recompute. It persists until its event is deleted — surviving unrelated changes
 to the Task's inputs — and is distinct from a **Pin**, which the user authors in Logseq.
 
 **Stood down**:
