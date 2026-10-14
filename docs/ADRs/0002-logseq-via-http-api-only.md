@@ -1,4 +1,8 @@
-# Logseq is reached only through its HTTP API
+---
+title: "Logseq is reached only through its HTTP API"
+weight: 20
+---
+
 
 Lodo reads and writes the Logseq graph exclusively through the Logseq HTTP API. It
 never parses or edits the graph's Markdown files directly.

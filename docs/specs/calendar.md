@@ -1,4 +1,8 @@
-# Google Calendar Integration
+---
+title: "Calendar Integration"
+weight: 70
+---
+
 
 > Status: **draft (v0.1).**
 

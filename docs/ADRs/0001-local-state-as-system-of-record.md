@@ -1,4 +1,8 @@
-# Local state is the system of record; calendars are projections
+---
+title: "Local state is the system of record; calendars are projections"
+weight: 10
+---
+
 
 Lodo is single-user and local-first, and its Logseq graph is the source of truth for
 task *inputs*. But neither the graph nor the calendar can state what the scheduler

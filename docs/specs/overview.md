@@ -1,4 +1,8 @@
-# Lodo — Concepts Overview
+---
+title: "Concepts Overview"
+weight: 20
+---
+
 
 > Status: **draft, in progress.** This page is a visual companion to the glossary in
 > [`glossary.md`](./glossary.md). Definitions live there; relationships live here.

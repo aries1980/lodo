@@ -1,4 +1,8 @@
-# Configuration and secrets live outside the graph
+---
+title: "Configuration and secrets live outside the graph"
+weight: 50
+---
+
 
 Lodo's settings live in a config file (`~/.config/lodo/config.yaml`) and its secrets in
 a separate credentials file with `0600` permissions, not in the Logseq graph. Only

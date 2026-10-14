@@ -1,4 +1,8 @@
-# Time Maps
+---
+title: "Time Maps"
+weight: 50
+---
+
 
 > Status: **draft (v0.1).** Definition of the term lives in [`glossary.md`](./glossary.md).
 

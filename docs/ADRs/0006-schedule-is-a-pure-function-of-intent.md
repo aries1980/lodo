@@ -1,4 +1,8 @@
-# The Schedule is a pure function of current intent
+---
+title: "The Schedule is a pure function of current intent"
+weight: 60
+---
+
 
 The Schedule is computed from scratch on every run: the planner is a pure function of the
 Tasks, Time Maps, busy time, Pins, Calendar dispositions and config that exist *now*. The

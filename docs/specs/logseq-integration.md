@@ -1,4 +1,8 @@
-# Logseq Integration
+---
+title: "Logseq Integration"
+weight: 80
+---
+
 
 > Status: **draft (v0.1).**
 

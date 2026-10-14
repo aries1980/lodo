@@ -1,4 +1,8 @@
-# The scheduling timeline is a granularity slot grid
+---
+title: "The scheduling timeline is a granularity slot grid"
+weight: 80
+---
+
 
 Inside the planner, the Scheduling window is discretized into `scheduling.granularity`
 slots, built day by day in `scheduling.timezone` so that 23- and 25-hour DST days yield

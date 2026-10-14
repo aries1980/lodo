@@ -1,4 +1,8 @@
-# Scheduling is gated by duration, and plans are optional date bounds
+---
+title: "Scheduling is gated by duration, and plans are optional date bounds"
+weight: 40
+---
+
 
 A block becomes schedulable (a Task) when it is `TODO`-marked and carries an explicit
 `duration::`. A Task with no `plan-start::`/`plan-end::` is scheduled as soon as

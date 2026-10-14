@@ -1,4 +1,8 @@
-# Tasks
+---
+title: "Tasks"
+weight: 40
+---
+
 
 > Status: **draft (v0.1).** Definitions live in [`glossary.md`](./glossary.md).
 

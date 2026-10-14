@@ -1,4 +1,8 @@
-# CLI
+---
+title: "CLI"
+weight: 100
+---
+
 
 > Status: **draft (v0.1).**
 

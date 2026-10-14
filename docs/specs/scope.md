@@ -1,4 +1,8 @@
-# Scope
+---
+title: "Scope"
+weight: 30
+---
+
 
 > Status: **draft (v0.1).**
 

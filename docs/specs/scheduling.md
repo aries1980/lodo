@@ -1,4 +1,8 @@
-# Scheduling
+---
+title: "Scheduling"
+weight: 60
+---
+
 
 > Status: **draft (v0.1).** Ordering is settled; objective and stability are still open.
 

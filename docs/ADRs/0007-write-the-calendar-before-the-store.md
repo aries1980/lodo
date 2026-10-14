@@ -1,4 +1,8 @@
-# Apply writes the calendar before the store
+---
+title: "Apply writes the calendar before the store"
+weight: 70
+---
+
 
 Lodo writes to two systems with no shared transaction: Google Calendar and its SQLite
 store. Every `schedule` writes the calendar first and commits the store second. A crash

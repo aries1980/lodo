@@ -1,4 +1,8 @@
-# Configuration
+---
+title: "Configuration"
+weight: 90
+---
+
 
 > Status: **draft (v0.1).**
 

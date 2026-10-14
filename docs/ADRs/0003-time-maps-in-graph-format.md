@@ -1,4 +1,8 @@
-# Time Maps are defined in the graph via a line-based format
+---
+title: "Time Maps are defined in the graph via a line-based format"
+weight: 30
+---
+
 
 Lodo's Time Maps — named, weekly-recurring availability patterns — are authored in the
 Logseq graph, on a page named `Time Maps`, rather than in a Lodo config file. Each Time

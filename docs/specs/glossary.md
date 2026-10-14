@@ -1,4 +1,8 @@
-# Lodo — Glossary
+---
+title: "Glossary"
+weight: 10
+---
+
 
 Lodo is a personal, local-first task scheduler. It reads tasks and their scheduling
 preferences from a Logseq graph, decides when to work on them, and projects that
