@@ -1,0 +1,39 @@
+# Scope
+
+> Status: **draft (v0.1).**
+
+## In scope for v0.1
+
+The core loop: **read Tasks from Logseq → decide when → write Blocks to Google Calendar → reconcile on refresh.**
+
+- **Single-user, self-hosted, local-first.** No accounts, no multi-tenancy, no server. A CLI you invoke; cron calling `lodo schedule` is the intended deployment.
+- **Logseq as the source of truth for intent**, reached over the HTTP API, **read-only**. File-based graph today; the DB graph after the planned upgrade.
+- **Tasks** = `TODO`/`DOING` blocks with an explicit `duration::`. Duration is the gate.
+- **Plan** = optional `plan-start::`/`plan-end::` date bounds; absent bounds mean flexible ("as soon as possible").
+- **Pin** via Logseq's native `scheduled::`; **Deadline** via native `deadline::`; **Priority** via native `priority::` (A/B/C).
+- **Time Maps** authored in the graph on a configurable page, in a line-based format; **binary** (tiers parse but are treated as green).
+- **Scheduling**: front-loading, deterministic, minimal-churn displacement; a no-change run is a strict no-op. Highlights the rules in [`scheduling.md`](./scheduling.md).
+- **Infeasibility** is reported, never silently resolved: no Auto-Defer, no plan or Time-Map violation. Partial placement is allowed with a reported shortfall.
+- **Google Workspace Calendar** only, one calendar, Managed Events identified by private extended properties; moves become Pinned Blocks, deletes stand the Task down, everything else is busy time.
+- **Configuration** in a file, secrets in a `0600` credentials file; no secrets in the graph.
+- **CLI**: `check`, `forecast`, `schedule`, `refresh`, `auth google`.
+
+## Out of scope (roadmap, not v0.1)
+
+Each of these is a deliberate deferral, not an oversight. They are roughly ordered by how
+soon they are likely to matter.
+
+- **Preference tiers** (green/yellow/red Time Map fitting) — the schema already carries the words.
+- **Bundling** — packing small Tasks into shared events.
+- **Minimum Block Length** as a user property — v0.1 leans on granularity plus "largest-first" splitting.
+- **Buffers** and **Auto-Defer**.
+- **Zones and budgets** — the zero-sum balancing layer.
+- **Recurring Tasks and habits.**
+- **Task dependencies.**
+- **Parent/child cascade**, sequential/parallel sub-Tasks, containers.
+- **Multiple Plans per Task.**
+- **Suggestions** (SkedPal's proposal of a more realistic date).
+- **Outlook and iCloud** calendars.
+- **A read-only projection into the graph** (`lodo-*` mirror).
+- **NLP** parsing of Task titles.
+- **Any Lodo UI** — Logseq is the interface; a Status Tracker / board / calendar views are not built.
