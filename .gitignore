@@ -1,3 +1,5 @@
+.cache/
+.config/
 .hugo_build.lock
 /dist/
 /docs/public/
