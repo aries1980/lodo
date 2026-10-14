@@ -10,7 +10,7 @@ enableRobotsTXT = true
 [params]
   geekdocDescription = "Personal, local-first scheduler for a Logseq TODO list."
   geekdocRepo = "https://github.com/aries1980/lodo"
-  geekdocEditPath = "edit/main"
+  geekdocEditPath = "edit/main/docs"
   geekdocPageLastmod = true
   geekdocSearch = true
   geekdocSearchShowParent = true
