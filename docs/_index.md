@@ -6,8 +6,8 @@ Lodo is a personal, local-first scheduler for a Logseq TODO list. It reads Tasks
 Logseq graph, decides *when* to work on them, and projects the resulting schedule onto
 Google Calendar.
 
-> Status: **specification stage.** There is no code yet. This site holds the
-> specification and the decisions behind it.
+> Status: **early implementation.** The Go binary is under construction from the
+> specification; this site holds the specification and the decisions behind it.
 
 Lodo is a CLI you invoke; cron calling `lodo schedule` is the intended deployment.
 The Logseq graph is the single source of truth for intent, local SQLite state is the

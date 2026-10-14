@@ -4,8 +4,8 @@ A personal, local-first scheduler for a Logseq TODO list. Lodo reads Tasks from 
 graph, decides *when* to work on them, and projects the resulting schedule onto Google
 Calendar.
 
-> Status: **specification stage.** There is no code yet. This repository holds the
-> specification and the decisions behind it.
+> Status: **early implementation.** The Go binary is under construction from the
+> specification in [`docs/`](docs/).
 
 ## How it fits together
 

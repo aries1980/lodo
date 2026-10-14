@@ -1,0 +1,17 @@
+version: "2"
+
+run:
+  modules-download-mode: mod
+
+linters:
+  default: standard
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/aries1980/lodo
