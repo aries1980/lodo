@@ -32,6 +32,7 @@ notes or config.
 logseq:
   api_url: http://127.0.0.1:12315/api
   time_maps_page: Time Maps   # configurable so `lodo/time-maps` is a one-line change
+  insecure: false             # true for an app serving a self-signed certificate
 
 scheduling:
   granularity: 15m      # the calendar's quantum, and the floor for small Tasks
@@ -51,6 +52,9 @@ calendar:
 - **`scheduling.timezone`** — the timezone Time Map hours are interpreted in. Time Map
   hours are absolute local times, so this is what "09:00" means.
 - **`calendar.id`** — the one Google calendar Lodo writes to. Time Maps are not calendars.
+- **`logseq.insecure`** — skip TLS verification for an app serving a self-signed
+  certificate. It is machine-bound, so it lives in this file rather than a flag: writing
+  `true` here is the acceptance of that one certificate.
 
 ## `credentials.json`
 
