@@ -4,8 +4,9 @@ package resolve
 // and greppable. Every listed problem is reported and skipped — never
 // guessed at (logseq-integration.md).
 //
-// The report type is the graph section of check; M5 will extend it with a
-// state section, so these kinds cover the graph only.
+// The report type is the graph section of check; the state section
+// (stood-down, orphaned) lives in the CLI report, so these kinds cover the
+// graph only.
 const (
 	// IssueMissingDuration is a TODO/DOING block with no duration::: not a
 	// Task per ADR 0004 (the duration is the gate), listed so the omission

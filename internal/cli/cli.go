@@ -120,8 +120,9 @@ func newScheduleCmd(opts *options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedule",
 		Short: "Reconcile, compute the Schedule and write it to the Calendar",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return notImplemented("schedule")
+		RunE: func(c *cobra.Command, _ []string) error {
+			opts.out = c.OutOrStdout()
+			return runSchedule(opts, overrides, dryRun, strict, opts.verbose)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "same as forecast")
@@ -135,8 +136,9 @@ func newRefreshCmd(opts *options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "refresh",
 		Short: "Fold calendar edits into local state without recomputing",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return notImplemented("refresh")
+		RunE: func(c *cobra.Command, _ []string) error {
+			opts.out = c.OutOrStdout()
+			return runRefresh(opts)
 		},
 	}
 }
@@ -201,8 +203,4 @@ type configOverrides struct {
 func addSchedulingOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {
 	cmd.Flags().IntVar(&overrides.windowDays, "window-days", 0, "override scheduling.window_days for one run")
 	cmd.Flags().StringVar(&overrides.timezone, "timezone", "", "override scheduling.timezone for one run")
-}
-
-func notImplemented(name string) error {
-	return &exitError{code: codeError, err: fmt.Errorf("lodo %s: not implemented yet", name)}
 }

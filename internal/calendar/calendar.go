@@ -1,13 +1,13 @@
-// Package calendar is the read side of the Google Calendar integration
-// (calendar.md): list the events a window overlaps, classify them, and
-// project busy time onto the run's grid — busy arrives to the planner as
-// an explicit mask (ADR 0006). No write calls live here; events are
-// created and patched from M5. All requests are plain net/http plus
+// Package calendar is the Google Calendar integration (calendar.md): list
+// the events a window overlaps, classify them, project busy time onto the
+// run's grid, and write Managed events back. Busy arrives to the planner as
+// an explicit mask (ADR 0006). All requests are plain net/http plus
 // encoding/json, deliberately not google.golang.org/api: the REST surface
-// v0.1 needs is list and get.
+// v0.1 needs is list, get, insert, patch and delete.
 package calendar
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -87,14 +87,24 @@ type Event struct {
 	Recurrence         []string   `json:"recurrence,omitempty"`
 	Attendees          []Attendee `json:"attendees,omitempty"`
 	ExtendedProperties Extended   `json:"extendedProperties,omitempty"`
+	Reminders          *Reminders `json:"reminders,omitempty"`
+}
+
+// Reminders selects the calendar's defaults on write; v0.1 never sets
+// per-event reminders (calendar.md: reminders use the calendar's defaults).
+type Reminders struct {
+	UseDefault bool `json:"useDefault"`
 }
 
 // EventTime is the start or end of an event: either a timed instant
 // (dateTime, RFC 3339 with its own offset) or a whole day (date,
 // yyyy-mm-dd; the day an all-day event ends is the one after its start).
+// TimeZone carries the Scheduling timezone on write; reads ignore it and
+// use dateTime's own offset.
 type EventTime struct {
 	DateTime string `json:"dateTime,omitempty"`
 	Date     string `json:"date,omitempty"`
+	TimeZone string `json:"timeZone,omitempty"`
 }
 
 // Attendee is one attendee and their response. The user's own attendance
@@ -114,13 +124,13 @@ type Extended struct {
 type Kind string
 
 const (
-	// KindManaged is an event Lodo itself created: M4 leaves it out of
-	// busy time and M5's reconcile folds its Blocks back in.
+	// KindManaged is an event Lodo itself created: left out of busy time
+	// and folded back in by reconciliation.
 	KindManaged Kind = "managed"
 	// KindBusy blocks the time it touches.
 	KindBusy Kind = "busy"
-	// KindFree blocks nothing: cancelled, declined by the user, marked
-	// transparent, or not yet accepted and unlikely to matter.
+	// KindFree blocks nothing: cancelled, declined by the user, or marked
+	// transparent.
 	KindFree Kind = "free"
 )
 
@@ -225,15 +235,46 @@ func (c *Client) List(ctx context.Context, from, to time.Time) ([]Event, error) 
 	}
 }
 
-// Get fetches one event by id. M5's reconcile uses it; today only tests
-// and curious callers do. A missing event is the client's ordinary error;
-// the reconcile is the layer that turns 404 into a user's deletion.
+// Get fetches one event by id. Reconciliation works from List (a missing
+// Managed event in the window is a user deletion); Get is for tests and
+// curious callers. A missing event is the client's ordinary error.
 func (c *Client) Get(ctx context.Context, id string) (Event, error) {
 	var e Event
 	if err := c.get(ctx, []string{"calendars", c.id, "events", id}, nil, &e); err != nil {
 		return Event{}, err
 	}
 	return e, nil
+}
+
+// Insert creates one Managed event (events.insert) with its deterministic
+// id, so re-inserting is idempotent and cannot duplicate. The payload
+// carries calendar.md's shape: title is the Task's own text, times in the
+// Scheduling timezone, private lodo/task/block ownership, and the
+// calendar's default reminders.
+func (c *Client) Insert(ctx context.Context, e Event) (Event, error) {
+	var out Event
+	if err := c.write(ctx, http.MethodPost, []string{"calendars", c.id, "events"}, e, &out); err != nil {
+		return Event{}, err
+	}
+	return out, nil
+}
+
+// Patch updates one Managed event's times (and refreshes its summary to
+// the Task's current text; Pinned Blocks adopt the text without gaining
+// markers). Times only shape the move; the summary refresh is what keeps a
+// renamed Task's events titled.
+func (c *Client) Patch(ctx context.Context, id string, e Event) (Event, error) {
+	var out Event
+	if err := c.write(ctx, http.MethodPatch, []string{"calendars", c.id, "events", id}, e, &out); err != nil {
+		return Event{}, err
+	}
+	return out, nil
+}
+
+// Delete removes one Managed event (events.delete): the Task gone from the
+// graph, or a Block no longer in the plan.
+func (c *Client) Delete(ctx context.Context, id string) error {
+	return c.write(ctx, http.MethodDelete, []string{"calendars", c.id, "events", id}, nil, nil)
 }
 
 // Busy is the run's calendar read: list the events that overlap the
@@ -243,7 +284,7 @@ func (c *Client) Get(ctx context.Context, id string) (Event, error) {
 // window's end are clipped before projecting: an event crossing a window
 // boundary clips, it does not become busy for the whole window. Managed
 // events carry no busy time in M4 — no dispositions exist yet — and are
-// returned instead, so forecast can say the hole M5 will close.
+// returned instead, so forecast can name the hole schedule closes.
 func (c *Client) Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []Event, error) {
 	events, err := c.List(ctx, now, g.WindowEnd())
 	if err != nil {
@@ -307,6 +348,53 @@ func (c *Client) get(ctx context.Context, path []string, q url.Values, out any) 
 		return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, snippet(data))
 	}
 	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("google calendar api: %s: decode: %w (body: %s)", strings.Join(path, "/"), err, snippet(data))
+	}
+	return nil
+}
+
+// write issues one mutating call (POST/PATCH/DELETE) and decodes out when
+// non-nil. DELETE expects 204 or 200 with an empty body; a missing event on
+// delete is surfaced as the API's 404, which the caller treats as already
+// gone. Every failure reads Google's error body, {"error": …}.
+func (c *Client) write(ctx context.Context, method string, path []string, in any, out any) error {
+	u := c.base.JoinPath(path...)
+
+	var body io.Reader
+	if in != nil {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), err)
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		return fmt.Errorf("google calendar api: %w", err)
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), errorCause(err))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
+	if err != nil {
+		return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		if msg := decodeError(data); msg != "" {
+			return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, msg)
+		}
+		return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, snippet(data))
+	}
+	if out == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {

@@ -8,13 +8,18 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/planner"
+	"github.com/aries1980/lodo/internal/reconcile"
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/run"
+	"github.com/aries1980/lodo/internal/store"
 )
 
 // loadGraph assembles the read side: config (with resolved overrides),
@@ -75,26 +80,33 @@ func httpClient(cfg config.Config) *http.Client {
 	return &http.Client{Timeout: logseq.DefaultTimeout, Transport: tls}
 }
 
-// readGraph is check's read side: resolve the graph, plan with no busy
-// time (check never consults the calendar), Now injected once per run —
-// never inside the pure packages.
-func readGraph(opts *options, ov configOverrides) (config.Config, run.Outcome, time.Time, error) {
-	cfg, client, _, err := loadGraph(opts, ov)
-	if err != nil {
-		return config.Config{}, run.Outcome{}, time.Time{}, err
-	}
-	now := time.Now()
-	outcome, err := run.Graph(context.Background(), client, nil, cfg, now)
-	if err != nil {
-		return cfg, run.Outcome{}, now, err
-	}
-	return cfg, outcome, now, nil
-}
-
-// runCheck implements lodo check: print the graph report plus the planner's
-// premature-infeasibility report. It writes nowhere else.
+// runCheck implements lodo check: the graph report plus the state section
+// (stood-down Blocks with their Task, orphaned event ids). When the calendar
+// is configured it reads real busy time — so infeasibility is judged
+// against real availability — and lists orphaned events; without calendar
+// credentials it falls back to the graph plus stored stood-down (the M3
+// behaviour), so a fresh checkout still checks. It writes nowhere.
 func runCheck(opts *options, strict bool) error {
-	_, outcome, _, err := readGraph(opts, configOverrides{})
+	cfg, client, creds, err := loadGraph(opts, configOverrides{})
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	st, err := openStore()
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	defer func() { _ = st.Close() }()
+
+	cal, err := calendarFull(context.Background(), creds, cfg)
+	if err != nil {
+		if strings.Contains(err.Error(), "google credentials") {
+			return runCheckWithoutCalendar(opts, strict, cfg, client, st)
+		}
+		return &exitError{code: codeError, err: err}
+	}
+
+	now := time.Now()
+	outcome, err := run.Check(context.Background(), client, cal, st, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -102,21 +114,98 @@ func runCheck(opts *options, strict bool) error {
 	if opts.json {
 		view := checkReport{
 			GraphIssues: outcome.Issues,
-			Shortfalls:  shortfalls(outcome),
+			Shortfalls:  checkShortfalls(outcome),
+			StoodDown:   checkStoodDown(outcome),
+			Orphaned:    checkOrphans(outcome),
+		}
+		if opts.verbose {
+			view.Explanations = checkExplanations(outcome)
 		}
 		if err := printJSON(opts.out, view); err != nil {
 			return &exitError{code: codeError, err: err}
 		}
 	} else {
-		renderCheckText(opts.out, outcome)
+		renderCheckText(opts.out, outcome, opts.verbose)
 	}
 
-	// --strict: validation failures exit 2. The planner's shortfalls count
-	// too: infeasible Tasks are part of check's report (cli.md).
-	if n := len(outcome.Issues) + len(outcome.Schedule.Report.Tasks); strict && n > 0 {
-		return &exitError{code: codeValidation, err: fmt.Errorf(
-			"check --strict: %d graph issue(s), %d infeasible Task(s)",
-			len(outcome.Issues), len(outcome.Schedule.Report.Tasks))}
+	// --strict: validation failures exit 2 across both sections (cli.md).
+	if strict {
+		n := len(outcome.Issues) + len(outcome.Schedule.Report.Tasks) + len(outcome.StoodDown) + len(outcome.Orphans)
+		if n > 0 {
+			return &exitError{code: codeValidation, err: fmt.Errorf(
+				"check --strict: %d graph issue(s), %d infeasible Task(s), %d stood-down, %d orphaned",
+				len(outcome.Issues), len(outcome.Schedule.Report.Tasks), len(outcome.StoodDown), len(outcome.Orphans))}
+		}
+	}
+	return nil
+}
+
+// runCheckWithoutCalendar is the no-credentials fallback: the graph plus
+// stored stood-down, planned with no busy time. No in-memory reconcile
+// happens here — with no observed events, every binding would look deleted.
+// Orphaned needs the calendar, so it stays empty.
+func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, client logseq.Client, st *store.Store) error {
+	now := time.Now()
+	location, err := cfg.Scheduling.Location()
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	result, err := run.Read(context.Background(), client, cfg.Logseq.TimeMapsPage, location)
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	_, _, storedDisps, err := st.All()
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	effective := reconcile.Effective(result.Tasks, storedDisps)
+	schedule, err := planner.Plan(planner.Input{
+		Tasks: result.Tasks, TimeMaps: result.TimeMaps,
+		Busy: nil, Dispositions: effective, Now: now,
+		Granularity: granularity, WindowDays: cfg.Scheduling.WindowDays, Location: location,
+	})
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	var stood []model.Disposition
+	for _, d := range effective {
+		if d.Kind == model.DispositionStoodDown {
+			stood = append(stood, d)
+		}
+	}
+	outcome := run.CheckOutcome{
+		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
+		Dispositions: effective, AllDispositions: storedDisps,
+		Orphans: nil, StoodDown: stood,
+	}
+	_ = grid.Build // keep grid import referenced when busy is nil
+	if opts.json {
+		view := checkReport{
+			GraphIssues: outcome.Issues,
+			Shortfalls:  checkShortfalls(outcome),
+			StoodDown:   checkStoodDown(outcome),
+			Orphaned:    checkOrphans(outcome),
+		}
+		if opts.verbose {
+			view.Explanations = checkExplanations(outcome)
+		}
+		if err := printJSON(opts.out, view); err != nil {
+			return &exitError{code: codeError, err: err}
+		}
+	} else {
+		renderCheckText(opts.out, outcome, opts.verbose)
+	}
+	if strict {
+		n := len(outcome.Issues) + len(outcome.Schedule.Report.Tasks) + len(outcome.StoodDown)
+		if n > 0 {
+			return &exitError{code: codeValidation, err: fmt.Errorf(
+				"check --strict: %d graph issue(s), %d infeasible Task(s), %d stood-down",
+				len(outcome.Issues), len(outcome.Schedule.Report.Tasks), len(outcome.StoodDown))}
+		}
 	}
 	return nil
 }
@@ -165,16 +254,26 @@ func runForecast(opts *options, ov configOverrides, verbose bool) error {
 // structs keep the output byte-stable run to run.
 
 type checkReport struct {
-	GraphIssues []resolve.Issue `json:"graph_issues,omitempty"`
-	Shortfalls  []shortfallJSON `json:"shortfalls,omitempty"`
+	GraphIssues  []resolve.Issue   `json:"graph_issues,omitempty"`
+	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
+	StoodDown    []stoodDownJSON   `json:"stood_down,omitempty"`
+	Orphaned     []orphanJSON      `json:"orphaned,omitempty"`
+	Explanations []explanationJSON `json:"explanations,omitempty"`
+}
+
+type stoodDownJSON struct {
+	TaskID     string `json:"task_id"`
+	Task       string `json:"task"`
+	BlockIndex int    `json:"block_index"`
+	Slots      int    `json:"slots"`
 }
 
 type forecastReport struct {
 	Blocks       []blockJSON       `json:"blocks,omitempty"`
 	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
 	Explanations []explanationJSON `json:"explanations,omitempty"` // with --verbose
-	// Managed are the calendar's Lodo-made events busy deliberately left
-	// out in M4; M5's schedule closes that hole.
+	// Managed are the calendar's Lodo-made events forecast deliberately
+	// leaves out; schedule's reconciliation closes that hole.
 	Managed []managedJSON `json:"managed_left_out,omitempty"`
 }
 
@@ -282,7 +381,60 @@ func printJSON(w io.Writer, v any) error {
 
 // Text rendering, in the Scheduling timezone the blocks were built in.
 
-func renderCheckText(w io.Writer, outcome run.Outcome) {
+func checkShortfalls(outcome run.CheckOutcome) []shortfallJSON {
+	out := make([]shortfallJSON, 0, len(outcome.Schedule.Report.Tasks))
+	for _, r := range outcome.Schedule.Report.Tasks {
+		out = append(out, shortfallJSON{
+			TaskID: r.TaskID, Task: run.TaskText(outcome.Tasks, r.TaskID),
+			Required: r.Required, Placed: r.Placed, StoodDown: r.StoodDown,
+			Shortfall: r.Shortfall, Reason: string(r.Reason),
+		})
+	}
+	return out
+}
+
+func checkStoodDown(outcome run.CheckOutcome) []stoodDownJSON {
+	out := make([]stoodDownJSON, 0, len(outcome.StoodDown))
+	for _, d := range outcome.StoodDown {
+		out = append(out, stoodDownJSON{
+			TaskID: d.TaskID, Task: run.TaskText(outcome.Tasks, d.TaskID),
+			BlockIndex: d.BlockIndex, Slots: d.Slots,
+		})
+	}
+	return out
+}
+
+func checkOrphans(outcome run.CheckOutcome) []orphanJSON {
+	out := make([]orphanJSON, 0, len(outcome.Orphans))
+	for _, o := range outcome.Orphans {
+		out = append(out, orphanJSON{
+			EventID: o.EventID, TaskID: o.TaskID,
+			Task:  run.TaskText(outcome.Tasks, o.TaskID),
+			Block: o.Block, Summary: o.Summary,
+		})
+	}
+	return out
+}
+
+func checkExplanations(outcome run.CheckOutcome) []explanationJSON {
+	out := make([]explanationJSON, 0, len(outcome.Schedule.Explanations))
+	for _, e := range outcome.Schedule.Explanations {
+		out = append(out, explanationJSON{
+			TaskID: e.TaskID, BlockIndex: e.BlockIndex, Kind: string(e.Kind),
+			Start: e.Start, Slots: e.Slots, RunStart: e.RunStart, RunSlots: e.RunSlots,
+		})
+	}
+	return out
+}
+
+func checkTaskLabel(outcome run.CheckOutcome, id string) string {
+	if text := run.TaskText(outcome.Tasks, id); text != "" {
+		return text
+	}
+	return id
+}
+
+func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
 	if len(outcome.Issues) == 0 {
 		_, _ = fmt.Fprintln(w, "Graph: no issues reported.")
 	} else {
@@ -294,13 +446,47 @@ func renderCheckText(w io.Writer, outcome run.Outcome) {
 
 	short := outcome.Schedule.Report.Tasks
 	if len(short) == 0 {
-		_, _ = fmt.Fprintln(w, "Plan (no busy time yet): everything placeable is placed.")
-		return
+		_, _ = fmt.Fprintln(w, "Plan (real busy time): everything placeable is placed.")
+	} else {
+		_, _ = fmt.Fprintf(w, "Plan (real busy time): %d Task(s) could not be fully placed.\n", len(short))
+		for _, r := range short {
+			_, _ = fmt.Fprintf(w, "  %s: %d of %d slots placed — %s\n",
+				checkTaskLabel(outcome, r.TaskID), r.Placed, r.Required, r.Reason)
+		}
 	}
-	_, _ = fmt.Fprintf(w, "Plan (no busy time): %d Task(s) could not be fully placed.\n", len(short))
-	for _, r := range short {
-		_, _ = fmt.Fprintf(w, "  %s: %d of %d slots placed — %s\n",
-			taskLabel(outcome, r.TaskID), r.Placed, r.Required, r.Reason)
+
+	if len(outcome.StoodDown) == 0 {
+		_, _ = fmt.Fprintln(w, "Stood-down: none.")
+	} else {
+		_, _ = fmt.Fprintf(w, "Stood-down: %d Block(s) the user deleted, not recreated until inputs change:\n", len(outcome.StoodDown))
+		for _, d := range outcome.StoodDown {
+			_, _ = fmt.Fprintf(w, "  %s block %d (%d slots)\n",
+				checkTaskLabel(outcome, d.TaskID), d.BlockIndex, d.Slots)
+		}
+	}
+
+	if len(outcome.Orphans) == 0 {
+		_, _ = fmt.Fprintln(w, "Orphaned: none.")
+	} else {
+		_, _ = fmt.Fprintf(w, "Orphaned: %d Managed event(s) with no home in the plan:\n", len(outcome.Orphans))
+		for _, o := range outcome.Orphans {
+			label := o.TaskID
+			if text := run.TaskText(outcome.Tasks, o.TaskID); text != "" {
+				label = text
+			} else if o.TaskID == "" {
+				label = "(unreadable pointer)"
+			}
+			_, _ = fmt.Fprintf(w, "  %s — %s (block %d)\n", o.EventID, label, o.Block)
+		}
+	}
+
+	if verbose {
+		_, _ = fmt.Fprintln(w, "Explanations:")
+		for _, e := range outcome.Schedule.Explanations {
+			_, _ = fmt.Fprintf(w, "  %s block %d at %s (%d slots), %s\n",
+				checkTaskLabel(outcome, e.TaskID), e.BlockIndex,
+				e.Start.Format("Mon 15:04"), e.Slots, e.Kind)
+		}
 	}
 }
 
@@ -321,8 +507,9 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 		loc,
 	)
 
-	// The known M4 hole, said plainly: Lodo's own events are not in the
-	// busy mask yet, and M5's reconcile is what folds them back in.
+	// The known forecast hole, said plainly: Lodo's own events are not in
+	// the busy mask there, and schedule's reconciliation is what folds them
+	// back in.
 	if n := len(outcome.Managed); n > 0 {
 		_, _ = fmt.Fprintf(w,
 			"\nNote: %d Managed event(s) on the calendar are not counted as busy yet — they are\nthe ones Lodo itself created; the schedule command's reconciliation will account for them:\n", n)

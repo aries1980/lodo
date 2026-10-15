@@ -137,7 +137,7 @@ func TestForecastEndToEndWithFakeGoogle(t *testing.T) {
 	}
 
 	// Busy shaped the plan (a block exists), the Managed event travelled
-	// back as the note it will stay until M5 folds it in.
+	// back as the note it keeps until schedule folds it in.
 	if len(view.Blocks) == 0 {
 		t.Fatal("no blocks: nothing should prevent the 30m Task's placement")
 	}

@@ -1,11 +1,12 @@
-// Package run assembles the read side of the loop the CLI commands need:
-// read the graph fresh over the HTTP API, resolve it, project the
-// calendar's busy time, and plan the Schedule.
+// Package run assembles the loop the CLI commands need: read the graph
+// fresh over the HTTP API, resolve it, project the calendar's busy time,
+// and plan the Schedule. Schedule and Check fold stored dispositions back
+// in through reconciliation; Graph (the forecast path) stays a store-free
+// dry run.
 //
 // The busy mask is the calendar's explicit input to the planner (ADR 0006):
 // resolved tasks plus a mask, never a calendar the planner reaches into.
-// Dispositions stay empty — the store is M5's work — and Now is injected by
-// the caller, never read here.
+// Now is injected by the caller, never read here.
 package run
 
 import (
@@ -24,29 +25,28 @@ import (
 )
 
 // BusySource is the calendar part of the loop: busy time already projected
-// onto the run's own grid, plus the Managed events that were deliberately
-// left out of it — no dispositions exist yet, so M4 notes them and M5's
-// reconcile folds their Blocks back. A nil BusySource means no calendar is
-// consulted; `check` never consults one.
+// onto the run's own grid, plus the Managed events deliberately left out of
+// it — forecast notes them and schedule's reconcile folds their Blocks
+// back. A nil BusySource means no calendar is consulted.
 type BusySource interface {
 	Busy(ctx context.Context, g *grid.Grid, now time.Time) (busy grid.Mask, managed []calendar.Event, err error)
 }
 
-// Outcome is one command's read side: the Tasks that were seen, the graph
+// Outcome is one forecast's read side: the Tasks that were seen, the graph
 // problems to report, the Schedule planned from them, and the Managed
-// events busy deliberately left out.
+// events busy deliberately left out (schedule reconciles them instead).
 type Outcome struct {
 	Tasks    []model.Task
 	Issues   []resolve.Issue
 	Schedule planner.Schedule
-	// Managed is the one hole in the mask M4 leaves: Lodo's own events are
-	// not folded into busy until reconciliation exists.
+	// Managed is the one hole in the forecast mask: Lodo's own events are
+	// not folded into busy there; schedule and check reconcile them.
 	Managed []calendar.Event
 }
 
 // Graph reads the graph fresh, resolves it, projects the calendar's busy
-// time and plans the Schedule with the effective config's settings. Both
-// check and forecast call this; writes start in M5.
+// time and plans the Schedule with the effective config's settings.
+// Forecast and schedule --dry-run call this; it never touches the store.
 func Graph(ctx context.Context, client logseq.Client, busy BusySource, cfg config.Config, now time.Time) (Outcome, error) {
 	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
 	if err != nil {
@@ -76,7 +76,7 @@ func Graph(ctx context.Context, client logseq.Client, busy BusySource, cfg confi
 		Tasks:        result.Tasks,
 		TimeMaps:     result.TimeMaps,
 		Busy:         inputBusy,
-		Dispositions: nil, // M4: the store does not exist yet
+		Dispositions: nil, // forecast stays store-free by design
 		Now:          now,
 		Granularity:  granularity,
 		WindowDays:   cfg.Scheduling.WindowDays,

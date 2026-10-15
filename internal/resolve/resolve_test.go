@@ -264,8 +264,8 @@ func TestTaskProperties(t *testing.T) {
 	}
 }
 
-// TestTaskSnapshot: every resolved Task carries its Snapshot (M2), used by
-// the store in M5.
+// TestTaskSnapshot: every resolved Task carries its Snapshot (M2), stored
+// by the store for stood-down comparisons.
 func TestTaskSnapshot(t *testing.T) {
 	end := model.CivilDate{Year: 2026, Month: time.October, Day: 24}
 	res, err := fixture([]*logseq.Page{page(day)},

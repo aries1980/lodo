@@ -29,6 +29,18 @@ func DefaultCredentialsPath() (string, error) {
 	return filepath.Join(dir, "lodo", "credentials.json"), nil
 }
 
+// DefaultStorePath returns the lodo.db location:
+// ${XDG_STATE_HOME:-~/.local/state}/lodo/lodo.db. The store is the system of
+// record (ADR 0001); it lives beside credentials.json so deleting that one
+// directory resets Lodo without touching notes or config (configuration.md).
+func DefaultStorePath() (string, error) {
+	dir, err := xdgDir("XDG_STATE_HOME", ".local/state")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "lodo", "lodo.db"), nil
+}
+
 // xdgDir resolves one XDG variable against the home directory fallback.
 func xdgDir(envVar, fallback string) (string, error) {
 	if v := os.Getenv(envVar); v != "" {
