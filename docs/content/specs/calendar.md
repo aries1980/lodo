@@ -24,6 +24,28 @@ calendars.
   one system for personal and Workspace accounts; the account approved with is the one
   Lodo reads.
 
+### Creating the OAuth client (one-time setup)
+
+`lodo auth google` needs an OAuth client you own — Google has no shared Lodo
+client. Create a **Desktop app** client in your own Cloud project:
+
+1. Create a project — [Create a Google Cloud project](https://developers.google.com/workspace/guides/create-project).
+2. Enable the Calendar API in it — [Enable Google Workspace APIs](https://developers.google.com/workspace/guides/enable-apis).
+3. Configure the consent screen — [Configure the OAuth consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent):
+   user type **External**, add your personal Gmail as a test user, and add the
+   `calendar.events` scope. The unverified-app warning at grant time is normal
+   for a personal client.
+4. Create the client — [Create access credentials](https://developers.google.com/workspace/guides/create-credentials)
+   (section *Desktop app*). Its redirect URI is `http://127.0.0.1/`.
+5. Paste the pair into the credentials file beside the Logseq token if present:
+
+   ```json
+   {"google": {"client_id": "…", "client_secret": "…"}}
+   ```
+
+6. Run `lodo auth google` and approve with the account whose calendar Lodo
+   should use; `calendar.id` then names the one calendar inside it.
+
 ## Identifying a Managed Event
 
 Ownership is recorded on the event itself, so it survives Lodo losing its local state:
