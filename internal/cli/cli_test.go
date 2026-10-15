@@ -310,3 +310,44 @@ func TestStubUnavailableTarget(t *testing.T) {
 		t.Fatalf("exit = %d stderr = %q, want 1 for loose credentials", code, errOut)
 	}
 }
+
+func TestAuthGoogleRefusesWithoutSetup(t *testing.T) {
+	conf, cred := testSetup(t, stubApp(t))
+
+	// No google section at all: exit 1 with the setup hint, and no
+	// question asked of a user who cannot answer it.
+	code, out, errOut := runCLI(t, conf, cred, "auth", "google")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 without the google section", code)
+	}
+	if !strings.Contains(errOut, "google credentials: missing") ||
+		!strings.Contains(errOut, "http://127.0.0.1/") {
+		t.Fatalf("stderr must carry the setup hint: %q", errOut)
+	}
+	if strings.Contains(out, "Finish Google's authorization") {
+		t.Fatalf("no URL may be raised when setup is missing: %q", out)
+	}
+
+	// A google section without the pair inside it: the same refusal, worded
+	// about the pair this time.
+	if err := os.WriteFile(cred, []byte(`{"google":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = runCLI(t, conf, cred, "auth", "google")
+	if code != 1 || !strings.Contains(errOut, "client_id and client_secret are required") {
+		t.Fatalf("exit = %d stderr = %q, want 1 naming the pair", code, errOut)
+	}
+}
+
+func TestAuthGoogleHelpNamesTheFlow(t *testing.T) {
+	conf, cred := testSetup(t, stubApp(t))
+	code, out, errOut := runCLI(t, conf, cred, "auth", "google", "--help")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errOut)
+	}
+	for _, want := range []string{"http://127.0.0.1/", "calendar.events", "--no-launch-browser", "Google Workspace"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help is missing %q:\n%s", want, out)
+		}
+	}
+}

@@ -219,11 +219,13 @@ func Apply(cfg Config, o Overrides) (Config, error) {
 	return cfg, nil
 }
 
-// Credentials is the contents of credentials.json. Lodo owns the logseq
-// section in M3; the google section belongs to the OAuth flow. Unknown
-// sections are tolerated so adding one does not invalidate the file.
+// Credentials is the contents of credentials.json: the logseq section that
+// Lodo owns for the loop commands (M3), and the google section that the
+// OAuth flow fills in (calendar.md Auth). Unknown sections are tolerated so
+// adding one does not invalidate the file.
 type Credentials struct {
-	Logseq LogseqCredentials `json:"logseq"`
+	Logseq LogseqCredentials  `json:"logseq"`
+	Google *GoogleCredentials `json:"google,omitempty"`
 }
 
 // LogseqCredentials carries the Logseq HTTP API token.
@@ -231,14 +233,62 @@ type LogseqCredentials struct {
 	Token string `json:"token"`
 }
 
-// LoadCredentials reads credentials.json at path. The file must be 0600: a
+// GoogleCredentials is the google section: the OAuth client the user
+// registered and pasted into the file before `lodo auth google` runs, plus
+// the refresh token that flow stores once and the Calendar client renews
+// with (configuration.md).
+type GoogleCredentials struct {
+	// RefreshToken is the one long-lived Google grant; empty until
+	// `lodo auth google` has stored it.
+	RefreshToken string `json:"refresh_token,omitempty"`
+	// ClientID is the OAuth client's id.
+	ClientID string `json:"client_id,omitempty"`
+	// ClientSecret is the OAuth client's secret.
+	ClientSecret string `json:"client_secret,omitempty"`
+}
+
+// GoogleSetup returns the google section as `lodo auth google` needs it:
+// the client pair, still without demanding a refresh token. Missing
+// entries are refusals with the fix, never prompts.
+func (c Credentials) GoogleSetup() (GoogleCredentials, error) {
+	var zero GoogleCredentials
+	if c.Google == nil {
+		return zero, fmt.Errorf(
+			"google credentials: missing (create an OAuth client with redirect URI http://127.0.0.1/ and paste {\"google\":{\"client_id\":\"…\",\"client_secret\":\"…\"}} into %s)", DefaultCredentials)
+	}
+	g := *c.Google
+	if g.ClientID == "" || g.ClientSecret == "" {
+		return zero, fmt.Errorf(
+			"google credentials: client_id and client_secret are required; paste them into %s from the OAuth client with redirect URI http://127.0.0.1/", DefaultCredentials)
+	}
+	return g, nil
+}
+
+// GoogleAuth returns the google section as the Calendar client needs it:
+// the client pair plus the refresh token. An empty refresh token means the
+// auth flow has not run yet; the fix is to run it once.
+func (c Credentials) GoogleAuth() (GoogleCredentials, error) {
+	g, err := c.GoogleSetup()
+	if err != nil {
+		return GoogleCredentials{}, err
+	}
+	if g.RefreshToken == "" {
+		return GoogleCredentials{}, fmt.Errorf(
+			"google credentials: refresh_token is empty; run `lodo auth google` once to store it in %s", DefaultCredentials)
+	}
+	return g, nil
+}
+
+// ReadCredentials reads credentials.json at path. The file must be 0600: a
 // credentials file readable by group or others is a refusal, not a warning.
-func LoadCredentials(path string) (Credentials, error) {
+// Nothing else is demanded here: which section is required is the caller's
+// call — the loop commands need a Logseq token, `auth google` needs the
+// Google client pair, and both live in the same file.
+func ReadCredentials(path string) (Credentials, error) {
 	info, err := os.Stat(path)
 	switch {
 	case os.IsNotExist(err):
-		return Credentials{}, fmt.Errorf(
-			"credentials file %s: not found (put {\"logseq\":{\"token\":\"…\"}} there; default %s)", path, DefaultCredentials)
+		return Credentials{}, fmt.Errorf("credentials file %s: not found (default %s)", path, DefaultCredentials)
 	case err != nil:
 		return Credentials{}, fmt.Errorf("credentials file %s: %w", path, err)
 	}
@@ -253,6 +303,17 @@ func LoadCredentials(path string) (Credentials, error) {
 	var c Credentials
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Credentials{}, fmt.Errorf("credentials file %s: %w", path, err)
+	}
+	return c, nil
+}
+
+// LoadCredentials reads credentials.json at path for the loop commands: the
+// 0600 file plus a non-empty Logseq API token. The google section travels
+// along as it is written; the Calendar side validates its own completeness.
+func LoadCredentials(path string) (Credentials, error) {
+	c, err := ReadCredentials(path)
+	if err != nil {
+		return Credentials{}, err
 	}
 	if c.Logseq.Token == "" {
 		return Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations)", path)

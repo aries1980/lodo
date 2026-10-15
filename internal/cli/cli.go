@@ -142,17 +142,53 @@ func newRefreshCmd(opts *options) *cobra.Command {
 }
 
 func newAuthCmd(opts *options) *cobra.Command {
+	var noBrowser bool
+
 	auth := &cobra.Command{
 		Use:   "auth",
 		Short: "Manage provider credentials",
 	}
-	auth.AddCommand(&cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "google",
 		Short: "Run the loopback OAuth flow and store the refresh token",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return notImplemented("auth google")
+		Long: `Store Google's refresh token for ` + "`lodo forecast` and `lodo schedule`" + `, one time.
+
+Before running, create an OAuth client in the Google Cloud console (a
+"Desktop app" is the dependable type; its redirect URI is http://127.0.0.1/)
+and paste client_id and client_secret into credentials.json beside the
+Logseq token, if that is there yet:
+
+  {"google": {"client_id": "…", "client_secret": "…"}}
+
+The flow binds a loopback listener, raises the authorization URL
+(calendar.events scope, offline access and a re-consent, so the grant is a
+refresh token that survives a revocation) and accepts exactly one
+redirect. On a machine that opens a browser, xdg-open takes the URL and
+the flow waits; print the URL instead with --verbose.
+
+Google's login is one system for personal Gmail and Google Workspace
+accounts: approve with the account whose calendar Lodo should use, and
+calendar.id names the one calendar inside it. A Workspace admin's
+third-party app policy must allow your own client (the unverified-app
+page is normal for a personal client_id), and the Calendar API must be
+enabled in the project that owns it.
+
+On a machine with no browser to open — a cloud VM — pass
+--no-launch-browser: the URL is printed to finish on any device, and the
+redirect address Google then shows (which will not load off the machine)
+is pasted back here on one line to exchange; the bare authorization code
+works too. The same listener still completes an SSH-tunnelled redirect.
+Run the command again after a revocation. Missing client credentials exit
+1 with a hint; there are no interactive prompts about them.`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			opts.out = c.OutOrStdout()
+			return runAuthGoogle(opts, noBrowser)
 		},
-	})
+	}
+	cmd.Flags().BoolVar(&noBrowser, "no-launch-browser", false,
+		"headless machines: finish the grant on another device and paste the redirect back here")
+	auth.AddCommand(cmd)
 
 	return auth
 }
