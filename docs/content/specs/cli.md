@@ -13,8 +13,8 @@ scheduler: cron (or a manual run) calling `lodo schedule` is the intended deploy
 
 | Command | Side effects | Purpose |
 | --- | --- | --- |
-| `lodo check` | none | Validate the graph and state: TODOs missing `duration::`, unparseable or unknown properties, unknown `time-map::` slugs, infeasible Tasks, stood-down Blocks, orphaned event IDs. |
-| `lodo forecast` | none | Dry run: compute and print the Schedule that *would* be written. |
+| `lodo check` | none | Validate the graph and state: TODOs missing `duration::`, unparseable or unknown properties, unknown `time-map::` slugs, `unknown-dependency` / `dependency-cycle`, infeasible Tasks (`blocked by …`, cycles, pin violations), stood-down Blocks, orphaned event IDs. |
+| `lodo forecast` | none | Dry run: compute and print the Schedule that *would* be written, with shortfall reasons including dependency blocks. |
 | `lodo schedule` | calendar + SQLite | The workhorse. Reconciles the calendar, computes, and creates/updates/removes Managed Events. |
 | `lodo refresh` | SQLite only | Pull-only: read the calendar and fold the user's moves and deletes into local state, without recomputing. |
 | `lodo auth google` | credentials | One-time OAuth; stores the refresh token. |

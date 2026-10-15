@@ -82,6 +82,24 @@ The concrete set of Blocks Lodo has produced for Tasks. The Schedule is the resu
 of planning; it is not itself a Plan.
 _Avoid_: calendar, agenda
 
+**Dependency**:
+A finish-to-start edge between Tasks: the dependent waits for the dependency's
+placed Blocks to end. Authored via `depends:: ((uuid))` (explicit, cross-parent)
+or via `order:: sequential` chains (implicit, within a parent). Multiple
+dependencies are AND; partial dependencies block entirely.
+_Avoid_: blocker (as noun for the edge), prerequisite
+
+**Container**:
+A Task with Task descendants. SkedPal parity: a container is never scheduled
+itself and its own `duration::` is ignored; only its leaf Tasks are placed.
+_Avoid_: project (as a type), epic, parent task (as a scheduled unit)
+
+**Sequential / Parallel**:
+The `order::` flag on a parent: sequential chains descendant leaf Tasks in
+outline order (finish-to-start); parallel leaves them unordered (priority and
+outline tie-break only).
+_Avoid_: ordered/unordered, series
+
 **Scheduling granularity**:
 The quantum of the Schedule. Every Block is a whole number of granularity units, and a
 Task shorter than one unit occupies a single unit.

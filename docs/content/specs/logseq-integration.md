@@ -36,11 +36,14 @@ inputs it last read, so it can tell which Tasks changed without diffing the whol
 | Source | Read as |
 | --- | --- |
 | Blocks marked `TODO` / `DOING` | candidate Tasks ([`tasks.md`](./tasks.md)) |
-| Block properties | `duration::`, `time-map::`, `priority::`, `deadline::`, `plan-start::`, `plan-end::`, `scheduled::` |
-| Page properties | inherited defaults for `time-map::`, `priority::`, `plan-start::`, `plan-end::` |
+| Block properties | `duration::`, `time-map::`, `priority::`, `deadline::`, `plan-start::`, `plan-end::`, `scheduled::`, `depends::`, `order::` |
+| Page properties | inherited defaults for `time-map::`, `priority::`, `plan-start::`, `plan-end::`, `order::` |
+| Parent blocks | cascade for `time-map::`, `priority::`, `plan-start::`, `plan-end::`, `order::` (nearest ancestor wins); hierarchy for containers, sequential chains, DONE-suppression |
 | The `Time Maps` page | Time Map definitions ([`time-maps.md`](./time-maps.md)) |
 
-`DONE` and `CANCELLED` blocks are complete and are not scheduled.
+`DONE` and `CANCELLED` blocks are complete and are not scheduled. A `DONE`/`CANCELLED`
+parent suppresses its whole subtree; a `DONE`/`CANCELLED` block satisfies any
+`depends::` pointing at it.
 
 ## Reading semantics
 
@@ -48,5 +51,9 @@ inputs it last read, so it can tell which Tasks changed without diffing the whol
   `Time Maps`), so a namespaced page (`lodo/time-maps`) is a one-line change rather than
   a format decision.
 - Parsing is permissive about whitespace and case in property keys; slugs are
-  case-insensitive.
+  case-insensitive. `depends::` is strict: comma-separated `((uuid))` block
+  references only, duplicates collapsed; bare UUIDs and typos are errors that
+  block the dependent.
 - Anything Lodo cannot parse is reported by `lodo check` and skipped, never guessed at.
+  New graph issue kinds: `unknown-dependency`, `dependency-cycle` (plus
+  `bad-property-value` for malformed `depends::`/`order::`).

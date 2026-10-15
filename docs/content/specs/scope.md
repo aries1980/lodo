@@ -15,6 +15,7 @@ The core loop: **read Tasks from Logseq → decide when → write Blocks to Goog
 - **Tasks** = `TODO`/`DOING` blocks with an explicit `duration::`. Duration is the gate.
 - **Plan** = optional `plan-start::`/`plan-end::` date bounds; absent bounds mean flexible ("as soon as possible").
 - **Pin** via Logseq's native `scheduled::`; **Deadline** via native `deadline::`; **Priority** via native `priority::` (A/B/C).
+- **Dependencies** via `depends:: ((uuid))` (strict finish-to-start, AND, full-gate) plus SkedPal-parity nesting: containers (parents with Task children unscheduled), `order:: sequential|parallel` chains, block-cascade inheritance, DONE-parent suppression.
 - **Time Maps** authored in the graph on a configurable page, in a line-based format; **binary** (tiers parse but are treated as green).
 - **Scheduling**: front-loading, deterministic, minimal-churn displacement; a no-change run is a strict no-op. Highlights the rules in [`scheduling.md`](./scheduling.md).
 - **Infeasibility** is reported, never silently resolved: no Auto-Defer, no plan or Time-Map violation. Partial placement is allowed with a reported shortfall.
@@ -33,8 +34,7 @@ soon they are likely to matter.
 - **Buffers** and **Auto-Defer**.
 - **Zones and budgets** — the zero-sum balancing layer.
 - **Recurring Tasks and habits.**
-- **Task dependencies.**
-- **Parent/child cascade**, sequential/parallel sub-Tasks, containers.
+- **Sequential one-at-a-time gating** (sequential chains schedule upfront in order).
 - **Multiple Plans per Task.**
 - **Suggestions** (SkedPal's proposal of a more realistic date).
 - **Outlook and iCloud** calendars.

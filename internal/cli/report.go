@@ -295,13 +295,14 @@ type blockJSON struct {
 }
 
 type shortfallJSON struct {
-	TaskID    string `json:"task_id"`
-	Task      string `json:"task"`
-	Required  int    `json:"required"`
-	Placed    int    `json:"placed"`
-	StoodDown int    `json:"stood_down"`
-	Shortfall int    `json:"shortfall"`
-	Reason    string `json:"reason"`
+	TaskID    string   `json:"task_id"`
+	Task      string   `json:"task"`
+	Required  int      `json:"required"`
+	Placed    int      `json:"placed"`
+	StoodDown int      `json:"stood_down"`
+	Shortfall int      `json:"shortfall"`
+	Reason    string   `json:"reason"`
+	BlockedBy []string `json:"blocked_by,omitempty"`
 }
 
 type explanationJSON struct {
@@ -341,6 +342,7 @@ func shortfalls(outcome run.Outcome) []shortfallJSON {
 			StoodDown: r.StoodDown,
 			Shortfall: r.Shortfall,
 			Reason:    string(r.Reason),
+			BlockedBy: append([]string(nil), r.BlockedBy...),
 		})
 	}
 	return out
@@ -388,6 +390,7 @@ func checkShortfalls(outcome run.CheckOutcome) []shortfallJSON {
 			TaskID: r.TaskID, Task: run.TaskText(outcome.Tasks, r.TaskID),
 			Required: r.Required, Placed: r.Placed, StoodDown: r.StoodDown,
 			Shortfall: r.Shortfall, Reason: string(r.Reason),
+			BlockedBy: append([]string(nil), r.BlockedBy...),
 		})
 	}
 	return out
@@ -450,8 +453,12 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
 	} else {
 		_, _ = fmt.Fprintf(w, "Plan (real busy time): %d Task(s) could not be fully placed.\n", len(short))
 		for _, r := range short {
-			_, _ = fmt.Fprintf(w, "  %s: %d of %d slots placed — %s\n",
+			line := fmt.Sprintf("  %s: %d of %d slots placed — %s",
 				checkTaskLabel(outcome, r.TaskID), r.Placed, r.Required, r.Reason)
+			if len(r.BlockedBy) > 0 {
+				line += fmt.Sprintf(" (blocked by %s)", strings.Join(blockedLabels(outcome, r.BlockedBy), ", "))
+			}
+			_, _ = fmt.Fprintln(w, line)
 		}
 	}
 
@@ -573,8 +580,12 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 	if short := outcome.Schedule.Report.Tasks; len(short) > 0 {
 		_, _ = fmt.Fprintf(w, "\nShortfall:\n")
 		for _, r := range short {
-			_, _ = fmt.Fprintf(w, "  %s: %d of %d slots placed — %s\n",
+			line := fmt.Sprintf("  %s: %d of %d slots placed — %s",
 				taskLabel(outcome, r.TaskID), r.Placed, r.Required, r.Reason)
+			if len(r.BlockedBy) > 0 {
+				line += fmt.Sprintf(" (blocked by %s)", strings.Join(forecastBlockedLabels(outcome, r.BlockedBy), ", "))
+			}
+			_, _ = fmt.Fprintln(w, line)
 		}
 	}
 
@@ -603,6 +614,28 @@ func taskLabel(outcome run.Outcome, id string) string {
 		return text
 	}
 	return id
+}
+
+// forecastBlockedLabels prefers Task text for blocker IDs.
+func forecastBlockedLabels(outcome run.Outcome, ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, taskLabel(outcome, id))
+	}
+	return out
+}
+
+// blockedLabels prefers Task text for blocker IDs in check output.
+func blockedLabels(outcome run.CheckOutcome, ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if text := run.TaskText(outcome.Tasks, id); text != "" {
+			out = append(out, text)
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // durationMinutes renders a Block's span: "30m", "1h" or "1h30m".

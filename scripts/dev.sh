@@ -68,10 +68,21 @@ go_run() {
 }
 
 hugo_run() {
-	podrun \
-		-v "$ROOT/docs:/project:Z" -v /tmp:/tmp \
-		-e HUGO_CACHEDIR=/tmp/lodo-hugo-cache \
-		-w /project "$@"
+	# Hugo reads .GitInfo/.Lastmod (enableGitInfo in docs/hugo.toml), so the
+	# git dir must be visible inside the container even though only docs/ is
+	# mounted as /project.
+	gitdir=$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || true)
+	if [ -n "$gitdir" ] && [ -d "$gitdir" ]; then
+		podrun \
+			-v "$ROOT/docs:/project:Z" -v "$gitdir:/project/.git:ro" -v /tmp:/tmp \
+			-e HUGO_CACHEDIR=/tmp/lodo-hugo-cache \
+			-w /project "$@"
+	else
+		podrun \
+			-v "$ROOT/docs:/project:Z" -v /tmp:/tmp \
+			-e HUGO_CACHEDIR=/tmp/lodo-hugo-cache \
+			-w /project "$@"
+	fi
 }
 
 download() {

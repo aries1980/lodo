@@ -40,6 +40,14 @@ const (
 	// IssueMissingBlockID is a task-marked block that has no UUID, so it
 	// cannot be identified across runs.
 	IssueMissingBlockID = "missing-block-id"
+	// IssueUnknownDependency is a depends:: ref to no Task and no
+	// DONE/CANCELLED block: a typo or a note, never guessed at. The
+	// dependent is blocked until it is fixed.
+	IssueUnknownDependency = "unknown-dependency"
+	// IssueDependencyCycle is a depends:: / sequential-chain cycle
+	// (including self-dependency). Tasks in the cycle are left
+	// unscheduled and reported, never force-ordered.
+	IssueDependencyCycle = "dependency-cycle"
 )
 
 // Issue is one graph problem reported by check. Context locates the block

@@ -307,15 +307,17 @@ func (s *Store) Commit(bindingUpserts []Binding, bindingDeletes []BindingKey, di
 // deterministic field order. No omitempty: nil pointers and null slices
 // round-trip as null so empty-vs-missing stays faithful.
 type snapshotJSON struct {
-	Text      string         `json:"text"`
-	Marker    model.Marker   `json:"marker"`
-	Duration  int64          `json:"duration_ns"`
-	TimeMaps  []string       `json:"time_maps"`
-	Priority  model.Priority `json:"priority"`
-	Deadline  *civilDateJSON `json:"deadline"`
-	PlanStart *civilDateJSON `json:"plan_start"`
-	PlanEnd   *civilDateJSON `json:"plan_end"`
-	Pin       *time.Time     `json:"pin"`
+	Text      string          `json:"text"`
+	Marker    model.Marker    `json:"marker"`
+	Duration  int64           `json:"duration_ns"`
+	TimeMaps  []string        `json:"time_maps"`
+	Priority  model.Priority  `json:"priority"`
+	Deadline  *civilDateJSON  `json:"deadline"`
+	PlanStart *civilDateJSON  `json:"plan_start"`
+	PlanEnd   *civilDateJSON  `json:"plan_end"`
+	Pin       *time.Time      `json:"pin"`
+	Depends   []string        `json:"depends"`
+	Order     model.OrderMode `json:"order"`
 }
 
 type civilDateJSON struct {
@@ -333,6 +335,8 @@ func SnapshotToJSON(s model.Snapshot) (string, error) {
 		TimeMaps: s.TimeMaps,
 		Priority: s.Priority,
 		Pin:      s.Pin,
+		Depends:  s.Depends,
+		Order:    s.Order,
 	}
 	if s.Deadline != nil {
 		dto.Deadline = &civilDateJSON{Year: s.Deadline.Year, Month: s.Deadline.Month, Day: s.Deadline.Day}
@@ -363,6 +367,8 @@ func SnapshotFromJSON(raw string) (model.Snapshot, error) {
 		TimeMaps: dto.TimeMaps,
 		Priority: dto.Priority,
 		Pin:      dto.Pin,
+		Depends:  dto.Depends,
+		Order:    dto.Order,
 	}
 	if dto.Deadline != nil {
 		out.Deadline = &model.CivilDate{Year: dto.Deadline.Year, Month: dto.Deadline.Month, Day: dto.Deadline.Day}
@@ -380,7 +386,7 @@ func SnapshotFromJSON(raw string) (model.Snapshot, error) {
 // Times compare by instant (time.Equal), so a JSON round-trip that loses
 // the location name still matches; nil pointers must match nil.
 func SnapshotEqual(a, b model.Snapshot) bool {
-	if a.Text != b.Text || a.Marker != b.Marker || a.Duration != b.Duration || a.Priority != b.Priority {
+	if a.Text != b.Text || a.Marker != b.Marker || a.Duration != b.Duration || a.Priority != b.Priority || a.Order != b.Order {
 		return false
 	}
 	// Nil and empty TimeMaps both mean "no maps" (len 0); element order
@@ -395,6 +401,14 @@ func SnapshotEqual(a, b model.Snapshot) bool {
 	}
 	if !civilEqual(a.Deadline, b.Deadline) || !civilEqual(a.PlanStart, b.PlanStart) || !civilEqual(a.PlanEnd, b.PlanEnd) {
 		return false
+	}
+	if len(a.Depends) != len(b.Depends) {
+		return false
+	}
+	for i := range a.Depends {
+		if a.Depends[i] != b.Depends[i] {
+			return false
+		}
 	}
 	if a.Pin == nil || b.Pin == nil {
 		return a.Pin == nil && b.Pin == nil

@@ -28,18 +28,21 @@ think.
 
 ## Properties
 
-| Property | Meaning | Inherits from page? |
+| Property | Meaning | Inherits? |
 | --- | --- | --- |
 | `duration::` | estimated effort (`90m`, `2h`, `1h30m`) | **no** |
-| `time-map::` | one or more Time Map slugs, comma-separated | yes |
-| `priority::` | relative rank (`A` / `B` / `C`) | yes |
-| `deadline::` | reference due date | no |
-| `plan-start::` | earliest day to schedule | yes |
-| `plan-end::` | day by which to complete | yes |
-| `scheduled::` | the Pin: an exact date-time | no |
+| `time-map::` | one or more Time Map slugs, comma-separated | page, then parent blocks |
+| `priority::` | relative rank (`A` / `B` / `C`) | page, then parent blocks |
+| `deadline::` | reference due date | **no** |
+| `plan-start::` | earliest day to schedule | page, then parent blocks |
+| `plan-end::` | day by which to complete | page, then parent blocks |
+| `scheduled::` | the Pin: an exact date-time | **no** |
+| `depends::` | finish-to-start predecessors (`((uuid)), ((uuid))`) | **no** |
+| `order::` | `sequential` or `parallel` for this block's children | page, then parent blocks |
 
 `deadline::` and `scheduled::` are Logseq's **native** properties, reused rather than
-reinvented.
+reinvented. `depends::` uses Logseq block references (`((` + autocomplete);
+`order::` defaults to `parallel` when absent.
 
 ### Plan — *when by*
 
@@ -86,6 +89,45 @@ A hard, externally-imposed due date, for the user's benefit and for filtering. I
 causes a Task to be placed — only a Plan does — and Lodo may schedule a Task after its
 Deadline if that is what the Plan says. Reuses Logseq's native `deadline::`.
 
+### Dependencies — *what waits for what*
+
+`depends:: ((uuid)), ((uuid))` declares strict finish-to-start predecessors.
+No Block of the dependent starts before all placed Blocks of every dependency end.
+Multiple deps are AND (wait for the last finisher). A dependency on a `DONE` or
+`CANCELLED` block is satisfied immediately; a ref to a missing UUID, a plain note,
+or a `TODO` without `duration::` is an authoring error (`check` fails, dependent
+blocked). Self-refs and cycles are hard stops: Tasks in the cycle are left
+unscheduled and reported, never force-ordered. Malformed entries (bare UUIDs,
+typos outside `(())`) are never guessed at.
+
+If a dependency only partly fits, the dependent waits for the *full* dependency:
+any shortfall blocks the dependent entirely. Stood-down hours count as unplaced
+and block dependents until the dependency's inputs change. A `depends::` on a
+container expands to all its leaf Tasks.
+
+Plan wins over order: a dependency never pushes a Task past its `plan-end::`;
+the dependent is left short with `blocked by …`. Pin wins over order: a
+`scheduled::` stays at its authored time and the violation is reported.
+
+### Nesting — containers and sequential chains (SkedPal parity)
+
+Outline hierarchy is meaningful, SkedPal-style:
+
+- A Task with Task descendants is a **container**: it is never scheduled itself
+  and its own `duration::` is ignored (the sum of its leaves is the real effort).
+  Checklist children are `TODO` blocks *without* `duration::` — notes, never
+  scheduled, never making the parent a container.
+- Non-Task parents are ignored for ordering. A `DONE`/`CANCELLED` parent
+  suppresses its whole subtree (children unscheduled until it reopens).
+- `order:: sequential | parallel` (default `parallel`) on a parent chains its
+  descendant leaf Tasks in outline order (each waits for the previous).
+  Sequential cascades: an overarching sequential parent chains all leaves below
+  it. There is no one-at-a-time gating in v0.1 — sequential chains are all
+  scheduled upfront in order.
+- `time-map::`, `priority::`, `plan-start/end::` and `order::` cascade
+  explicit child > parent blocks (nearest first) > page > default.
+  `duration::`, `deadline::`, `scheduled::` and `depends::` never inherit.
+
 ## Splitting into Blocks
 
 A Task's duration may span several Blocks when one contiguous window cannot hold it.
@@ -104,6 +146,6 @@ A Task's duration may span several Blocks when one contiguous window cannot hold
 
 ## Deferred
 
-Multiple Plans per Task; recurring Plans and habits; parent/child cascade and sequential
-sub-task ordering; Minimum Block Length as a user property; Bundling; Buffers;
+Multiple Plans per Task; recurring Plans and habits; sequential one-at-a-time
+gating; Minimum Block Length as a user property; Bundling; Buffers;
 Auto-Defer; Zones and budgets.

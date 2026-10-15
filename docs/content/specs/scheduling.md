@@ -18,15 +18,21 @@ covered by the objective below, whose comparator is settled in
 [ADR 0010](../ADRs/0010-placement-comparator.md).
 
 1. **Pins are placed first**, at their exact time. They are immovable, so everything else
-   schedules around them — as does the busy time from External Events.
-2. **Time-bound Tasks next** (those with `plan-start::` and/or `plan-end::`), ordered by
+   schedules around them — as does the busy time from External Events. A Pin with
+   dependencies stays (Pin wins); the violation is reported.
+2. **Dependencies topologically override buckets**: a dependency is always placed
+   before its dependents, even when that promotes a flexible Task ahead of a
+   time-bound one. Among unrelated Tasks the rule below is the tie-break.
+3. **Time-bound Tasks next** (those with `plan-start::` and/or `plan-end::`), ordered by
    `plan-end::` ascending, then `priority::`, then outline order.
-3. **Flexible Tasks last**, ordered by `priority::`, then outline order.
+4. **Flexible Tasks last**, ordered by `priority::`, then outline order. Containers
+   never enter the order (unscheduled by definition).
 
 ```mermaid
 flowchart TD
     A[All schedulable Tasks] --> P[Pins placed first, exact time]
-    P --> T[Time-bound Tasks]
+    P --> G[Topological: deps before dependents]
+    G --> T[Time-bound Tasks]
     T -->|plan-end asc, then priority, then outline order| D[Flexible Tasks]
     D -->|priority, then outline order| S[Placement]
 ```
@@ -81,6 +87,14 @@ reported, with the reason.
 - **Partial fit** — Lodo schedules the hours that do fit and reports the shortfall
   prominently. Fragments below the minimum Block floor are never emitted; they count
   toward the reported shortfall.
+- **Blocked by dependencies** — a dependent whose dependency is incomplete,
+  stood-down, unknown, in a cycle, or not yet due is left unscheduled and reported
+  as `blocked by …` with the blocker IDs. A time-bound Task whose dependency pushes
+  it past its `plan-end::` warns explicitly rather than silently sliding.
+- **Dependency cycle** — Tasks in the cycle are left unscheduled and reported;
+  the cycle is never broken silently.
+- **Pin precedes dependency** — the Pin stays at its authored time and the order
+  violation is reported.
 
 No Auto-Defer, no Time-Map-violation escape hatch, and no Suggestions in v0.1. Each of
 those is a policy for breaking a rule, and v0.1 has none.

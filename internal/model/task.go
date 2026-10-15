@@ -19,7 +19,30 @@ type Task struct {
 	PlanEnd      *CivilDate
 	Pin          *time.Time // from scheduled::
 	OutlineOrder int        // depth-first, top-to-bottom Logseq order
+	// Depends holds the effective finish-to-start predecessors: explicit
+	// depends:: refs plus implicit sequential-chain edges, expanded so a
+	// container expands to its leaf Tasks. Sorted, deduplicated; unknown IDs
+	// stay so the planner can block and report them.
+	Depends []string
+	// Order is the sequential/parallel flag for this Task's children
+	// (inherited down until overridden; empty means parallel).
+	Order OrderMode
+	// Container is true when the Task has Task descendants: it is a SkedPal
+	// container, never scheduled itself, its duration ignored (the sum of
+	// its leaves is shown in check only).
+	Container bool
+	// ParentID is the direct parent Task's UUID, or empty. Non-Task parents
+	// are ignored.
+	ParentID string
 }
+
+// OrderMode is the sequential/parallel flag for a Task's children.
+type OrderMode string
+
+const (
+	OrderParallel   OrderMode = "parallel"
+	OrderSequential OrderMode = "sequential"
+)
 
 // Snapshot is a Task's resolved inputs: the direct and inherited properties
 // plus its text. Reconciliation compares a Task's current Snapshot against the
@@ -35,6 +58,8 @@ type Snapshot struct {
 	PlanStart *CivilDate
 	PlanEnd   *CivilDate
 	Pin       *time.Time
+	Depends   []string
+	Order     OrderMode
 }
 
 // Snapshot returns t's current resolved inputs.
@@ -49,5 +74,7 @@ func (t Task) Snapshot() Snapshot {
 		PlanStart: t.PlanStart,
 		PlanEnd:   t.PlanEnd,
 		Pin:       t.Pin,
+		Depends:   slices.Clone(t.Depends),
+		Order:     t.Order,
 	}
 }

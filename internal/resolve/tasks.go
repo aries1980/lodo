@@ -14,12 +14,17 @@ import (
 // block is a Task iff it is TODO/DOING and carries an explicit duration::
 // (ADR 0004); anything else is a note, skipped — and reported when the
 // omission would otherwise be silent.
+//
+// Nesting (SkedPal parity): a Task with Task descendants is a container,
+// never scheduled itself; DONE/CANCELLED ancestors suppress their subtree;
+// order:: sequential chains leaf Tasks in outline order; depends:: adds
+// explicit finish-to-start edges.
 func (r *resolver) resolveTasks() {
 	for _, page := range r.sortedPages() {
 		if page == nil || page.Properties == nil {
 			continue
 		}
-		for _, key := range []string{"time-map", "priority", "plan-start", "plan-end"} {
+		for _, key := range []string{"time-map", "priority", "plan-start", "plan-end", "order"} {
 			raw, ok := page.Properties[key]
 			if !ok {
 				continue
@@ -35,37 +40,316 @@ func (r *resolver) resolveTasks() {
 		}
 	}
 
-	order := 0 // depth-first, top-to-bottom position among task candidates
+	type candidate struct {
+		page      *logseq.Page
+		block     *logseq.Block
+		ancestors []*logseq.Block // root-first stack of parent blocks
+	}
+	var cands []candidate
+	doneSet := map[string]bool{} // UUID (lower) -> DONE/CANCELLED block
+	// Collect every block with its ancestor stack for order chaining.
+	type everyBlock struct {
+		page      *logseq.Page
+		block     *logseq.Block
+		ancestors []*logseq.Block
+	}
+	var all []everyBlock
+
 	tmIdx := r.timeMapsIndex()
 	for _, page := range r.sortedPages() {
 		if idx := r.pageIndex(page.Name); idx == tmIdx {
 			continue // the Time Maps page defines maps, never Tasks
 		}
-
-		if r.treeFor(page.Name) == nil {
+		tree := r.treeFor(page.Name)
+		if tree == nil {
 			continue
 		}
 		page := page
-		if err := logseq.Walk(r.treeFor(page.Name), func(b *logseq.Block) error {
-			switch model.Marker(strings.ToUpper(strings.TrimSpace(b.Marker))) {
-			case model.MarkerTODO, model.MarkerDOING:
-			default:
-				return nil // DONE/CANCELLED are complete; plain blocks are notes
+		var walk func(blocks []*logseq.Block, ancestors []*logseq.Block)
+		walk = func(blocks []*logseq.Block, ancestors []*logseq.Block) {
+			for _, b := range blocks {
+				if b == nil {
+					continue
+				}
+				all = append(all, everyBlock{page: page, block: b, ancestors: append([]*logseq.Block(nil), ancestors...)})
+				marker := model.Marker(strings.ToUpper(strings.TrimSpace(b.Marker)))
+				if marker == model.MarkerDONE || marker == model.MarkerCANCELLED {
+					if id := strings.ToLower(strings.TrimSpace(b.UUID)); id != "" {
+						doneSet[id] = true
+					}
+				}
+				// Suppression: any DONE/CANCELLED ancestor hides the subtree.
+				suppressed := false
+				for _, a := range ancestors {
+					am := model.Marker(strings.ToUpper(strings.TrimSpace(a.Marker)))
+					if am == model.MarkerDONE || am == model.MarkerCANCELLED {
+						suppressed = true
+						break
+					}
+				}
+				switch marker {
+				case model.MarkerTODO, model.MarkerDOING:
+					if !suppressed {
+						cands = append(cands, candidate{page: page, block: b, ancestors: append([]*logseq.Block(nil), ancestors...)})
+					}
+				}
+				walk(b.Children, append(ancestors, b))
 			}
-
-			t, isTask, issue := r.task(page, b)
-			if issue != nil {
-				r.issue(issue.Kind, issue.Context, issue.Detail)
-			}
-			if isTask {
-				t.OutlineOrder = order
-				r.tasks = append(r.tasks, t)
-			}
-			order++
-			return nil
-		}); err != nil {
-			return // unreachable: the visitor never errors
 		}
+		walk(tree, nil)
+	}
+
+	// Resolve each candidate in outline order (pages sorted, depth-first).
+	// OutlineOrder counts TODO/DOING candidates as before.
+	order := 0
+	type resolved struct {
+		task      model.Task
+		page      *logseq.Page
+		block     *logseq.Block
+		ancestors []*logseq.Block
+		explicit  []string // explicit depends (raw validated, before container expansion)
+	}
+	var res []resolved
+	for _, c := range cands {
+		t, isTask, issue := r.taskWithAncestors(c.page, c.block, c.ancestors)
+		if issue != nil {
+			r.issue(issue.Kind, issue.Context, issue.Detail)
+		}
+		if isTask {
+			t.OutlineOrder = order
+			res = append(res, resolved{task: t, page: c.page, block: c.block, ancestors: c.ancestors, explicit: append([]string(nil), t.Depends...)})
+		}
+		order++
+	}
+
+	// Index tasks by lower UUID.
+	byID := map[string]int{}
+	for i, x := range res {
+		byID[strings.ToLower(strings.TrimSpace(x.task.ID))] = i
+	}
+	// Descendant map: task index -> descendant task indices.
+	descendants := make(map[int][]int)
+	for i, x := range res {
+		ancIDs := map[string]bool{}
+		for _, a := range x.ancestors {
+			if id := strings.ToLower(strings.TrimSpace(a.UUID)); id != "" {
+				ancIDs[id] = true
+			}
+		}
+		for j, y := range res {
+			if i == j {
+				continue
+			}
+			if ancIDs[strings.ToLower(strings.TrimSpace(y.task.ID))] {
+				descendants[j] = append(descendants[j], i)
+			}
+		}
+	}
+	isContainer := map[int]bool{}
+	for j, ds := range descendants {
+		if len(ds) > 0 {
+			isContainer[j] = true
+		}
+	}
+	// ParentID: nearest ancestor that is a Task.
+	for i, x := range res {
+		for k := len(x.ancestors) - 1; k >= 0; k-- {
+			id := strings.ToLower(strings.TrimSpace(x.ancestors[k].UUID))
+			if j, ok := byID[id]; ok {
+				res[i].task.ParentID = res[j].task.ID
+				break
+			}
+		}
+	}
+	for i := range res {
+		if isContainer[i] {
+			res[i].task.Container = true
+		}
+	}
+
+	// Helper: leaves of a task (transitive leaf Tasks).
+	leavesOf := func(j int) []int {
+		if !isContainer[j] {
+			return []int{j}
+		}
+		var out []int
+		for _, d := range descendants[j] {
+			if !isContainer[d] {
+				out = append(out, d)
+			}
+		}
+		sort.Slice(out, func(a, b int) bool { return res[out[a]].task.OutlineOrder < res[out[b]].task.OutlineOrder })
+		return out
+	}
+
+	// Validate explicit depends: DONE/CANCELLED drops, unknown kept+reported.
+	for i := range res {
+		var kept []string
+		for _, dep := range res[i].explicit {
+			lower := strings.ToLower(strings.TrimSpace(dep))
+			if lower == "" {
+				continue
+			}
+			if strings.HasPrefix(lower, "malformed-depends:") {
+				kept = append(kept, lower)
+				continue
+			}
+			if lower == strings.ToLower(strings.TrimSpace(res[i].task.ID)) {
+				r.issue(IssueDependencyCycle, taskContext(res[i].task),
+					fmt.Sprintf("depends:: references itself ((%s)); the Task is left unscheduled", res[i].task.ID))
+				kept = append(kept, res[i].task.ID)
+				continue
+			}
+			if j, ok := byID[lower]; ok {
+				if isContainer[j] {
+					for _, leaf := range leavesOf(j) {
+						kept = append(kept, res[leaf].task.ID)
+					}
+				} else {
+					kept = append(kept, res[j].task.ID)
+				}
+				continue
+			}
+			if doneSet[lower] {
+				continue // DONE/CANCELLED satisfies.
+			}
+			r.issue(IssueUnknownDependency, taskContext(res[i].task),
+				fmt.Sprintf("depends:: ((%s)) references no Task and no DONE/CANCELLED block; the dependent is blocked until it is fixed", dep))
+			kept = append(kept, dep)
+		}
+		res[i].explicit = kept
+	}
+
+	// Sequential chaining: for every block (and page) with effective
+	// order==sequential, chain descendant leaf Tasks in outline order.
+	// Effective order for a block: block explicit > ancestors > page > parallel.
+	effectiveOrder := func(page *logseq.Page, ancestors []*logseq.Block, b *logseq.Block) model.OrderMode {
+		if b != nil {
+			if raw, ok := blockProps(b)["order"]; ok {
+				if text, okT := propsText(raw); okT && strings.TrimSpace(text) != "" {
+					if m, err := parse.ParseOrder(text); err == nil {
+						return m
+					}
+				}
+			}
+		}
+		for k := len(ancestors) - 1; k >= 0; k-- {
+			if raw, ok := blockProps(ancestors[k])["order"]; ok {
+				if text, okT := propsText(raw); okT && strings.TrimSpace(text) != "" {
+					if m, err := parse.ParseOrder(text); err == nil {
+						return m
+					}
+				}
+			}
+		}
+		if page != nil {
+			if text := r.pageDefault(page.Name, "order", ""); text != "" {
+				if m, err := parse.ParseOrder(text); err == nil {
+					return m
+				}
+			}
+		}
+		return model.OrderParallel
+	}
+	// Map block UUID -> task index for leaves lookup.
+	// For each block in all, if sequential, find descendant leaf tasks.
+	for _, eb := range all {
+		if effectiveOrder(eb.page, eb.ancestors, eb.block) != model.OrderSequential {
+			continue
+		}
+		id := strings.ToLower(strings.TrimSpace(eb.block.UUID))
+		var leaves []int
+		for idx, x := range res {
+			if isContainer[idx] {
+				continue
+			}
+			for _, a := range x.ancestors {
+				if strings.ToLower(strings.TrimSpace(a.UUID)) == id {
+					leaves = append(leaves, idx)
+					break
+				}
+			}
+		}
+		sort.Slice(leaves, func(a, b int) bool { return res[leaves[a]].task.OutlineOrder < res[leaves[b]].task.OutlineOrder })
+		for k := 1; k < len(leaves); k++ {
+			prev := res[leaves[k-1]].task.ID
+			cur := leaves[k]
+			if !containsString(res[cur].explicit, prev) && !strings.EqualFold(res[cur].task.ID, prev) {
+				res[cur].explicit = append(res[cur].explicit, prev)
+			}
+		}
+	}
+	// Page-level sequential: chain all leaf Tasks on the page.
+	pagesSeen := map[string]bool{}
+	for _, x := range res {
+		key := strings.ToLower(strings.TrimSpace(x.page.Name))
+		if pagesSeen[key] {
+			continue
+		}
+		pagesSeen[key] = true
+		if text := r.pageDefault(x.page.Name, "order", ""); text != "" {
+			if m, err := parse.ParseOrder(text); err == nil && m == model.OrderSequential {
+				var leaves []int
+				for idx, y := range res {
+					if isContainer[idx] {
+						continue
+					}
+					if strings.ToLower(strings.TrimSpace(y.page.Name)) == key {
+						leaves = append(leaves, idx)
+					}
+				}
+				sort.Slice(leaves, func(a, b int) bool { return res[leaves[a]].task.OutlineOrder < res[leaves[b]].task.OutlineOrder })
+				for k := 1; k < len(leaves); k++ {
+					prev := res[leaves[k-1]].task.ID
+					cur := leaves[k]
+					if !containsString(res[cur].explicit, prev) {
+						res[cur].explicit = append(res[cur].explicit, prev)
+					}
+				}
+			}
+		}
+	}
+
+	// Finalize Depends: sorted deduped (keep unknown/sentinel for blocking).
+	for i := range res {
+		seen := map[string]bool{}
+		var out []string
+		for _, d := range res[i].explicit {
+			key := strings.ToLower(strings.TrimSpace(d))
+			// Preserve original case for Task IDs? Use stored ID case.
+			display := d
+			if j, ok := byID[key]; ok {
+				display = res[j].task.ID
+				key = strings.ToLower(display)
+			}
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, display)
+			}
+		}
+		sort.Strings(out)
+		res[i].task.Depends = out
+	}
+
+	// Cycle detection over Task-to-Task edges (ignore unknown/sentinel).
+	adj := make(map[int][]int)
+	for i := range res {
+		for _, dep := range res[i].task.Depends {
+			if j, ok := byID[strings.ToLower(strings.TrimSpace(dep))]; ok {
+				adj[i] = append(adj[i], j)
+			}
+		}
+	}
+	inCycle := findCycleNodes(len(res), adj)
+	for i := range res {
+		if inCycle[i] {
+			r.issue(IssueDependencyCycle, taskContext(res[i].task),
+				"depends:: / sequential-chain cycle involves this Task; Tasks in the cycle are left unscheduled")
+		}
+	}
+
+	for _, x := range res {
+		r.tasks = append(r.tasks, x.task)
 	}
 
 	for _, t := range r.tasks {
@@ -75,13 +359,62 @@ func (r *resolver) resolveTasks() {
 					fmt.Sprintf("time-map:: %s references no Time Map defined on %q", slug, r.in.TimeMapsPage))
 			}
 		}
+		// order:: validation already reported in task(); unknown order
+		// values fall back to parallel with a bad-property issue.
 	}
 }
 
-// task resolves one candidate block. A non-nil Issue is what check must
-// name; isTask=false means the block is not a Task (no duration::, or a
-// malformed one). The Task keeps the inputs that did resolve.
-func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *Issue) {
+// findCycleNodes returns the set of nodes in or reachable-from cycles via
+// iterative DFS (Tarjan-lite): nodes remaining after Kahn's removal.
+func findCycleNodes(n int, adj map[int][]int) map[int]bool {
+	indeg := make([]int, n)
+	for _, tos := range adj {
+		for _, to := range tos {
+			indeg[to]++
+		}
+	}
+	// Kahn on reversed edges? We need nodes in cycles: remove nodes with
+	// no outgoing? Simpler: DFS colouring.
+	const (
+		white = 0
+		grey  = 1
+		black = 2
+	)
+	colour := make([]int, n)
+	inCycle := map[int]bool{}
+	var stack []int
+	var visit func(int)
+	visit = func(u int) {
+		colour[u] = grey
+		stack = append(stack, u)
+		for _, v := range adj[u] {
+			if colour[v] == white {
+				visit(v)
+			} else if colour[v] == grey {
+				for k := len(stack) - 1; k >= 0; k-- {
+					inCycle[stack[k]] = true
+					if stack[k] == v {
+						break
+					}
+				}
+			}
+		}
+		stack = stack[:len(stack)-1]
+		colour[u] = black
+	}
+	for i := 0; i < n; i++ {
+		if colour[i] == white {
+			visit(i)
+		}
+	}
+	return inCycle
+}
+
+// taskWithAncestors resolves one candidate block with ancestor-aware
+// inheritance: time-map, priority, plan-start/end and order cascade
+// block > ancestors (nearest first) > page; duration, deadline, scheduled
+// and depends never inherit.
+func (r *resolver) taskWithAncestors(page *logseq.Page, b *logseq.Block, ancestors []*logseq.Block) (model.Task, bool, *Issue) {
 	t := model.Task{
 		ID:     strings.TrimSpace(b.UUID),
 		Text:   taskText(b),
@@ -96,8 +429,6 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 		}
 	}
 
-	// duration: the gate (ADR 0004). Explicit only — there is no default
-	// duration; a TODO without duration is a note (tasks.md).
 	rawDur, ok := blockProps(b)["duration"]
 	if !ok {
 		return t, false, &Issue{
@@ -124,9 +455,7 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 	}
 	t.Duration = dur
 
-	// time-map:: — slugs are case-insensitive, comma-separated, and only
-	// ever block-level or page-inherited.
-	if text := r.value(page, b, "time-map"); text != "" {
+	if text := r.inheritedValue(page, b, ancestors, "time-map"); text != "" {
 		for _, slug := range splitSlugs(text) {
 			if !containsString(t.TimeMaps, slug) {
 				t.TimeMaps = append(t.TimeMaps, slug)
@@ -134,9 +463,7 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 		}
 	}
 
-	// priority:: — parsed or denied: a bad value drops the property and the
-	// Task ranks unprioritised.
-	if text := r.value(page, b, "priority"); text != "" {
+	if text := r.inheritedValue(page, b, ancestors, "priority"); text != "" {
 		p, pErr := parse.ParsePriority(text)
 		if pErr != nil {
 			r.appendBad(r.blockContext(page, b), "priority", text, pErr)
@@ -145,7 +472,6 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 		}
 	}
 
-	// deadline:: — a reference due date; it never places anything.
 	if text := r.blockValue(page, b, "deadline"); text != "" {
 		d, dErr := parseDate(text)
 		if dErr != nil {
@@ -155,8 +481,7 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 		}
 	}
 
-	// plan-start:: / plan-end:: — day-granular bounds, inheritable.
-	if text := r.value(page, b, "plan-start"); text != "" {
+	if text := r.inheritedValue(page, b, ancestors, "plan-start"); text != "" {
 		d, pErr := parse.ParseCivilDate(text)
 		if pErr != nil {
 			r.appendBad(r.blockContext(page, b), "plan-start", text, pErr)
@@ -164,7 +489,7 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 			t.PlanStart = &d
 		}
 	}
-	if text := r.value(page, b, "plan-end"); text != "" {
+	if text := r.inheritedValue(page, b, ancestors, "plan-end"); text != "" {
 		d, pErr := parse.ParseCivilDate(text)
 		if pErr != nil {
 			r.appendBad(r.blockContext(page, b), "plan-end", text, pErr)
@@ -173,9 +498,15 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 		}
 	}
 
-	// scheduled:: — the Pin: an exact date-time, block-level, never
-	// inherited (tasks.md). Its authored time belongs to the scheduling
-	// timezone's wall clock.
+	if text := r.inheritedValue(page, b, ancestors, "order"); text != "" {
+		m, oErr := parse.ParseOrder(text)
+		if oErr != nil {
+			r.appendBad(r.blockContext(page, b), "order", text, oErr)
+		} else if m == model.OrderSequential {
+			t.Order = m
+		}
+	}
+
 	if text := r.blockValue(page, b, "scheduled"); text != "" {
 		stamp, sErr := parse.ParseOrgStamp(text)
 		switch {
@@ -190,8 +521,17 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 		}
 	}
 
-	// Unknown properties on a task-marked block: never read, but named, so
-	// a key that mattered is not silently ignored.
+	// depends:: — block-level only, strict comma ((uuid)) list.
+	if text := r.blockValue(page, b, "depends"); text != "" {
+		deps, dErr := parse.ParseDepends(text)
+		if dErr != nil {
+			r.appendBad(r.blockContext(page, b), "depends", text, dErr)
+			t.Depends = []string{fmt.Sprintf("malformed-depends:%s", strings.ToLower(strings.TrimSpace(t.ID)))}
+		} else {
+			t.Depends = deps
+		}
+	}
+
 	var unknown []string
 	for key, v := range blockProps(b) {
 		if !knownKeys[key] {
@@ -202,7 +542,7 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 	}
 	sort.Strings(unknown)
 	for _, key := range unknown {
-		detail := fmt.Sprintf("%q is not a property lodo reads (it reads duration::, time-map::, priority::, plan-start::, plan-end::, deadline::, scheduled::)", key)
+		detail := fmt.Sprintf("%q is not a property lodo reads (it reads duration::, time-map::, priority::, plan-start::, plan-end::, deadline::, scheduled::, depends::, order::)", key)
 		if text, ok := propsText(blockProps(b)[key]); ok && text != "" {
 			detail += fmt.Sprintf(" Value %q is left alone.", text)
 		}
@@ -212,11 +552,9 @@ func (r *resolver) task(page *logseq.Page, b *logseq.Block) (model.Task, bool, *
 	return t, true, nil
 }
 
-// value resolves a property for the block: its own value, else the page's
-// inherited default when the key inherits (logseq-integration.md), else the
-// fallback "". An empty resolved text is treated as absent everywhere, so
-// an explicitly empty value behaves like none.
-func (r *resolver) value(page *logseq.Page, b *logseq.Block, key string) string {
+// inheritedValue resolves an inheritable property: block explicit, then
+// ancestors nearest-first, then the page default.
+func (r *resolver) inheritedValue(page *logseq.Page, b *logseq.Block, ancestors []*logseq.Block, key string) string {
 	if raw, ok := blockProps(b)[key]; ok {
 		text, okT := propsText(raw)
 		if !okT {
@@ -226,6 +564,17 @@ func (r *resolver) value(page *logseq.Page, b *logseq.Block, key string) string 
 		}
 		if trimmed := strings.TrimSpace(text); trimmed != "" {
 			return trimmed
+		}
+	}
+	for k := len(ancestors) - 1; k >= 0; k-- {
+		if raw, ok := blockProps(ancestors[k])[key]; ok {
+			text, okT := propsText(raw)
+			if !okT {
+				continue
+			}
+			if trimmed := strings.TrimSpace(text); trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	if !inheritableKeys[key] || page == nil {

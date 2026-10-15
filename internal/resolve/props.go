@@ -19,18 +19,22 @@ var knownKeys = map[string]bool{
 	"plan-start": true,
 	"plan-end":   true,
 	"scheduled":  true,
+	"depends":    true,
+	"order":      true,
 	"default":    true,
 	"id":         true,
 }
 
 // inheritableKeys are the properties a page may provide as defaults for its
-// blocks (logseq-integration.md): duration, deadline and scheduled:: are
-// each block's own, so they never inherit.
+// blocks (logseq-integration.md): duration, deadline, scheduled and
+// depends:: are each block's own, so they never inherit. order::, like the
+// plan and priority, cascades from parent blocks then the page.
 var inheritableKeys = map[string]bool{
 	"time-map":   true,
 	"priority":   true,
 	"plan-start": true,
 	"plan-end":   true,
+	"order":      true,
 }
 
 // normKey compares a property key permissively: case-insensitive, trimmed.
