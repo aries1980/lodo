@@ -1,0 +1,77 @@
+[
+  {
+    "properties": {},
+    "parent": { "id": 691 },
+    "children": [],
+    "id": 692,
+    "pathRefs": [{ "id": 691 }],
+    "level": 1,
+    "uuid": "33333333-3333-4333-8333-333333333333",
+    "content": "Assorted notes from today",
+    "marker": null,
+    "journal?": true,
+    "page": { "id": 691 },
+    "left": { "id": 691 },
+    "format": "markdown"
+  },
+  {
+    "properties": {
+      "id": "34444444-4444-4444-8444-444444444444"
+    },
+    "parent": { "id": 691 },
+    "children": [
+      {
+        "properties": {},
+        "parent": { "id": 788 },
+        "children": [],
+        "id": 789,
+        "pathRefs": [{ "id": 4 }, { "id": 691 }],
+        "level": 2,
+        "uuid": "35555555-5555-4555-8555-555555555555",
+        "content": "Details are notes, not Tasks",
+        "marker": null,
+        "page": { "id": 691 },
+        "left": { "id": 788 },
+        "format": "markdown"
+      }
+    ],
+    "id": 788,
+    "pathRefs": [{ "id": 4 }, { "id": 691 }],
+    "propertiesTextValues": {
+      "id": "34444444-4444-4444-8444-444444444444"
+    },
+    "uuid": "34444444-4444-4444-8444-444444444444",
+    "content": "TODO Review the draft\nid:: 34444444-4444-4444-8444-444444444444",
+    "marker": "TODO",
+    "page": { "id": 691 },
+    "propertiesOrder": ["id"],
+    "left": { "id": 692 },
+    "format": "markdown"
+  },
+  {
+    "parent": { "id": 691 },
+    "children": [],
+    "id": 790,
+    "pathRefs": [{ "id": 4 }, { "id": 691 }],
+    "uuid": "36666666-6666-4666-8666-666666666666",
+    "content": "DOING File the expenses",
+    "marker": "DOING",
+    "page": { "id": 691 },
+    "left": { "id": 788 },
+    "format": "markdown"
+  },
+  {
+    "properties": {},
+    "parent": { "id": 691 },
+    "children": [],
+    "id": 791,
+    "pathRefs": [{ "id": 4 }, { "id": 691 }],
+    "level": 1,
+    "uuid": "37777777-7777-4777-8777-777777777777",
+    "content": "",
+    "journal?": true,
+    "page": { "id": 691 },
+    "left": { "id": 790 },
+    "format": "markdown"
+  }
+]

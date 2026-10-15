@@ -1,0 +1,30 @@
+[
+  {
+    "id": 503,
+    "createdAt": 1788467031524,
+    "journal?": false,
+    "name": "projects",
+    "originalName": "projects",
+    "updatedAt": 1788467031524
+  },
+  {
+    "updatedAt": 1789412590096,
+    "journalDay": 20261015,
+    "createdAt": 1789412590096,
+    "id": 691,
+    "name": "2026-10-15",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "journal?": true,
+    "originalName": "2026-10-15",
+    "format": "markdown"
+  },
+  {
+    "id": 770,
+    "createdAt": 1788467031560,
+    "journal?": false,
+    "name": "Time Maps",
+    "originalName": "Time Maps",
+    "uuid": "22222222-2222-4222-8222-222222222222",
+    "format": "markdown"
+  }
+]
