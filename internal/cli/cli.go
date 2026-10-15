@@ -11,6 +11,8 @@ import (
 const (
 	codeOK    = 0
 	codeError = 1
+	// codeValidation is exit 2: validation failures under --strict (cli.md).
+	codeValidation = 2
 )
 
 type exitError struct {
@@ -26,6 +28,9 @@ type options struct {
 	json    bool
 	verbose bool
 	config  string
+
+	// out receives command output; Run wires in the process stdout.
+	out io.Writer
 }
 
 // Run builds the command tree, executes it and returns the process exit code.
@@ -79,8 +84,9 @@ func newCheckCmd(opts *options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Validate the graph and local state; no side effects",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return notImplemented("check")
+		RunE: func(c *cobra.Command, _ []string) error {
+			opts.out = c.OutOrStdout()
+			return runCheck(opts, strict)
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, "treat reported problems as a non-zero exit")
@@ -94,8 +100,9 @@ func newForecastCmd(opts *options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "forecast",
 		Short: "Print the Schedule that would be written; a dry run",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return notImplemented("forecast")
+		RunE: func(c *cobra.Command, _ []string) error {
+			opts.out = c.OutOrStdout()
+			return runForecast(opts, overrides, opts.verbose)
 		},
 	}
 	addSchedulingOverrideFlags(cmd, &overrides)
