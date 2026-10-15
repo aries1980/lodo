@@ -40,6 +40,7 @@ use of *Schedule* as the noun, so the name is kept rather than replaced with
 | --- | --- | --- |
 | `--dry-run` | `schedule` | Same as `forecast`. |
 | `--json` | all | Machine-readable output. |
+| `--no-launch-browser` | `auth google` | Headless machines: finish the grant on another device, paste the redirect back. |
 | `--window-days N`, `--timezone TZ`, … | `schedule`, `forecast` | One-run overrides of config. Not persisted. |
 | `--strict` | `check`, `schedule` | Treat reported problems as a non-zero exit. |
 | `--verbose` | all | Explain placement decisions. |

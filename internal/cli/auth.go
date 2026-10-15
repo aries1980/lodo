@@ -55,6 +55,14 @@ func runAuthGoogle(opts *options, noBrowser bool) error {
 	if err := gauth.Persist(path, res); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
+	if opts.json {
+		if err := printJSON(opts.out, struct {
+			Stored string `json:"stored"`
+		}{Stored: path}); err != nil {
+			return &exitError{code: codeError, err: err}
+		}
+		return nil
+	}
 	_, _ = fmt.Fprintf(opts.out, "Google authorization stored in %s.\n", path)
 	return nil
 }

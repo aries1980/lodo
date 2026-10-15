@@ -1,7 +1,6 @@
 package cli_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 	_ "time/tzdata"
 
 	"github.com/aries1980/lodo/internal/cli"
@@ -150,75 +148,34 @@ func withEnv(t *testing.T, key, val string) {
 	t.Setenv(key, val)
 }
 
-type forecastView struct {
-	Blocks []struct {
-		TaskID string    `json:"task_id"`
-		Task   string    `json:"task"`
-		Index  int       `json:"index"`
-		Start  time.Time `json:"start"`
-		End    time.Time `json:"end"`
-		Slots  int       `json:"slots"`
-		Kind   string    `json:"kind"`
-	} `json:"blocks"`
-	Shortfalls []struct {
-		TaskID    string `json:"task_id"`
-		Shortfall int    `json:"shortfall"`
-	} `json:"shortfalls"`
-	GraphIssues []struct{ Kind string } `json:"graph_issues"`
-}
-
-func TestForecastEndToEnd(t *testing.T) {
+func TestForecastRefusesWithoutGoogleCredentials(t *testing.T) {
 	conf, cred := testSetup(t, stubApp(t))
-	ctx := context.Background()
-	_ = ctx
 
+	// Forecast reads the calendar (M4): a credentials file with no google
+	// section is an operational refusal with the setup hint, and the
+	// schedule it would print against a silently free calendar is withheld.
 	code, out, errOut := runCLI(t, conf, cred, "--json", "forecast")
-	if code != 0 {
-		t.Fatalf("exit = %d, stderr = %q, stdout = %s", code, errOut, out)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 without the google section (stdout %q)", code, out)
+	}
+	if !strings.Contains(errOut, "google credentials: missing") || !strings.Contains(errOut, "http://127.0.0.1/") {
+		t.Fatalf("stderr must carry the setup hint: %q", errOut)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("a refused forecast prints nothing: %q", out)
 	}
 
-	var view forecastView
-	if err := json.Unmarshal([]byte(out), &view); err != nil {
-		t.Fatalf("stdout is not the JSON contract: %v\n%s", err, out)
+	// The section present but the flow never run: the same refusal, pointing
+	// at the one command that closes it.
+	if err := os.WriteFile(cred, []byte(
+		`{"logseq":{"token":"st-token"},"google":{"client_id":"cid","client_secret":"secret"}}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if len(view.Blocks) != 1 {
-		t.Fatalf("blocks = %+v, want exactly one: the 30m Task inside the default map", view.Blocks)
-	}
-	b := view.Blocks[0]
-	if b.TaskID != "t-task-uuid" || b.Kind != "flexible" || b.Slots != 2 {
-		t.Fatalf("block = %+v, want the 30m flexible Task", b)
-	}
-	if len(view.Shortfalls) != 0 || len(view.GraphIssues) != 0 {
-		t.Fatalf("unexpected report content: %+v", view)
-	}
-}
-
-func TestForecastTextEndToEnd(t *testing.T) {
-	conf, cred := testSetup(t, stubApp(t))
-
-	code, out, errOut := runCLI(t, conf, cred, "forecast")
-	if code != 0 {
-		t.Fatalf("exit = %d, stderr = %q", code, errOut)
-	}
-	for _, want := range []string{
-		`Schedule that would be written to calendar "primary"`,
-		"30m  Write the milestone note",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("text output missing %q:\n%s", want, out)
-		}
-	}
-	// Explanations only with --verbose:
-	if strings.Contains(out, "Explanations:") {
-		t.Fatal("plain forecast must not include explanations")
-	}
-
-	code, out, errOut = runCLI(t, conf, cred, "--verbose", "forecast")
-	if code != 0 {
-		t.Fatalf("exit = %d, stderr = %q", code, errOut)
-	}
-	if !strings.Contains(out, "Explanations:") {
-		t.Fatalf("--verbose must add explanations:\n%s", out)
+	code, _, errOut = runCLI(t, conf, cred, "forecast")
+	if code != 1 ||
+		!strings.Contains(errOut, "refresh_token is empty") ||
+		!strings.Contains(errOut, "lodo auth google") {
+		t.Fatalf("exit = %d stderr = %q, want the auth hint", code, errOut)
 	}
 }
 

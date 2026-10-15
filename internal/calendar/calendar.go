@@ -1,0 +1,349 @@
+// Package calendar is the read side of the Google Calendar integration
+// (calendar.md): list the events a window overlaps, classify them, and
+// project busy time onto the run's grid — busy arrives to the planner as
+// an explicit mask (ADR 0006). No write calls live here; events are
+// created and patched from M5. All requests are plain net/http plus
+// encoding/json, deliberately not google.golang.org/api: the REST surface
+// v0.1 needs is list and get.
+package calendar
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/aries1980/lodo/internal/grid"
+)
+
+// GoogleBase is the Calendar API v3 root the real client talks to.
+const GoogleBase = "https://www.googleapis.com/calendar/v3"
+
+const (
+	// DefaultTimeout bounds one API call, like the Logseq client's: one
+	// that sits on a wall for half a minute has stopped answering.
+	DefaultTimeout = 30 * time.Second
+	// readLimit caps one response: event lists are the big payloads and
+	// anything bigger than this is not a calendar a user wants read.
+	readLimit = 64 << 20
+)
+
+// The event fields the busy rules read.
+const (
+	statusCancelled   = "cancelled"
+	statusTransparent = "transparent"
+	statusDeclined    = "declined"
+)
+
+// Client reads one Calendar over the API v3 REST surface. Its transport is
+// supplied by the caller: production wraps the OAuth token source so
+// refreshes happen transparently (the credentials' refresh token was
+// stored by `lodo auth google`); a failed refresh surfaces as an error
+// when a call is made, never as an empty mask.
+type Client struct {
+	hc   *http.Client
+	base *url.URL
+	id   string
+}
+
+// NewClient starts one reader for the calendar id names (for example the
+// config's calendar.id, default primary). base "" points it at Google
+// (GoogleBase); tests point it at an httptest fake. hc nil means the
+// default transport with DefaultTimeout.
+func NewClient(hc *http.Client, id, base string) (*Client, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("google calendar client: no calendar id (config.yaml's calendar.id)")
+	}
+	if base == "" {
+		base = GoogleBase
+	}
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("google calendar client: base %q: must be an absolute http(s) URL", base)
+	}
+	if hc == nil {
+		hc = &http.Client{Timeout: DefaultTimeout}
+	}
+	return &Client{hc: hc, base: u, id: id}, nil
+}
+
+// Event is one Calendar API v3 event, in the parts M4 recognises in the
+// wild (calendar.md's shape section read, not written). Identifying fields
+// are absent-ish on the wire without changing decode: every event carries
+// its id, and every timed event its start and end.
+type Event struct {
+	ID                 string     `json:"id"`
+	Summary            string     `json:"summary,omitempty"`
+	Status             string     `json:"status,omitempty"`
+	Transparency       string     `json:"transparency,omitempty"`
+	Start              EventTime  `json:"start,omitempty"`
+	End                EventTime  `json:"end,omitempty"`
+	Recurrence         []string   `json:"recurrence,omitempty"`
+	Attendees          []Attendee `json:"attendees,omitempty"`
+	ExtendedProperties Extended   `json:"extendedProperties,omitempty"`
+}
+
+// EventTime is the start or end of an event: either a timed instant
+// (dateTime, RFC 3339 with its own offset) or a whole day (date,
+// yyyy-mm-dd; the day an all-day event ends is the one after its start).
+type EventTime struct {
+	DateTime string `json:"dateTime,omitempty"`
+	Date     string `json:"date,omitempty"`
+}
+
+// Attendee is one attendee and their response. The user's own attendance
+// (self=true) decides whether the event blocks their time.
+type Attendee struct {
+	Self           bool   `json:"self,omitempty"`
+	ResponseStatus string `json:"responseStatus,omitempty"`
+}
+
+// Extended is the event's property bag; the private "lodo" flag marks a
+// Managed Event, so ownership survives Lodo losing its local state.
+type Extended struct {
+	Private map[string]string `json:"private,omitempty"`
+}
+
+// Kind is what an event means to busy time (calendar.md).
+type Kind string
+
+const (
+	// KindManaged is an event Lodo itself created: M4 leaves it out of
+	// busy time and M5's reconcile folds its Blocks back in.
+	KindManaged Kind = "managed"
+	// KindBusy blocks the time it touches.
+	KindBusy Kind = "busy"
+	// KindFree blocks nothing: cancelled, declined by the user, marked
+	// transparent, or not yet accepted and unlikely to matter.
+	KindFree Kind = "free"
+)
+
+// Classify applies calendar.md's busy rules as a pure function of the
+// event: Managed iff it carries lodo=true in its private properties; free
+// when cancelled, declined by the user, or transparent; busy otherwise.
+// All-day events classify like any other — busy — and Span gives them
+// their whole local day.
+func Classify(e Event) Kind {
+	if e.Managed() {
+		return KindManaged
+	}
+	if e.Status == statusCancelled || e.userDeclined() || e.Transparency == statusTransparent {
+		return KindFree
+	}
+	return KindBusy
+}
+
+// Managed reports whether the event is one Lodo itself created — the
+// ownership test calendar.md records on the event itself. Everything else
+// is an External Event: busy time, never moved.
+func (e Event) Managed() bool {
+	return e.ExtendedProperties.Private["lodo"] == "true"
+}
+
+// userDeclined reports whether the user, as the attendee marked self=true,
+// declined. Other attendees' responses are not the user's.
+func (e Event) userDeclined() bool {
+	for _, a := range e.Attendees {
+		if a.Self && a.ResponseStatus == statusDeclined {
+			return true
+		}
+	}
+	return false
+}
+
+// Span returns [start, end) as instants. A timed event uses the RFC 3339
+// offsets it carries; a missing or unparseable dateTime falls back to the
+// event's date, read in loc (the Scheduling timezone), so an all-day event
+// is busy for the whole local day — Google ends such an event on the day
+// after. An end that does not follow its start is data corruption and
+// erroring refuses it into the open, the way a revoked refresh does.
+func (e Event) Span(loc *time.Location) (start, end time.Time, err error) {
+	start, err = instant(e.Start, loc)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("event %s: start: %w", e.ID, err)
+	}
+	end, err = instant(e.End, loc)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("event %s: end: %w", e.ID, err)
+	}
+	if !end.After(start) {
+		return time.Time{}, time.Time{}, fmt.Errorf("event %s: ends %v, not after it starts %v", e.ID, end, start)
+	}
+	return start, end, nil
+}
+
+// instant parses one EventTime: its dateTime first (RFC 3339), its date
+// second (the midnight of that day in loc), and an error when there is
+// neither.
+func instant(et EventTime, loc *time.Location) (time.Time, error) {
+	if s := strings.TrimSpace(et.DateTime); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t, nil
+		}
+	}
+	if s := strings.TrimSpace(et.Date); s != "" {
+		if d, err := time.ParseInLocation("2006-01-02", s, loc); err == nil {
+			return d, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("neither dateTime (%q) nor date (%q) parses", et.DateTime, et.Date)
+}
+
+// List returns the expanded events that overlap [from, to). singleEvents
+// expands recurrences into the instances that matter, and makes the
+// server's orderBy=startTime legal: pages read forward by start. Ties are
+// the server's business alone, for a union mask never depends on them.
+// Pages follow nextPageToken until Google is out.
+func (c *Client) List(ctx context.Context, from, to time.Time) ([]Event, error) {
+	q := url.Values{}
+	q.Set("timeMin", from.Format(time.RFC3339))
+	q.Set("timeMax", to.Format(time.RFC3339))
+	q.Set("singleEvents", "true")
+	q.Set("orderBy", "startTime")
+	q.Set("maxResults", "2500")
+
+	var all []Event
+	for {
+		var page struct {
+			Items         []Event `json:"items"`
+			NextPageToken string  `json:"nextPageToken"`
+		}
+		if err := c.get(ctx, []string{"calendars", c.id, "events"}, q, &page); err != nil {
+			return nil, err
+		}
+		all = append(all, page.Items...)
+		if page.NextPageToken == "" {
+			return all, nil
+		}
+		q.Set("pageToken", page.NextPageToken)
+	}
+}
+
+// Get fetches one event by id. M5's reconcile uses it; today only tests
+// and curious callers do. A missing event is the client's ordinary error;
+// the reconcile is the layer that turns 404 into a user's deletion.
+func (c *Client) Get(ctx context.Context, id string) (Event, error) {
+	var e Event
+	if err := c.get(ctx, []string{"calendars", c.id, "events", id}, nil, &e); err != nil {
+		return Event{}, err
+	}
+	return e, nil
+}
+
+// Busy is the run's calendar read: list the events that overlap the
+// grid's window, classify them, and project the busy ones onto g with the
+// conservative overlap the planner already uses — a slot a busy event
+// touches is busy whole. Events starting before now or running past the
+// window's end are clipped before projecting: an event crossing a window
+// boundary clips, it does not become busy for the whole window. Managed
+// events carry no busy time in M4 — no dispositions exist yet — and are
+// returned instead, so forecast can say the hole M5 will close.
+func (c *Client) Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []Event, error) {
+	events, err := c.List(ctx, now, g.WindowEnd())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	mask := grid.NewMask(g.Len())
+	var managed []Event
+	for _, e := range events {
+		switch Classify(e) {
+		case KindManaged:
+			managed = append(managed, e)
+			continue
+		case KindFree:
+			continue
+		}
+		start, end, err := e.Span(g.Location())
+		if err != nil {
+			return nil, nil, err
+		}
+		if start.Before(now) {
+			start = now
+		}
+		if end.After(g.WindowEnd()) {
+			end = g.WindowEnd()
+		}
+		if !start.Before(end) {
+			continue // the window never touches the rest of it
+		}
+		mask.OrInto(g.Overlapping(start, end))
+	}
+	return mask, managed, nil
+}
+
+// get issues one GET against base+path+query and decodes out (which may be
+// JSON null). A failure reads Google's error body, {"error": …}.
+func (c *Client) get(ctx context.Context, path []string, q url.Values, out any) error {
+	u := c.base.JoinPath(path...)
+	if q != nil {
+		u.RawQuery = q.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("google calendar api: %w", err)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), errorCause(err))
+	}
+	defer func() { _ = resp.Body.Close() }() // a response body's close error is never actionable
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
+	if err != nil {
+		return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if msg := decodeError(data); msg != "" {
+			return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, msg)
+		}
+		return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, snippet(data))
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("google calendar api: %s: decode: %w (body: %s)", strings.Join(path, "/"), err, snippet(data))
+	}
+	return nil
+}
+
+// decodeError reads Google's error body: {"error": {"message": "…"}}.
+func decodeError(data []byte) string {
+	var e struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
+		return e.Error.Message
+	}
+	return ""
+}
+
+// errorCause shortens the transport noise: a *url.Error wraps the real
+// cause (dial refused, timeout), so it is unwrapped for the message.
+func errorCause(err error) error {
+	var uErr *url.Error
+	if errors.As(err, &uErr) {
+		return uErr.Err
+	}
+	return err
+}
+
+// snippet renders a short body prefix for error messages.
+func snippet(data []byte) string {
+	const at = 300
+	s := string(data)
+	if len(s) > at {
+		s = s[:at] + "…"
+	}
+	return strings.TrimSpace(s)
+}

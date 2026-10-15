@@ -18,42 +18,44 @@ import (
 )
 
 // loadGraph assembles the read side: config (with resolved overrides),
-// credentials (strict 0600), and the Logseq HTTP API client.
-func loadGraph(opts *options, ov configOverrides) (config.Config, logseq.Client, error) {
+// credentials (strict 0600), and the Logseq HTTP API client. The
+// credentials travel too, for the commands that read past the Logseq side
+// of their file (forecast's calendar).
+func loadGraph(opts *options, ov configOverrides) (config.Config, logseq.Client, config.Credentials, error) {
 	path := opts.config
 	if path == "" {
 		def, err := config.DefaultConfigPath()
 		if err != nil {
-			return config.Config{}, nil, fmt.Errorf("locate the config file: %w", err)
+			return config.Config{}, nil, config.Credentials{}, fmt.Errorf("locate the config file: %w", err)
 		}
 		path = def
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, nil, config.Credentials{}, err
 	}
 	cfg, err = config.Apply(cfg, config.Overrides{
 		WindowDays: ov.windowDays,
 		Timezone:   ov.timezone,
 	})
 	if err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, nil, config.Credentials{}, err
 	}
 
 	credPath, err := config.DefaultCredentialsPath()
 	if err != nil {
-		return config.Config{}, nil, fmt.Errorf("locate the credentials file: %w", err)
+		return config.Config{}, nil, config.Credentials{}, fmt.Errorf("locate the credentials file: %w", err)
 	}
 	creds, err := config.LoadCredentials(credPath)
 	if err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, nil, config.Credentials{}, err
 	}
 
 	client, err := logseq.NewClient(cfg.Logseq.APIURL, creds.Logseq.Token, httpClient(cfg))
 	if err != nil {
-		return config.Config{}, nil, err
+		return config.Config{}, nil, config.Credentials{}, err
 	}
-	return cfg, client, nil
+	return cfg, client, creds, nil
 }
 
 // httpClient builds the transport the API adapter speaks through. An
@@ -73,15 +75,16 @@ func httpClient(cfg config.Config) *http.Client {
 	return &http.Client{Timeout: logseq.DefaultTimeout, Transport: tls}
 }
 
-// readGraph is the shared read side of check and forecast. The injected Now
-// lives here, once per run — never inside the pure packages.
+// readGraph is check's read side: resolve the graph, plan with no busy
+// time (check never consults the calendar), Now injected once per run —
+// never inside the pure packages.
 func readGraph(opts *options, ov configOverrides) (config.Config, run.Outcome, time.Time, error) {
-	cfg, client, err := loadGraph(opts, ov)
+	cfg, client, _, err := loadGraph(opts, ov)
 	if err != nil {
 		return config.Config{}, run.Outcome{}, time.Time{}, err
 	}
 	now := time.Now()
-	outcome, err := run.Graph(context.Background(), client, cfg, now)
+	outcome, err := run.Graph(context.Background(), client, nil, cfg, now)
 	if err != nil {
 		return cfg, run.Outcome{}, now, err
 	}
@@ -118,10 +121,24 @@ func runCheck(opts *options, strict bool) error {
 	return nil
 }
 
-// runForecast implements lodo forecast: compute and print the Schedule that
-// would be written; a dry run with no writes.
+// runForecast implements lodo forecast: compute and print the Schedule
+// that would be written; a dry run with no writes. The calendar read is a
+// hard part: resolve (M3), busy time (M4), then the planner — a bad or
+// unreachable calendar is an operational error (exit 1), so the forecast
+// never prints against a silently free calendar.
 func runForecast(opts *options, ov configOverrides, verbose bool) error {
-	cfg, outcome, now, err := readGraph(opts, ov)
+	cfg, client, creds, err := loadGraph(opts, ov)
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+
+	busy, err := calendarBusy(context.Background(), creds, cfg)
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+
+	now := time.Now()
+	outcome, err := run.Graph(context.Background(), client, busy, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -130,6 +147,7 @@ func runForecast(opts *options, ov configOverrides, verbose bool) error {
 		view := forecastReport{
 			Blocks:     blocks(outcome),
 			Shortfalls: shortfalls(outcome),
+			Managed:    managedEvents(outcome),
 		}
 		if verbose {
 			view.Explanations = explanations(outcome)
@@ -155,6 +173,16 @@ type forecastReport struct {
 	Blocks       []blockJSON       `json:"blocks,omitempty"`
 	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
 	Explanations []explanationJSON `json:"explanations,omitempty"` // with --verbose
+	// Managed are the calendar's Lodo-made events busy deliberately left
+	// out in M4; M5's schedule closes that hole.
+	Managed []managedJSON `json:"managed_left_out,omitempty"`
+}
+
+// managedJSON is one Managed event run out of the mask, for the note both
+// renderings make.
+type managedJSON struct {
+	ID      string `json:"id"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type blockJSON struct {
@@ -235,6 +263,16 @@ func explanations(outcome run.Outcome) []explanationJSON {
 	return out
 }
 
+// managedEvents is the note's payload: the events busy deliberately left
+// out, in view order.
+func managedEvents(outcome run.Outcome) []managedJSON {
+	out := make([]managedJSON, 0, len(outcome.Managed))
+	for _, e := range outcome.Managed {
+		out = append(out, managedJSON{ID: e.ID, Summary: e.Summary})
+	}
+	return out
+}
+
 // printJSON writes indented, newline-terminated, deterministic JSON.
 func printJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
@@ -282,6 +320,20 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 		durationMinutes(granularity, 1),
 		loc,
 	)
+
+	// The known M4 hole, said plainly: Lodo's own events are not in the
+	// busy mask yet, and M5's reconcile is what folds them back in.
+	if n := len(outcome.Managed); n > 0 {
+		_, _ = fmt.Fprintf(w,
+			"\nNote: %d Managed event(s) on the calendar are not counted as busy yet — they are\nthe ones Lodo itself created; the schedule command's reconciliation will account for them:\n", n)
+		for _, e := range outcome.Managed {
+			summary := e.Summary
+			if summary == "" {
+				summary = "(no title)"
+			}
+			_, _ = fmt.Fprintf(w, "  %s — %s\n", e.ID, summary)
+		}
+	}
 
 	if len(outcome.Schedule.Blocks) == 0 {
 		_, _ = fmt.Fprintln(w, "\nNothing to schedule.")

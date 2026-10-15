@@ -16,6 +16,13 @@ calendars.
   written to `credentials.json` (`0600`), never into the graph.
 - Scope: `https://www.googleapis.com/auth/calendar.events` (read and write events).
 - The target calendar is `calendar.id` from `config.yaml` (default `primary`).
+- A machine with no browser finishes the same grant elsewhere:
+  `lodo auth google --no-launch-browser` prints the authorization URL to complete on any
+  device, and the redirect address Google then shows — or the code inside it — is pasted
+  back on one line to exchange. The loopback `redirect_uri`, PKCE verifier and exchange
+  are the same, so a tunnelled redirect completes the flow unchanged. Google's login is
+  one system for personal and Workspace accounts; the account approved with is the one
+  Lodo reads.
 
 ## Identifying a Managed Event
 

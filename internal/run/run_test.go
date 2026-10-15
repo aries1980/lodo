@@ -3,13 +3,16 @@ package run_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 	_ "time/tzdata"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/planner"
@@ -164,7 +167,7 @@ func TestGoldenForecast(t *testing.T) {
 	client := newStubClient(fixtureWeek())
 	ctx := context.Background()
 
-	outcome, err := run.Graph(ctx, client, testConfig(), at(9, 8, 0))
+	outcome, err := run.Graph(ctx, client, nil, testConfig(), at(9, 8, 0))
 	if err != nil {
 		t.Fatalf("Graph: %v", err)
 	}
@@ -229,4 +232,71 @@ func issueKinds(outcome run.Outcome) []string {
 		out = append(out, i.Kind)
 	}
 	return out
+}
+
+// stubBusy is the calendar as a test hands it in: one mask, the Managed
+// events deliberately left out of it, or an error.
+type stubBusy struct {
+	mask    grid.Mask
+	managed []calendar.Event
+	err     error
+}
+
+func (s stubBusy) Busy(context.Context, *grid.Grid, time.Time) (grid.Mask, []calendar.Event, error) {
+	return s.mask, s.managed, s.err
+}
+
+// busyGraph is the smallest useful graph: one 30m Task inside the default
+// map, nothing else.
+func busyGraph() graphFixture {
+	return graphFixture{
+		pages: []*logseq.Page{memPage("2026-11-09"), memPage("Time Maps")},
+		trees: map[string][]*logseq.Block{
+			"Time Maps": {mapDeepWork},
+			"2026-11-09": {
+				props(marked("TODO", "t-audit", "TODO Audit the ledger"), map[string]any{"duration": "30m"}),
+			},
+		},
+	}
+}
+
+func TestBusyShapesForecastAndKeepsManagedAside(t *testing.T) {
+	cfg := testConfig()
+	now := at(9, 8, 0)
+	g := grid.Build(now, london, 15*time.Minute, cfg.Scheduling.WindowDays)
+	// An external meeting owns Monday 09:00-11:00, right where the default
+	// map opens.
+	busy := g.Overlapping(at(9, 9, 0), at(9, 11, 0))
+
+	outcome, err := run.Graph(context.Background(), newStubClient(busyGraph()),
+		stubBusy{mask: busy, managed: []calendar.Event{{ID: "m-1", Summary: "Lodo-made"}}}, cfg, now)
+	if err != nil {
+		t.Fatalf("Graph: %v", err)
+	}
+
+	want := planner.Schedule{
+		Blocks: []model.Block{
+			{TaskID: "t-audit", Index: 0, Start: at(9, 11, 0), End: at(9, 11, 30), Slots: 2, Kind: model.BlockFlexible},
+		},
+		Explanations: []planner.Explanation{
+			{TaskID: "t-audit", BlockIndex: 0, Kind: model.BlockFlexible, Start: at(9, 11, 0), Slots: 2, RunStart: at(9, 11, 0), RunSlots: 4},
+		},
+	}
+	if diff := cmp.Diff(want, outcome.Schedule); diff != "" {
+		t.Fatalf("Schedule mismatch (-want +got):\n%s", diff)
+	}
+	if len(outcome.Managed) != 1 || outcome.Managed[0].ID != "m-1" {
+		t.Fatalf("Managed = %+v, want the one handed in", outcome.Managed)
+	}
+}
+
+func TestCalendarErrorsIsOperational(t *testing.T) {
+	outcome, err := run.Graph(context.Background(), newStubClient(busyGraph()),
+		stubBusy{err: errors.New("the calendar is unreachable")}, testConfig(), at(9, 8, 0))
+	if err == nil || !strings.Contains(err.Error(), "the calendar is unreachable") {
+		t.Fatalf("Graph err = %v, want the calendar's cause, not an empty mask", err)
+	}
+	if outcome.Schedule.Blocks != nil {
+		t.Fatalf("a failed calendar must not half-plan: %+v", outcome.Schedule.Blocks)
+	}
 }

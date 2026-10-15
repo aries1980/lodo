@@ -1,9 +1,11 @@
 // Package run assembles the read side of the loop the CLI commands need:
-// read the graph fresh over the HTTP API, resolve it, and plan the Schedule.
+// read the graph fresh over the HTTP API, resolve it, project the
+// calendar's busy time, and plan the Schedule.
 //
-// In M3 the planner receives explicit inputs only (ADR 0006): the busy mask
-// is empty and there are no dispositions, because the store is M5's work.
-// Now is injected by the caller, never read here.
+// The busy mask is the calendar's explicit input to the planner (ADR 0006):
+// resolved tasks plus a mask, never a calendar the planner reaches into.
+// Dispositions stay empty — the store is M5's work — and Now is injected by
+// the caller, never read here.
 package run
 
 import (
@@ -12,25 +14,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/resolve"
 )
 
+// BusySource is the calendar part of the loop: busy time already projected
+// onto the run's own grid, plus the Managed events that were deliberately
+// left out of it — no dispositions exist yet, so M4 notes them and M5's
+// reconcile folds their Blocks back. A nil BusySource means no calendar is
+// consulted; `check` never consults one.
+type BusySource interface {
+	Busy(ctx context.Context, g *grid.Grid, now time.Time) (busy grid.Mask, managed []calendar.Event, err error)
+}
+
 // Outcome is one command's read side: the Tasks that were seen, the graph
-// problems to report, and the Schedule planned from them.
+// problems to report, the Schedule planned from them, and the Managed
+// events busy deliberately left out.
 type Outcome struct {
 	Tasks    []model.Task
 	Issues   []resolve.Issue
 	Schedule planner.Schedule
+	// Managed is the one hole in the mask M4 leaves: Lodo's own events are
+	// not folded into busy until reconciliation exists.
+	Managed []calendar.Event
 }
 
-// Graph reads the graph fresh, resolves it and plans the Schedule with the
-// effective config's settings. Both check and forecast call this; writes
-// start in M5.
-func Graph(ctx context.Context, client logseq.Client, cfg config.Config, now time.Time) (Outcome, error) {
+// Graph reads the graph fresh, resolves it, projects the calendar's busy
+// time and plans the Schedule with the effective config's settings. Both
+// check and forecast call this; writes start in M5.
+func Graph(ctx context.Context, client logseq.Client, busy BusySource, cfg config.Config, now time.Time) (Outcome, error) {
 	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
 	if err != nil {
 		return Outcome{}, err
@@ -45,11 +62,21 @@ func Graph(ctx context.Context, client logseq.Client, cfg config.Config, now tim
 		return Outcome{}, err
 	}
 
+	var inputBusy grid.Mask
+	var managed []calendar.Event
+	if busy != nil {
+		g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
+		inputBusy, managed, err = busy.Busy(ctx, g, now)
+		if err != nil {
+			return Outcome{}, err
+		}
+	}
+
 	schedule, err := planner.Plan(planner.Input{
 		Tasks:        result.Tasks,
 		TimeMaps:     result.TimeMaps,
-		Busy:         nil, // M3: no calendar busy time yet
-		Dispositions: nil, // M3: the store does not exist yet
+		Busy:         inputBusy,
+		Dispositions: nil, // M4: the store does not exist yet
 		Now:          now,
 		Granularity:  granularity,
 		WindowDays:   cfg.Scheduling.WindowDays,
@@ -59,7 +86,7 @@ func Graph(ctx context.Context, client logseq.Client, cfg config.Config, now tim
 		return Outcome{}, err
 	}
 
-	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule}, nil
+	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed}, nil
 }
 
 // Read walks the read strategy from logseq-integration.md: enumerate pages,
