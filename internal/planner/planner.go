@@ -7,12 +7,13 @@ package planner
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/norm"
 )
 
 // Input is everything the planner is allowed to look at. Busy holds the busy
@@ -83,24 +84,14 @@ type Explanation struct {
 
 // Plan computes the Schedule for the given inputs.
 func Plan(in Input) (Schedule, error) {
-	if in.Location == nil {
-		return Schedule{}, fmt.Errorf("planner: location is required")
-	}
-	if in.Granularity <= 0 || in.Granularity > 24*time.Hour {
-		return Schedule{}, fmt.Errorf("planner: granularity must be within (0h, 24h], got %v", in.Granularity)
-	}
-	if in.WindowDays <= 0 {
-		return Schedule{}, fmt.Errorf("planner: window days must be positive, got %d", in.WindowDays)
+	if err := validateInput(in); err != nil {
+		return Schedule{}, err
 	}
 
 	g := grid.Build(in.Now, in.Location, in.Granularity, in.WindowDays)
-
-	busy := grid.NewMask(g.Len())
-	if len(in.Busy) > 0 {
-		if len(in.Busy) != g.MaskWords() {
-			return Schedule{}, fmt.Errorf("planner: busy mask has %d words, want %d", len(in.Busy), g.MaskWords())
-		}
-		busy = in.Busy.Clone()
+	busy, err := buildBusy(in.Busy, g)
+	if err != nil {
+		return Schedule{}, err
 	}
 
 	dispositions, err := indexDispositions(in.Dispositions)
@@ -108,21 +99,9 @@ func Plan(in Input) (Schedule, error) {
 		return Schedule{}, err
 	}
 
-	plans := make([]*taskPlan, len(in.Tasks))
-	for i, t := range in.Tasks {
-		if t.Container {
-			plans[i] = newTaskPlan(t, nil, in.Granularity)
-			plans[i].n = 0
-			plans[i].placed = 0
-			plans[i].shortfall = 0
-			plans[i].stoodDown = 0
-			plans[i].pinnedSlots = 0
-			continue
-		}
-		if t.Duration <= 0 {
-			return Schedule{}, fmt.Errorf("planner: task %s: duration must be positive", t.ID)
-		}
-		plans[i] = newTaskPlan(t, dispositions[t.ID], in.Granularity)
+	plans, err := buildPlans(in.Tasks, dispositions, in.Granularity)
+	if err != nil {
+		return Schedule{}, err
 	}
 
 	b := &builder{g: g, busy: busy}
@@ -131,19 +110,96 @@ func Plan(in Input) (Schedule, error) {
 	// search begins. They are emitted at their authored time, never snapped.
 	// A Pin with dependencies stays (Q10 Pin wins); the violation is
 	// reported after placement.
+	pins := collectPins(plans)
+	emitPins(pins, b)
+	emitPinned(plans, b, in.Granularity)
+
+	// Order the search: topological over dependencies first (deps before
+	// dependents, even across time-bound/flexible), existing comparator as
+	// tie-break among unrelated Tasks. Containers never enter the order.
+	today := model.CivilDateOf(in.Now.In(in.Location))
+	horizonEnd := today.AddDays(in.WindowDays)
+
+	byID, lowerByID := indexPlans(plans)
+	candidates := collectCandidates(plans)
+	blockedUnknown := findUnknownDeps(candidates, byID, lowerByID)
+	order, cycleSet := topoOrder(candidates, byID, lowerByID, blockedUnknown)
+
+	maps := indexTimeMaps(in.TimeMaps)
+	ends := initialEnds(pins, plans)
+
+	blockedReason, blockedBy := placeOrdered(b, order, byID, lowerByID, cycleSet, ends, maps, today, horizonEnd, in.Now)
+
+	report := buildReport(candidates, order, pins, byID, lowerByID, cycleSet, blockedUnknown, blockedReason, blockedBy, ends)
+
+	blocks, explanations := b.sorted()
+	return Schedule{Blocks: blocks, Report: report, Explanations: explanations}, nil
+}
+
+func validateInput(in Input) error {
+	if in.Location == nil {
+		return fmt.Errorf("planner: location is required")
+	}
+	if in.Granularity <= 0 || in.Granularity > 24*time.Hour {
+		return fmt.Errorf("planner: granularity must be within (0h, 24h], got %v", in.Granularity)
+	}
+	if in.WindowDays <= 0 {
+		return fmt.Errorf("planner: window days must be positive, got %d", in.WindowDays)
+	}
+	return nil
+}
+
+func buildBusy(busy grid.Mask, g *grid.Grid) (grid.Mask, error) {
+	out := grid.NewMask(g.Len())
+	if len(busy) > 0 {
+		if len(busy) != g.MaskWords() {
+			return nil, fmt.Errorf("planner: busy mask has %d words, want %d", len(busy), g.MaskWords())
+		}
+		out = busy.Clone()
+	}
+	return out, nil
+}
+
+func buildPlans(tasks []model.Task, dispositions map[string][]model.Disposition, granularity time.Duration) ([]*taskPlan, error) {
+	plans := make([]*taskPlan, len(tasks))
+	for i, t := range tasks {
+		if t.Container {
+			plans[i] = newTaskPlan(t, nil, granularity)
+			plans[i].n = 0
+			plans[i].placed = 0
+			plans[i].shortfall = 0
+			plans[i].stoodDown = 0
+			plans[i].pinnedSlots = 0
+			continue
+		}
+		if t.Duration <= 0 {
+			return nil, fmt.Errorf("planner: task %s: duration must be positive", t.ID)
+		}
+		plans[i] = newTaskPlan(t, dispositions[t.ID], granularity)
+	}
+	return plans, nil
+}
+
+func collectPins(plans []*taskPlan) []*taskPlan {
 	pins := make([]*taskPlan, 0, len(plans))
 	for _, p := range plans {
 		if p.task.Pin != nil && !p.task.Container {
 			pins = append(pins, p)
 		}
 	}
-	sort.Slice(pins, func(i, j int) bool {
-		a, b := pins[i].task, pins[j].task
-		if !a.Pin.Equal(*b.Pin) {
-			return a.Pin.Before(*b.Pin)
+	slices.SortFunc(pins, func(a, b *taskPlan) int {
+		if !a.task.Pin.Equal(*b.task.Pin) {
+			if a.task.Pin.Before(*b.task.Pin) {
+				return -1
+			}
+			return 1
 		}
-		return orderBefore(a, b)
+		return compareTasks(a.task, b.task)
 	})
+	return pins
+}
+
+func emitPins(pins []*taskPlan, b *builder) {
 	for _, p := range pins {
 		start := *p.task.Pin
 		b.addExact(model.Block{
@@ -155,19 +211,23 @@ func Plan(in Input) (Schedule, error) {
 			Kind:   model.BlockPin,
 		})
 	}
+}
 
-	// Pinned Blocks keep the span the user moved them to and mark every slot
-	// they overlap busy, so nothing else may overlap them.
+// emitPinned keeps the user-moved spans and marks every slot they overlap
+// busy, so nothing else may overlap them.
+func emitPinned(plans []*taskPlan, b *builder, granularity time.Duration) {
 	for _, p := range plans {
 		if p.task.Container {
 			continue
 		}
-		sort.Slice(p.pinnedDisps, func(i, j int) bool {
-			a, b := p.pinnedDisps[i], p.pinnedDisps[j]
+		slices.SortFunc(p.pinnedDisps, func(a, b model.Disposition) int {
 			if !a.Start.Equal(b.Start) {
-				return a.Start.Before(b.Start)
+				if a.Start.Before(b.Start) {
+					return -1
+				}
+				return 1
 			}
-			return a.BlockIndex < b.BlockIndex
+			return a.BlockIndex - b.BlockIndex
 		})
 		for _, d := range p.pinnedDisps {
 			b.addExact(model.Block{
@@ -175,59 +235,58 @@ func Plan(in Input) (Schedule, error) {
 				Index:  d.BlockIndex,
 				Start:  d.Start,
 				End:    d.End,
-				Slots:  units(d.End.Sub(d.Start), in.Granularity),
+				Slots:  norm.Units(d.End.Sub(d.Start), granularity),
 				Kind:   model.BlockPinned,
 			})
 		}
 	}
+}
 
-	// Order the search: topological over dependencies first (deps before
-	// dependents, even across time-bound/flexible), existing comparator as
-	// tie-break among unrelated Tasks. Containers never enter the order.
-	today := model.CivilDateOf(in.Now.In(in.Location))
-	horizonEnd := today.AddDays(in.WindowDays)
-
-	byID := make(map[string]*taskPlan, len(plans))
+func indexPlans(plans []*taskPlan) (byID, lowerByID map[string]*taskPlan) {
+	byID = make(map[string]*taskPlan, len(plans))
 	for _, p := range plans {
 		if p.task.Container {
 			continue
 		}
 		byID[p.task.ID] = p
 	}
-	lowerByID := make(map[string]*taskPlan, len(byID))
+	lowerByID = make(map[string]*taskPlan, len(byID))
 	for id, p := range byID {
-		lowerByID[strings.ToLower(strings.TrimSpace(id))] = p
+		lowerByID[norm.ID(id)] = p
 	}
+	return byID, lowerByID
+}
 
-	// Partition placeable non-Pin Tasks; Pins are already placed.
+// collectCandidates partitions placeable non-Pin Tasks; Pins are already placed.
+func collectCandidates(plans []*taskPlan) []*taskPlan {
 	var candidates []*taskPlan
-	pinSet := map[string]bool{}
-	for _, p := range pins {
-		pinSet[p.task.ID] = true
-	}
 	for _, p := range plans {
 		if p.task.Container || p.task.Pin != nil || p.required() == 0 {
 			continue
 		}
 		candidates = append(candidates, p)
 	}
+	return candidates
+}
 
-	// Dangling (unknown) dependencies block immediately.
+// findUnknownDeps collects dangling (unknown) dependencies, which block immediately.
+func findUnknownDeps(candidates []*taskPlan, byID, lowerByID map[string]*taskPlan) map[string][]string {
 	blockedUnknown := map[string][]string{}
 	for _, p := range candidates {
 		for _, dep := range p.task.Depends {
-			if _, ok := byID[dep]; ok {
-				continue
-			}
-			if _, ok := lowerByID[strings.ToLower(strings.TrimSpace(dep))]; ok {
+			if _, ok := lookupDep(byID, lowerByID, dep); ok {
 				continue
 			}
 			blockedUnknown[p.task.ID] = append(blockedUnknown[p.task.ID], dep)
 		}
 	}
+	return blockedUnknown
+}
 
-	// Kahn over Task-to-Task edges (placeable non-Pin only; Pin edges are
-	// temporal only since Pins are already placed).
+// topoOrder runs Kahn over Task-to-Task edges (placeable non-Pin only; Pin
+// edges are temporal only since Pins are already placed) with the existing
+// comparator as tie-break among unrelated Tasks.
+func topoOrder(candidates []*taskPlan, byID, lowerByID map[string]*taskPlan, blockedUnknown map[string][]string) (order []*taskPlan, cycleSet map[string]bool) {
 	indeg := make(map[string]int)
 	dependents := make(map[string][]string)
 	for _, p := range candidates {
@@ -236,12 +295,8 @@ func Plan(in Input) (Schedule, error) {
 		}
 		set := map[string]bool{}
 		for _, dep := range p.task.Depends {
-			var depPlan *taskPlan
-			if d, ok := byID[dep]; ok {
-				depPlan = d
-			} else if d, ok := lowerByID[strings.ToLower(strings.TrimSpace(dep))]; ok {
-				depPlan = d
-			} else {
+			depPlan, ok := lookupDep(byID, lowerByID, dep)
+			if !ok {
 				continue
 			}
 			if depPlan.task.Pin != nil || depPlan.task.Container {
@@ -263,7 +318,7 @@ func Plan(in Input) (Schedule, error) {
 	// Self-dependencies are cycles.
 	for _, p := range candidates {
 		for _, dep := range p.task.Depends {
-			if strings.EqualFold(strings.TrimSpace(dep), strings.TrimSpace(p.task.ID)) {
+			if norm.ID(dep) == norm.ID(p.task.ID) {
 				indeg[p.task.ID]++
 			}
 		}
@@ -289,8 +344,15 @@ func Plan(in Input) (Schedule, error) {
 			avail = append(avail, p)
 		}
 	}
-	sort.Slice(avail, func(i, j int) bool { return lessPlan(avail[i], avail[j]) })
-	var order []*taskPlan
+	slices.SortFunc(avail, func(a, b *taskPlan) int {
+		if lessPlan(a, b) {
+			return -1
+		}
+		if lessPlan(b, a) {
+			return 1
+		}
+		return 0
+	})
 	for len(avail) > 0 {
 		p := avail[0]
 		avail = avail[1:]
@@ -305,14 +367,22 @@ func Plan(in Input) (Schedule, error) {
 				}
 			}
 		}
-		sort.Slice(avail, func(i, j int) bool { return lessPlan(avail[i], avail[j]) })
+		slices.SortFunc(avail, func(a, b *taskPlan) int {
+			if lessPlan(a, b) {
+				return -1
+			}
+			if lessPlan(b, a) {
+				return 1
+			}
+			return 0
+		})
 	}
 	inOrder := map[string]bool{}
 	for _, p := range order {
 		inOrder[p.task.ID] = true
 	}
 	// Remaining candidates with indegree>0 (or dangling) are cycle/blocked.
-	cycleSet := map[string]bool{}
+	cycleSet = map[string]bool{}
 	for _, p := range candidates {
 		if !inOrder[p.task.ID] {
 			if _, blocked := blockedUnknown[p.task.ID]; !blocked {
@@ -320,9 +390,11 @@ func Plan(in Input) (Schedule, error) {
 			}
 		}
 	}
+	return order, cycleSet
+}
 
-	maps := indexTimeMaps(in.TimeMaps)
-	// Track ends for dependency gating (Pins + pinned already placed).
+// initialEnds tracks ends for dependency gating (Pins + pinned already placed).
+func initialEnds(pins, plans []*taskPlan) map[string]time.Time {
 	ends := map[string]time.Time{}
 	for _, p := range pins {
 		ends[p.task.ID] = p.task.Pin.Add(p.task.Duration)
@@ -345,15 +417,14 @@ func Plan(in Input) (Schedule, error) {
 			}
 		}
 	}
+	return ends
+}
 
-	// Helpers for gating.
-	blockedReason := map[string]Reason{}
-	blockedBy := map[string][]string{}
-	taskEnd := func(id string) (time.Time, bool) {
-		e, ok := ends[id]
-		return e, ok
-	}
-	_ = taskEnd
+// placeOrdered gates each Task on its dependencies (Q8, Q14) and places the
+// survivors. It records ends as the max of pinned + new flexible blocks.
+func placeOrdered(b *builder, order []*taskPlan, byID, lowerByID map[string]*taskPlan, cycleSet map[string]bool, ends map[string]time.Time, maps map[string]model.TimeMap, today model.CivilDate, horizonEnd model.CivilDate, now time.Time) (blockedReason map[string]Reason, blockedBy map[string][]string) {
+	blockedReason = map[string]Reason{}
+	blockedBy = map[string][]string{}
 
 	for _, p := range order {
 		beyondHorizon := p.task.PlanStart != nil && !p.task.PlanStart.Before(horizonEnd)
@@ -367,12 +438,8 @@ func Plan(in Input) (Schedule, error) {
 		hasBound := false
 		blocked := false
 		for _, dep := range p.task.Depends {
-			var depPlan *taskPlan
-			if d, ok := byID[dep]; ok {
-				depPlan = d
-			} else if d, ok := lowerByID[strings.ToLower(strings.TrimSpace(dep))]; ok {
-				depPlan = d
-			} else {
+			depPlan, ok := lookupDep(byID, lowerByID, dep)
+			if !ok {
 				blockers = append(blockers, dep)
 				blocked = true
 				continue
@@ -419,12 +486,12 @@ func Plan(in Input) (Schedule, error) {
 		}
 		if blocked {
 			p.shortfall = p.required()
-			sort.Strings(blockers)
+			slices.Sort(blockers)
 			blockedReason[p.task.ID] = ReasonBlockedByDependency
 			blockedBy[p.task.ID] = blockers
 			continue
 		}
-		bound := in.Now
+		bound := now
 		if hasBound && depBound.After(bound) {
 			bound = depBound
 		}
@@ -444,12 +511,15 @@ func Plan(in Input) (Schedule, error) {
 			ends[p.task.ID] = max
 		}
 	}
+	return blockedReason, blockedBy
+}
 
+func buildReport(candidates, order, pins []*taskPlan, byID, lowerByID map[string]*taskPlan, cycleSet map[string]bool, blockedUnknown map[string][]string, blockedReason map[string]Reason, blockedBy map[string][]string, ends map[string]time.Time) Report {
 	var report Report
 	for _, p := range candidates {
 		if _, ok := blockedUnknown[p.task.ID]; ok {
 			ids := append([]string(nil), blockedUnknown[p.task.ID]...)
-			sort.Strings(ids)
+			slices.Sort(ids)
 			report.Tasks = append(report.Tasks, TaskReport{
 				TaskID:    p.task.ID,
 				Required:  p.n,
@@ -465,13 +535,11 @@ func Plan(in Input) (Schedule, error) {
 			// Blocker: the cycle neighbours for context.
 			var bl []string
 			for _, dep := range p.task.Depends {
-				if _, ok := byID[dep]; ok {
-					bl = append(bl, dep)
-				} else if d, ok := lowerByID[strings.ToLower(strings.TrimSpace(dep))]; ok {
+				if d, ok := lookupDep(byID, lowerByID, dep); ok {
 					bl = append(bl, d.task.ID)
 				}
 			}
-			sort.Strings(bl)
+			slices.Sort(bl)
 			report.Tasks = append(report.Tasks, TaskReport{
 				TaskID:    p.task.ID,
 				Required:  p.n,
@@ -510,7 +578,7 @@ func Plan(in Input) (Schedule, error) {
 			// window; name the deps so the warning is actionable (Q11).
 			reason = ReasonBlockedByDependency
 			bl = append(bl, p.task.Depends...)
-			sort.Strings(bl)
+			slices.Sort(bl)
 		}
 		report.Tasks = append(report.Tasks, TaskReport{
 			TaskID:    p.task.ID,
@@ -530,12 +598,8 @@ func Plan(in Input) (Schedule, error) {
 		start := *p.task.Pin
 		var viol []string
 		for _, dep := range p.task.Depends {
-			var depPlan *taskPlan
-			if d, ok := byID[dep]; ok {
-				depPlan = d
-			} else if d, ok := lowerByID[strings.ToLower(strings.TrimSpace(dep))]; ok {
-				depPlan = d
-			} else {
+			depPlan, ok := lookupDep(byID, lowerByID, dep)
+			if !ok {
 				viol = append(viol, dep)
 				continue
 			}
@@ -555,7 +619,7 @@ func Plan(in Input) (Schedule, error) {
 			}
 		}
 		if len(viol) > 0 {
-			sort.Strings(viol)
+			slices.Sort(viol)
 			report.Tasks = append(report.Tasks, TaskReport{
 				TaskID:    p.task.ID,
 				Required:  p.n,
@@ -568,8 +632,7 @@ func Plan(in Input) (Schedule, error) {
 		}
 	}
 
-	blocks, explanations := b.sorted()
-	return Schedule{Blocks: blocks, Report: report, Explanations: explanations}, nil
+	return report
 }
 
 // builder accumulates Blocks while blocking their slots on busy.
@@ -612,9 +675,13 @@ func (b *builder) addFlexible(block model.Block, run grid.Run) {
 // place searches the Task's free slots and emits its flexible Blocks.
 // Bound is the dependency-aware lower bound: the Task may not start before
 // bound (max of now and its dependencies' ends).
+//
+// Hours still required are placed in three passes — green, then yellow, then
+// red — so a later green window beats an earlier yellow one. Each pass uses
+// the ADR 0010 comparator on that tier's free runs. A Block never crosses a
+// tier boundary. The minimum-Block floor applies per pass, so a one-slot
+// green fragment is left unused and the hours can spill.
 func (b *builder) placeWithBound(p *taskPlan, maps map[string]model.TimeMap, overdue bool, bound time.Time) {
-	free := b.eligibility(p.task, maps)
-
 	from, to := b.g.WindowStart(), b.g.WindowEnd()
 	if !overdue {
 		if p.task.PlanStart != nil {
@@ -624,59 +691,108 @@ func (b *builder) placeWithBound(p *taskPlan, maps map[string]model.TimeMap, ove
 			to = p.task.PlanEnd.AddDays(1).Midnight(b.g.Location())
 		}
 	}
-	free = free.And(b.g.Inside(from, to)).And(b.g.NotBefore(bound)).AndNot(b.busy)
+	window := b.g.Inside(from, to).And(b.g.NotBefore(bound))
 
 	floor := 2
 	if p.n == 1 {
 		floor = 1
 	}
 
-	runs := make([]placementRun, 0, 8)
-	for _, r := range free.Runs(b.g.Len()) {
-		if r.Slots >= floor {
-			runs = append(runs, placementRun{run: r, day: model.CivilDateOf(b.g.Start(r.Start))})
-		}
-	}
-
+	left := p.required()
 	next := 0
-	for _, a := range choosePlacement(runs, p.required(), floor) {
-		for p.reserved[next] {
+	for _, tier := range []model.Tier{model.TierGreen, model.TierYellow, model.TierRed} {
+		if left == 0 {
+			break
+		}
+		free := b.eligibility(p.task, maps, tier).And(window).AndNot(b.busy)
+		runs := make([]placementRun, 0, 8)
+		for _, r := range free.Runs(b.g.Len()) {
+			if r.Slots >= floor {
+				runs = append(runs, placementRun{run: r, day: model.CivilDateOf(b.g.Start(r.Start))})
+			}
+		}
+		for _, a := range choosePlacement(runs, left, floor) {
+			for p.reserved[next] {
+				next++
+			}
+			first := runs[a.run].run.Start
+			block := model.Block{
+				TaskID: p.task.ID,
+				Index:  next,
+				Start:  b.g.Start(first),
+				End:    b.g.End(first + a.slots - 1),
+				Slots:  a.slots,
+				Kind:   model.BlockFlexible,
+			}
+			b.addFlexible(block, runs[a.run].run)
+			p.placed += a.slots
+			left -= a.slots
 			next++
 		}
-		first := runs[a.run].run.Start
-		block := model.Block{
-			TaskID: p.task.ID,
-			Index:  next,
-			Start:  b.g.Start(first),
-			End:    b.g.End(first + a.slots - 1),
-			Slots:  a.slots,
-			Kind:   model.BlockFlexible,
-		}
-		b.addFlexible(block, runs[a.run].run)
-		p.placed += a.slots
-		next++
 	}
-	p.shortfall = p.required() - (p.placed - p.pinnedSlots)
+	p.shortfall = left
 }
 
-// eligibility returns the union of the Task's Time Maps, or of the default
-// maps when the Task names none.
-func (b *builder) eligibility(t model.Task, maps map[string]model.TimeMap) grid.Mask {
-	m := grid.NewMask(b.g.Len())
+// eligibility returns the slots of one preference tier in the Task's Time
+// Maps, or in the default maps when the Task names none. A slot covered by
+// two tiers takes the better one: yellow excludes green, red excludes both.
+func (b *builder) eligibility(t model.Task, maps map[string]model.TimeMap, tier model.Tier) grid.Mask {
+	var selected []model.TimeMap
 	if len(t.TimeMaps) > 0 {
 		for _, slug := range t.TimeMaps {
 			if tm, ok := maps[slug]; ok {
-				m.OrInto(b.g.TimeMapMask(tm))
+				selected = append(selected, tm)
 			}
 		}
-		return m
-	}
-	for _, tm := range maps {
-		if tm.Default {
-			m.OrInto(b.g.TimeMapMask(tm))
+	} else {
+		for _, tm := range maps {
+			if tm.Default {
+				selected = append(selected, tm)
+			}
 		}
 	}
+	green := tierMask(b.g, selected, model.TierGreen)
+	switch tier {
+	case model.TierYellow:
+		return tierMask(b.g, selected, model.TierYellow).AndNot(green)
+	case model.TierRed:
+		return tierMask(b.g, selected, model.TierRed).AndNot(green).AndNot(tierMask(b.g, selected, model.TierYellow))
+	default:
+		return green
+	}
+}
+
+// tierMask is the union of windows of one tier. An empty or unknown tier
+// word counts as green, matching the parser's default.
+func tierMask(g *grid.Grid, maps []model.TimeMap, tier model.Tier) grid.Mask {
+	m := grid.NewMask(g.Len())
+	for _, tm := range maps {
+		filtered := model.TimeMap{Windows: windowsOfTier(tm.Windows, tier)}
+		if len(filtered.Windows) == 0 {
+			continue
+		}
+		m.OrInto(g.TimeMapMask(filtered))
+	}
 	return m
+}
+
+func windowsOfTier(windows []model.Window, tier model.Tier) []model.Window {
+	var out []model.Window
+	for _, w := range windows {
+		if windowTier(w) == tier {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func windowTier(w model.Window) model.Tier {
+	switch w.Tier {
+	case model.TierYellow, model.TierRed:
+		return w.Tier
+	default:
+		return model.TierGreen
+	}
 }
 
 // sorted returns the blocks and explanations in chronological order; ties are
@@ -686,15 +802,18 @@ func (b *builder) sorted() ([]model.Block, []Explanation) {
 	for i := range order {
 		order[i] = i
 	}
-	sort.Slice(order, func(i, j int) bool {
-		a, b := b.blocks[order[i]], b.blocks[order[j]]
+	slices.SortFunc(order, func(x, y int) int {
+		a, b := b.blocks[x], b.blocks[y]
 		if !a.Start.Equal(b.Start) {
-			return a.Start.Before(b.Start)
+			if a.Start.Before(b.Start) {
+				return -1
+			}
+			return 1
 		}
 		if a.TaskID != b.TaskID {
-			return a.TaskID < b.TaskID
+			return strings.Compare(a.TaskID, b.TaskID)
 		}
-		return a.Index < b.Index
+		return a.Index - b.Index
 	})
 	blocks := make([]model.Block, len(order))
 	expls := make([]Explanation, len(order))
@@ -719,7 +838,7 @@ type taskPlan struct {
 }
 
 func newTaskPlan(t model.Task, dispositions []model.Disposition, granularity time.Duration) *taskPlan {
-	p := &taskPlan{task: t, n: units(t.Duration, granularity), reserved: make(map[int]bool)}
+	p := &taskPlan{task: t, n: norm.Units(t.Duration, granularity), reserved: make(map[int]bool)}
 
 	stoodDown := 0
 	pinned := 0
@@ -728,7 +847,7 @@ func newTaskPlan(t model.Task, dispositions []model.Disposition, granularity tim
 		switch d.Kind {
 		case model.DispositionPinned:
 			p.pinnedDisps = append(p.pinnedDisps, d)
-			pinned += units(d.End.Sub(d.Start), granularity)
+			pinned += norm.Units(d.End.Sub(d.Start), granularity)
 		case model.DispositionStoodDown:
 			p.stoodDownDisps = append(p.stoodDownDisps, d)
 			stoodDown += d.Slots
@@ -753,13 +872,6 @@ func newTaskPlan(t model.Task, dispositions []model.Disposition, granularity tim
 
 // required returns the units still to place flexibly.
 func (p *taskPlan) required() int { return p.n - p.stoodDown - p.pinnedSlots }
-
-func units(d, granularity time.Duration) int {
-	if d <= 0 {
-		return 0
-	}
-	return int((d + granularity - 1) / granularity)
-}
 
 func indexDispositions(dispositions []model.Disposition) (map[string][]model.Disposition, error) {
 	out := make(map[string][]model.Disposition)
@@ -802,6 +914,18 @@ func indexTimeMaps(maps []model.TimeMap) map[string]model.TimeMap {
 	return out
 }
 
+// lookupDep resolves one depends:: entry to its plan: exact ID first, then
+// case-insensitive match. ok is false for dangling refs, which block.
+func lookupDep(byID, lowerByID map[string]*taskPlan, dep string) (depPlan *taskPlan, ok bool) {
+	if d, found := byID[dep]; found {
+		return d, true
+	}
+	if d, found := lowerByID[norm.ID(dep)]; found {
+		return d, true
+	}
+	return nil, false
+}
+
 func overdue(t model.Task, today model.CivilDate) bool {
 	return t.PlanEnd != nil && t.PlanEnd.Before(today)
 }
@@ -819,11 +943,15 @@ func timeBoundLess(a, b model.Task) bool {
 }
 
 func orderBefore(a, b model.Task) bool {
+	return compareTasks(a, b) < 0
+}
+
+func compareTasks(a, b model.Task) int {
 	if ra, rb := a.Priority.Rank(), b.Priority.Rank(); ra != rb {
-		return ra < rb
+		return ra - rb
 	}
 	if a.OutlineOrder != b.OutlineOrder {
-		return a.OutlineOrder < b.OutlineOrder
+		return a.OutlineOrder - b.OutlineOrder
 	}
-	return a.ID < b.ID
+	return strings.Compare(a.ID, b.ID)
 }

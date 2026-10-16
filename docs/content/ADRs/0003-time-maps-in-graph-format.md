@@ -19,4 +19,5 @@ property expresses a repeated, multi-valued weekly grid poorly.
 
 Consequences: Lodo must own a small bespoke parser for these lines, and the format is a
 user-facing contract — changing it later means migrating the user's notes. Preference
-tiers parse from day one but are all treated as green until preference fitting is built.
+tiers are part of that contract; fitting them is
+[ADR 0014](./0014-preference-tiers-before-the-comparator.md).

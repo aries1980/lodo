@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// Tier is a Time Map window's preference tier. All tiers are treated as green
-// in v0.1; they parse so authored notes need no migration when tiered fitting
-// is built.
+// Tier is a Time Map window's preference tier. Placement fills green first,
+// then spills into yellow, then red (ADR 0014). An absent tier word is green.
 type Tier string
 
 const (

@@ -50,10 +50,11 @@ tier   := green | yellow | red        ; optional; absent = green
 
 ### Tiers
 
-Tiers parse from day one but are **all treated as green in v0.1**. SkedPal's
-green/yellow/red gradient — fill green first, spill to yellow, then red, never blank —
-requires preference fitting in the scheduler and is deferred. The schema already carries
-the words so the notes do not need migrating when tiers are built.
+A window's tier is `green`, `yellow`, or `red`. An absent tier word is green.
+Placement fills green first, spills into yellow, then red
+([ADR 0014](../ADRs/0014-preference-tiers-before-the-comparator.md)). A slot covered by
+two windows takes the better tier. A Block stays inside one tier. Hours that fit in
+none of the three are a shortfall. Red is a last resort, not a forbidden band.
 
 ## Assignment
 
@@ -68,12 +69,12 @@ the words so the notes do not need migrating when tiers are built.
 - Windows recur weekly and are **absolute local times**: they stay 09:00–11:00 in the
   user's current timezone, mirroring SkedPal's stated behaviour.
 - Maps may overlap. A Task with several maps draws on the union of their windows;
-  competition for the same hours between Tasks is resolved by Priority.
+  where two tiers cover one slot, the better tier wins. Competition for the same
+  hours between Tasks is resolved by Priority.
 - Windows are intersected with the Schedule's busy time (External Events and Corporate
   Pins) and with the Plan window; a Task is placed only in hours that satisfy all three.
 
 ## Deferred
 
-- Preference tiers (green/yellow/red fitting).
 - Amending a map with calendar events (SkedPal's "amend with calendar events").
 - Per-week customisation of hours.
