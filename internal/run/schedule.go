@@ -6,8 +6,9 @@ package run
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/calendar"
@@ -15,6 +16,7 @@ import (
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/reconcile"
 	"github.com/aries1980/lodo/internal/resolve"
@@ -22,18 +24,20 @@ import (
 )
 
 // Calendar is the full calendar surface schedule needs: read busy time,
-// list Managed events, and insert/patch/delete them.
+// list Managed events, and insert/patch/delete them. List and the writes
+// are write-calendar-only; Busy unions the write plus read calendars.
 type Calendar interface {
-	Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []calendar.Event, error)
+	Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []calendar.Event, calendar.BusyReport, error)
 	List(ctx context.Context, from, to time.Time) ([]calendar.Event, error)
 	Insert(ctx context.Context, e calendar.Event) (calendar.Event, error)
 	Patch(ctx context.Context, id string, e calendar.Event) (calendar.Event, error)
 	Delete(ctx context.Context, id string) error
 }
 
-// CalendarReader is the read-only surface refresh and check need.
+// CalendarReader is the read-only surface refresh and check need. List is
+// write-calendar-only; Busy unions the write plus read calendars.
 type CalendarReader interface {
-	Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []calendar.Event, error)
+	Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []calendar.Event, calendar.BusyReport, error)
 	List(ctx context.Context, from, to time.Time) ([]calendar.Event, error)
 }
 
@@ -42,6 +46,27 @@ type CalendarReader interface {
 type Store interface {
 	All() (bindings []store.Binding, snapshots map[string]model.Snapshot, dispositions []model.Disposition, err error)
 	Commit(bindingUpserts []store.Binding, bindingDeletes []store.BindingKey, dispositions []store.TimedDisposition, snapshots map[string]model.Snapshot) error
+}
+
+// RunRecorder is the optional audit surface: stores that persist the
+// per-run calendar audit implement it. Fakes that do not implement it skip
+// recording; *store.Store does.
+type RunRecorder interface {
+	RecordRun(command, writeCalendar string, writeEvents int, sources []store.RunSource, recordedAt time.Time) error
+}
+
+// recordRun persists one schedule/refresh run's calendar audit when the
+// store supports it. Forecast never records: it stays store-free by design.
+func recordRun(st Store, command string, report calendar.BusyReport, now time.Time) error {
+	rec, ok := st.(RunRecorder)
+	if !ok {
+		return nil
+	}
+	sources := make([]store.RunSource, 0, len(report.Sources))
+	for _, s := range report.Sources {
+		sources = append(sources, store.RunSource{CalendarID: s.CalendarID, Status: s.Status, Events: s.Events})
+	}
+	return rec.RecordRun(command, report.WriteCalendar, report.WriteEvents, sources, now)
 }
 
 // WriteOp is one calendar mutation schedule performed, for --verbose and
@@ -77,6 +102,19 @@ type ScheduleOutcome struct {
 	Reconciled   reconcile.Result    // what this run folded in
 	Writes       []WriteOp
 	Orphans      []Orphan
+	// Busy carries the write calendar plus per-read-calendar status for the
+	// busy sources line and warnings.
+	Busy calendar.BusyReport
+}
+
+// Conflict is one Managed Block that now overlaps shared busy time: the
+// write calendar's event still stands, but a read calendar now claims the
+// same hours. Refresh reports these and changes nothing.
+type Conflict struct {
+	TaskID     string
+	BlockIndex int // -1 when the private pointer is unusable
+	EventID    string
+	Summary    string
 }
 
 // RefreshOutcome is one refresh run: pull-only, never recomputing.
@@ -84,6 +122,94 @@ type RefreshOutcome struct {
 	Dispositions []model.Disposition // all stored after commit, ordered
 	Adopted      []store.Binding     // binding rows adopted/updated this run
 	Captured     []model.Disposition // disposition rows recorded this run
+	// Busy carries the write calendar plus per-read-calendar status.
+	Busy calendar.BusyReport
+	// Conflicts are Managed events overlapping shared busy time. No moves,
+	// no stand-downs; re-placement happens only in schedule.
+	Conflicts []Conflict
+}
+
+// calendarState is the shared read side of Schedule/Check/Refresh: parsed
+// scheduling settings, the grid, busy time plus Managed events, stored rows
+// and the in-memory reconciliation of the two.
+type calendarState struct {
+	granularity time.Duration
+	location    *time.Location
+	grid        *grid.Grid
+	busyMask    grid.Mask
+	managed     []calendar.Event
+	busyReport  calendar.BusyReport
+	bindings    []store.Binding
+	snapshots   map[string]model.Snapshot
+	storedDisps []model.Disposition
+	rec         reconcile.Result
+}
+
+// loadCalendarState reads busy time and stored rows, then reconciles in
+// memory. It never resolves the graph and never writes.
+func loadCalendarState(ctx context.Context, cal interface {
+	Busy(context.Context, *grid.Grid, time.Time) (grid.Mask, []calendar.Event, calendar.BusyReport, error)
+}, st Store, cfg config.Config, now time.Time) (calendarState, error) {
+	var cs calendarState
+	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
+	if err != nil {
+		return calendarState{}, err
+	}
+	location, err := cfg.Scheduling.Location()
+	if err != nil {
+		return calendarState{}, err
+	}
+	g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
+	busyMask, managed, busyReport, err := cal.Busy(ctx, g, now)
+	if err != nil {
+		return calendarState{}, err
+	}
+	bindings, snapshots, storedDisps, err := st.All()
+	if err != nil {
+		return calendarState{}, err
+	}
+	rec, err := reconcile.Reconcile(managed, bindings, snapshots, granularity, location, now)
+	if err != nil {
+		return calendarState{}, err
+	}
+	cs = calendarState{
+		granularity: granularity, location: location, grid: g,
+		busyMask: busyMask, managed: managed, busyReport: busyReport,
+		bindings: bindings, snapshots: snapshots, storedDisps: storedDisps, rec: rec,
+	}
+	return cs, nil
+}
+
+// resolveAndPlan resolves the graph fresh and plans with the effective
+// dispositions for this run: stored plus newly reconciled, filtered by the
+// freshly resolved snapshots.
+func resolveAndPlan(ctx context.Context, lc logseq.Client, cs calendarState, cfg config.Config, now time.Time) (result resolve.Result, combined, effective []model.Disposition, schedule planner.Schedule, err error) {
+	result, err = Read(ctx, lc, cfg.Logseq.TimeMapsPage, cs.location)
+	if err != nil {
+		return resolve.Result{}, nil, nil, planner.Schedule{}, err
+	}
+
+	// Active dispositions for this run: stored plus newly reconciled,
+	// filtered by the freshly resolved snapshots. Pinned always applies;
+	// stood-down applies only while inputs still match. Fresh rows win on
+	// the same key (a re-moved pin refreshes its span).
+	combined = mergeDispositions(cs.storedDisps, timedToDispositions(cs.rec.DispositionUpserts))
+	effective = reconcile.Effective(result.Tasks, combined)
+
+	schedule, err = planner.Plan(planner.Input{
+		Tasks:        result.Tasks,
+		TimeMaps:     result.TimeMaps,
+		Busy:         cs.busyMask,
+		Dispositions: effective,
+		Now:          now,
+		Granularity:  cs.granularity,
+		WindowDays:   cfg.Scheduling.WindowDays,
+		Location:     cs.location,
+	})
+	if err != nil {
+		return resolve.Result{}, nil, nil, planner.Schedule{}, err
+	}
+	return result, combined, effective, schedule, nil
 }
 
 // Schedule reconciles first (the anti-clobber rule), resolves, plans with
@@ -91,57 +217,17 @@ type RefreshOutcome struct {
 // writes the calendar, then commits the store. Calendar writes precede the
 // store commit (ADR 0007); a crash between them is adopted on the next run.
 func Schedule(ctx context.Context, lc logseq.Client, cal Calendar, st Store, cfg config.Config, now time.Time) (ScheduleOutcome, error) {
-	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
-	if err != nil {
-		return ScheduleOutcome{}, err
-	}
-	location, err := cfg.Scheduling.Location()
-	if err != nil {
-		return ScheduleOutcome{}, err
-	}
-	g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
-
-	busyMask, managed, err := cal.Busy(ctx, g, now)
-	if err != nil {
-		return ScheduleOutcome{}, err
-	}
-	bindings, snapshots, storedDisps, err := st.All()
-	if err != nil {
-		return ScheduleOutcome{}, err
-	}
-	rec, err := reconcile.Reconcile(managed, bindings, snapshots, granularity, location, now)
+	cs, err := loadCalendarState(ctx, cal, st, cfg, now)
 	if err != nil {
 		return ScheduleOutcome{}, err
 	}
 
-	result, err := Read(ctx, lc, cfg.Logseq.TimeMapsPage, location)
+	result, _, effective, schedule, err := resolveAndPlan(ctx, lc, cs, cfg, now)
 	if err != nil {
 		return ScheduleOutcome{}, err
 	}
 
-	// Active dispositions for this run: stored plus newly reconciled,
-	// filtered by the freshly resolved snapshots. Pinned always applies;
-	// stood-down applies only while inputs still match. Fresh rows win on
-	// the same key (a re-moved pin refreshes its span).
-	combined := mergeDispositions(storedDisps, timedToDispositions(rec.DispositionUpserts))
-
-	effective := reconcile.Effective(result.Tasks, combined)
-
-	schedule, err := planner.Plan(planner.Input{
-		Tasks:        result.Tasks,
-		TimeMaps:     result.TimeMaps,
-		Busy:         busyMask,
-		Dispositions: effective,
-		Now:          now,
-		Granularity:  granularity,
-		WindowDays:   cfg.Scheduling.WindowDays,
-		Location:     location,
-	})
-	if err != nil {
-		return ScheduleOutcome{}, err
-	}
-
-	writes, orphans, planBindings := diffPlan(result.Tasks, schedule, managed, location)
+	writes, orphans, planBindings := diffPlan(result.Tasks, schedule, cs.managed, cs.location)
 
 	// Calendar first, store second (ADR 0007).
 	if err := applyWrites(ctx, cal, writes); err != nil {
@@ -155,20 +241,24 @@ func Schedule(ctx context.Context, lc logseq.Client, cal Calendar, st Store, cfg
 	for _, t := range result.Tasks {
 		snapMap[t.ID] = t.Snapshot()
 	}
-	allUpserts := append(append([]store.Binding{}, rec.BindingUpserts...), planBindings...)
+	allUpserts := append(append([]store.Binding{}, cs.rec.BindingUpserts...), planBindings...)
 	// Plan bindings win on key collision with reconcile upserts (same span
 	// for pinned/adopted when intent is unchanged).
 	allUpserts = dedupeBindings(allUpserts)
-	bindingDeletes := append(append([]store.BindingKey{}, rec.BindingDeletes...), orphansToDeletes(orphans, bindings, rec)...)
+	bindingDeletes := append(append([]store.BindingKey{}, cs.rec.BindingDeletes...), orphansToDeletes(orphans, cs.bindings, cs.rec)...)
 	bindingDeletes = dedupeDeletes(bindingDeletes, planBindings)
 
-	if err := st.Commit(allUpserts, bindingDeletes, rec.DispositionUpserts, snapMap); err != nil {
+	if err := st.Commit(allUpserts, bindingDeletes, cs.rec.DispositionUpserts, snapMap); err != nil {
+		return ScheduleOutcome{}, err
+	}
+	if err := recordRun(st, "schedule", cs.busyReport, now); err != nil {
 		return ScheduleOutcome{}, err
 	}
 
 	return ScheduleOutcome{
 		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
-		Dispositions: effective, Reconciled: rec, Writes: writes, Orphans: orphans,
+		Dispositions: effective, Reconciled: cs.rec, Writes: writes, Orphans: orphans,
+		Busy: cs.busyReport,
 	}, nil
 }
 
@@ -176,29 +266,15 @@ func Schedule(ctx context.Context, lc logseq.Client, cal Calendar, st Store, cfg
 // plus store commit only. It never resolves the graph and never writes the
 // calendar, so it cannot fabricate intent.
 func Refresh(ctx context.Context, cal CalendarReader, st Store, cfg config.Config, now time.Time) (RefreshOutcome, error) {
-	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
-	if err != nil {
-		return RefreshOutcome{}, err
-	}
-	location, err := cfg.Scheduling.Location()
-	if err != nil {
-		return RefreshOutcome{}, err
-	}
-	g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
-	_, managed, err := cal.Busy(ctx, g, now)
-	if err != nil {
-		return RefreshOutcome{}, err
-	}
-	bindings, snapshots, _, err := st.All()
-	if err != nil {
-		return RefreshOutcome{}, err
-	}
-	rec, err := reconcile.Reconcile(managed, bindings, snapshots, granularity, location, now)
+	cs, err := loadCalendarState(ctx, cal, st, cfg, now)
 	if err != nil {
 		return RefreshOutcome{}, err
 	}
 	// Refresh never writes snapshots: it cannot resolve the graph.
-	if err := st.Commit(rec.BindingUpserts, rec.BindingDeletes, rec.DispositionUpserts, nil); err != nil {
+	if err := st.Commit(cs.rec.BindingUpserts, cs.rec.BindingDeletes, cs.rec.DispositionUpserts, nil); err != nil {
+		return RefreshOutcome{}, err
+	}
+	if err := recordRun(st, "refresh", cs.busyReport, now); err != nil {
 		return RefreshOutcome{}, err
 	}
 	_, _, stored, err := st.All()
@@ -207,9 +283,50 @@ func Refresh(ctx context.Context, cal CalendarReader, st Store, cfg config.Confi
 	}
 	return RefreshOutcome{
 		Dispositions: stored,
-		Adopted:      rec.BindingUpserts,
-		Captured:     timedToDispositions(rec.DispositionUpserts),
+		Adopted:      cs.rec.BindingUpserts,
+		Captured:     timedToDispositions(cs.rec.DispositionUpserts),
+		Busy:         cs.busyReport,
+		Conflicts:    sharedConflicts(cs.managed, cs.busyReport.Shared, cs.grid, now),
 	}, nil
+}
+
+// sharedConflicts reports Managed events that now overlap shared busy time.
+// It changes nothing: no moves, no stand-downs. Ordering is by event ID for
+// determinism.
+func sharedConflicts(managed []calendar.Event, shared grid.Mask, g *grid.Grid, now time.Time) []Conflict {
+	if shared.Count() == 0 {
+		return nil
+	}
+	var out []Conflict
+	for _, e := range managed {
+		if !e.Managed() {
+			continue
+		}
+		start, end, err := e.Span(g.Location())
+		if err != nil {
+			continue // reconcile already refused corrupt spans into the open
+		}
+		if start.Before(now) {
+			start = now
+		}
+		if end.After(g.WindowEnd()) {
+			end = g.WindowEnd()
+		}
+		if !start.Before(end) {
+			continue
+		}
+		if g.Overlapping(start, end).And(shared).Count() == 0 {
+			continue
+		}
+		taskID, index, ok := reconcile.TaskRef(e)
+		if !ok {
+			out = append(out, Conflict{TaskID: "", BlockIndex: -1, EventID: e.ID, Summary: e.Summary})
+			continue
+		}
+		out = append(out, Conflict{TaskID: taskID, BlockIndex: index, EventID: e.ID, Summary: e.Summary})
+	}
+	slices.SortFunc(out, func(a, b Conflict) int { return strings.Compare(a.EventID, b.EventID) })
+	return out
 }
 
 // diffPlan compares plan Blocks against observed Managed events by
@@ -226,13 +343,10 @@ func Refresh(ctx context.Context, cal CalendarReader, st Store, cfg config.Confi
 //   - Observed Managed event with no plan Block (stood-down already gone,
 //     Task gone, invalid pointer, beyond-window) → delete.
 func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.Event, loc *time.Location) (writes []WriteOp, orphans []Orphan, bindings []store.Binding) {
-	textByTask := make(map[string]string, len(tasks))
-	for _, t := range tasks {
-		textByTask[t.ID] = t.Text
-	}
+	textByTask := TextMap(tasks)
 	planByKey := make(map[string]model.Block, len(schedule.Blocks))
 	for _, b := range schedule.Blocks {
-		planByKey[planKey(b.TaskID, b.Index)] = b
+		planByKey[norm.BlockKey(b.TaskID, b.Index)] = b
 		bindings = append(bindings, store.Binding{
 			TaskID: b.TaskID, BlockIndex: b.Index,
 			EventID: reconcile.EventID(b.TaskID, b.Index),
@@ -250,7 +364,7 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 			writes = append(writes, WriteOp{Op: "delete", EventID: e.ID})
 			continue
 		}
-		obsByKey[planKey(taskID, index)] = e
+		obsByKey[norm.BlockKey(taskID, index)] = e
 	}
 	for key, b := range planByKey {
 		e, ok := obsByKey[key]
@@ -292,18 +406,18 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 		orphans = append(orphans, Orphan{EventID: e.ID, TaskID: taskID, Block: index, Summary: e.Summary})
 		writes = append(writes, WriteOp{Op: "delete", EventID: e.ID})
 	}
-	sort.Slice(writes, func(i, j int) bool {
-		if writes[i].Op != writes[j].Op {
-			return writes[i].Op < writes[j].Op
+	slices.SortFunc(writes, func(a, b WriteOp) int {
+		if a.Op != b.Op {
+			return strings.Compare(a.Op, b.Op)
 		}
-		return writes[i].EventID < writes[j].EventID
+		return strings.Compare(a.EventID, b.EventID)
 	})
-	sort.Slice(orphans, func(i, j int) bool { return orphans[i].EventID < orphans[j].EventID })
-	sort.Slice(bindings, func(i, j int) bool {
-		if bindings[i].TaskID != bindings[j].TaskID {
-			return bindings[i].TaskID < bindings[j].TaskID
+	slices.SortFunc(orphans, func(a, b Orphan) int { return strings.Compare(a.EventID, b.EventID) })
+	slices.SortFunc(bindings, func(a, b store.Binding) int {
+		if a.TaskID != b.TaskID {
+			return strings.Compare(a.TaskID, b.TaskID)
 		}
-		return bindings[i].BlockIndex < bindings[j].BlockIndex
+		return a.BlockIndex - b.BlockIndex
 	})
 	return writes, orphans, bindings
 }
@@ -339,25 +453,20 @@ func applyWrites(ctx context.Context, cal Calendar, writes []WriteOp) error {
 }
 
 func insertPayload(w WriteOp) calendar.Event {
-	tz := ""
-	if !w.Start.IsZero() {
-		if loc := w.Start.Location(); loc != nil {
-			tz = loc.String()
-		}
-	}
-	return calendar.Event{
-		ID:      w.EventID,
-		Summary: w.Summary,
-		Start:   calendar.EventTime{DateTime: w.Start.Format(time.RFC3339), TimeZone: tz},
-		End:     calendar.EventTime{DateTime: w.End.Format(time.RFC3339), TimeZone: tz},
-		ExtendedProperties: calendar.Extended{Private: map[string]string{
-			"lodo": "true", "task": w.TaskID, "block": strconv.Itoa(w.BlockIndex),
-		}},
-		Reminders: &calendar.Reminders{UseDefault: true},
-	}
+	e := eventTimes(w)
+	e.ID = w.EventID
+	e.ExtendedProperties = calendar.Extended{Private: map[string]string{
+		"lodo": "true", "task": w.TaskID, "block": strconv.Itoa(w.BlockIndex),
+	}}
+	e.Reminders = &calendar.Reminders{UseDefault: true}
+	return e
 }
 
 func patchPayload(w WriteOp) calendar.Event {
+	return eventTimes(w)
+}
+
+func eventTimes(w WriteOp) calendar.Event {
 	tz := ""
 	if !w.Start.IsZero() {
 		if loc := w.Start.Location(); loc != nil {
@@ -370,8 +479,6 @@ func patchPayload(w WriteOp) calendar.Event {
 		End:     calendar.EventTime{DateTime: w.End.Format(time.RFC3339), TimeZone: tz},
 	}
 }
-
-func planKey(taskID string, index int) string { return taskID + "\x00" + strconv.Itoa(index) }
 
 // CheckOutcome is one check run: the graph report plus the state section.
 // No store commit and no calendar writes happen here.
@@ -383,6 +490,9 @@ type CheckOutcome struct {
 	AllDispositions []model.Disposition // stored plus in-memory reconciled
 	Orphans         []Orphan
 	StoodDown       []model.Disposition // effective stood-down, for display
+	// Busy carries the write calendar plus per-read-calendar status and the
+	// lodo-on-read warnings.
+	Busy calendar.BusyReport
 }
 
 // Check reads the graph, the calendar's busy time and the local store, and
@@ -390,47 +500,15 @@ type CheckOutcome struct {
 // (without committing) so fresh moves shape the plan it judges, but nothing
 // is written anywhere.
 func Check(ctx context.Context, lc logseq.Client, cal CalendarReader, st Store, cfg config.Config, now time.Time) (CheckOutcome, error) {
-	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
+	cs, err := loadCalendarState(ctx, cal, st, cfg, now)
 	if err != nil {
 		return CheckOutcome{}, err
 	}
-	location, err := cfg.Scheduling.Location()
+	result, combined, effective, schedule, err := resolveAndPlan(ctx, lc, cs, cfg, now)
 	if err != nil {
 		return CheckOutcome{}, err
 	}
-	g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
-	busyMask, managed, err := cal.Busy(ctx, g, now)
-	if err != nil {
-		return CheckOutcome{}, err
-	}
-	bindings, snapshots, storedDisps, err := st.All()
-	if err != nil {
-		return CheckOutcome{}, err
-	}
-	rec, err := reconcile.Reconcile(managed, bindings, snapshots, granularity, location, now)
-	if err != nil {
-		return CheckOutcome{}, err
-	}
-	result, err := Read(ctx, lc, cfg.Logseq.TimeMapsPage, location)
-	if err != nil {
-		return CheckOutcome{}, err
-	}
-	combined := mergeDispositions(storedDisps, timedToDispositions(rec.DispositionUpserts))
-	effective := reconcile.Effective(result.Tasks, combined)
-	schedule, err := planner.Plan(planner.Input{
-		Tasks:        result.Tasks,
-		TimeMaps:     result.TimeMaps,
-		Busy:         busyMask,
-		Dispositions: effective,
-		Now:          now,
-		Granularity:  granularity,
-		WindowDays:   cfg.Scheduling.WindowDays,
-		Location:     location,
-	})
-	if err != nil {
-		return CheckOutcome{}, err
-	}
-	_, orphans, _ := diffPlan(result.Tasks, schedule, managed, location)
+	_, orphans, _ := diffPlan(result.Tasks, schedule, cs.managed, cs.location)
 	var stood []model.Disposition
 	for _, d := range effective {
 		if d.Kind == model.DispositionStoodDown {
@@ -440,7 +518,7 @@ func Check(ctx context.Context, lc logseq.Client, cal CalendarReader, st Store, 
 	return CheckOutcome{
 		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
 		Dispositions: effective, AllDispositions: combined,
-		Orphans: orphans, StoodDown: stood,
+		Orphans: orphans, StoodDown: stood, Busy: cs.busyReport,
 	}, nil
 }
 
@@ -459,7 +537,7 @@ func mergeDispositions(stored, fresh []model.Disposition) []model.Disposition {
 	byKey := make(map[string]model.Disposition, len(stored)+len(fresh))
 	order := []string{}
 	put := func(d model.Disposition) {
-		key := planKey(d.TaskID, d.BlockIndex)
+		key := norm.BlockKey(d.TaskID, d.BlockIndex)
 		if _, ok := byKey[key]; !ok {
 			order = append(order, key)
 		}
@@ -469,24 +547,20 @@ func mergeDispositions(stored, fresh []model.Disposition) []model.Disposition {
 		put(d)
 	}
 	for _, d := range fresh {
-		// Fresh wining must also move to the end for determinism? No: keep
-		// first-seen order, overwrite the value. The planner sorts by key
-		// only through its map, so order here never leaks into output.
-		key := planKey(d.TaskID, d.BlockIndex)
-		if _, ok := byKey[key]; !ok {
-			order = append(order, key)
-		}
-		byKey[key] = d
+		// Fresh winning keeps first-seen order, overwriting the value. The
+		// planner sorts by key only through its map, so order here never
+		// leaks into output.
+		put(d)
 	}
 	out := make([]model.Disposition, 0, len(byKey))
 	for _, k := range order {
 		out = append(out, byKey[k])
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].TaskID != out[j].TaskID {
-			return out[i].TaskID < out[j].TaskID
+	slices.SortFunc(out, func(a, b model.Disposition) int {
+		if a.TaskID != b.TaskID {
+			return strings.Compare(a.TaskID, b.TaskID)
 		}
-		return out[i].BlockIndex < out[j].BlockIndex
+		return a.BlockIndex - b.BlockIndex
 	})
 	return out
 }
@@ -494,17 +568,17 @@ func mergeDispositions(stored, fresh []model.Disposition) []model.Disposition {
 func dedupeBindings(in []store.Binding) []store.Binding {
 	byKey := make(map[string]store.Binding, len(in))
 	for _, b := range in {
-		byKey[planKey(b.TaskID, b.BlockIndex)] = b // later (plan) wins
+		byKey[norm.BlockKey(b.TaskID, b.BlockIndex)] = b // later (plan) wins
 	}
 	out := make([]store.Binding, 0, len(byKey))
 	for _, b := range byKey {
 		out = append(out, b)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].TaskID != out[j].TaskID {
-			return out[i].TaskID < out[j].TaskID
+	slices.SortFunc(out, func(a, b store.Binding) int {
+		if a.TaskID != b.TaskID {
+			return strings.Compare(a.TaskID, b.TaskID)
 		}
-		return out[i].BlockIndex < out[j].BlockIndex
+		return a.BlockIndex - b.BlockIndex
 	})
 	return out
 }
@@ -512,12 +586,12 @@ func dedupeBindings(in []store.Binding) []store.Binding {
 func dedupeDeletes(in []store.BindingKey, keep []store.Binding) []store.BindingKey {
 	keepSet := make(map[string]bool, len(keep))
 	for _, b := range keep {
-		keepSet[planKey(b.TaskID, b.BlockIndex)] = true
+		keepSet[norm.BlockKey(b.TaskID, b.BlockIndex)] = true
 	}
 	seen := map[string]bool{}
 	var out []store.BindingKey
 	for _, k := range in {
-		key := planKey(k.TaskID, k.BlockIndex)
+		key := norm.BlockKey(k.TaskID, k.BlockIndex)
 		if keepSet[key] || seen[key] {
 			continue
 		}
@@ -560,16 +634,5 @@ func isNotFound(err error) bool {
 		return false
 	}
 	s := err.Error()
-	return contains(s, "404") || contains(s, "notFound") || contains(s, "no such event")
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
+	return strings.Contains(s, "404") || strings.Contains(s, "notFound") || strings.Contains(s, "no such event")
 }

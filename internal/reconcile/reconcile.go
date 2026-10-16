@@ -17,6 +17,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/store"
 )
 
@@ -108,7 +109,7 @@ func Reconcile(observed []calendar.Event, bindings []store.Binding, snapshots ma
 		if err != nil {
 			return Result{}, err
 		}
-		slots := units(end.Sub(start), granularity)
+		slots := norm.Units(end.Sub(start), granularity)
 		if b, bound := byEvent[e.ID]; bound {
 			if b.Start.Equal(start) && b.End.Equal(end) {
 				continue // time unchanged: nothing
@@ -200,11 +201,4 @@ func Effective(tasks []model.Task, dispositions []model.Disposition) []model.Dis
 		}
 	}
 	return out
-}
-
-func units(d, granularity time.Duration) int {
-	if d <= 0 {
-		return 0
-	}
-	return int((d + granularity - 1) / granularity)
 }

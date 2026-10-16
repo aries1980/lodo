@@ -3,7 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
@@ -13,7 +14,7 @@ import (
 
 // runRefresh implements lodo refresh: pull-only, reconcile plus store
 // commit. It never resolves the graph and never writes the calendar.
-func runRefresh(opts *options) error {
+func runRefresh(opts *options, ov configOverrides) error {
 	cfgPath := opts.config
 	if cfgPath == "" {
 		def, err := config.DefaultConfigPath()
@@ -23,6 +24,12 @@ func runRefresh(opts *options) error {
 		cfgPath = def
 	}
 	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	cfg, err = config.Apply(cfg, config.Overrides{
+		ReadCalendars: ov.readCalendars,
+	})
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -57,6 +64,8 @@ func runRefresh(opts *options) error {
 			Dispositions: refreshDispositions(outcome),
 			Adopted:      refreshAdopted(outcome),
 			Captured:     refreshCaptured(outcome),
+			Busy:         busyView(outcome.Busy),
+			Conflicts:    conflictsView(outcome.Conflicts),
 		}
 		if err := printJSON(opts.out, view); err != nil {
 			return &exitError{code: codeError, err: err}
@@ -71,6 +80,8 @@ type refreshReport struct {
 	Dispositions []dispositionJSON `json:"dispositions,omitempty"`
 	Adopted      []bindingJSON     `json:"adopted,omitempty"`
 	Captured     []dispositionJSON `json:"captured,omitempty"`
+	Busy         busyJSON          `json:"busy_sources"`
+	Conflicts    []conflictJSON    `json:"conflicts,omitempty"`
 }
 
 type bindingJSON struct {
@@ -118,7 +129,9 @@ func refreshCaptured(outcome run.RefreshOutcome) []dispositionJSON {
 func renderRefreshText(w interface {
 	Write([]byte) (int, error)
 }, outcome run.RefreshOutcome, verbose bool) {
-	if len(outcome.Adopted) == 0 && len(outcome.Captured) == 0 {
+	printBusyText(w, outcome.Busy)
+	printConflictsText(w, nil, outcome.Conflicts)
+	if len(outcome.Adopted) == 0 && len(outcome.Captured) == 0 && len(outcome.Conflicts) == 0 {
 		_, _ = fmt.Fprintln(w, "Refresh: local state already matches the calendar.")
 		return
 	}
@@ -128,11 +141,11 @@ func renderRefreshText(w interface {
 		return
 	}
 	adopted := append([]store.Binding{}, outcome.Adopted...)
-	sort.Slice(adopted, func(i, j int) bool {
-		if adopted[i].TaskID != adopted[j].TaskID {
-			return adopted[i].TaskID < adopted[j].TaskID
+	slices.SortFunc(adopted, func(a, b store.Binding) int {
+		if a.TaskID != b.TaskID {
+			return strings.Compare(a.TaskID, b.TaskID)
 		}
-		return adopted[i].BlockIndex < adopted[j].BlockIndex
+		return a.BlockIndex - b.BlockIndex
 	})
 	for _, b := range adopted {
 		_, _ = fmt.Fprintf(w, "  adopted %s → %s block %d\n", b.EventID, b.TaskID, b.BlockIndex)

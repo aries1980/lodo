@@ -156,6 +156,13 @@ func (e Event) Managed() bool {
 	return e.ExtendedProperties.Private["lodo"] == "true"
 }
 
+// AllDay reports Google's all-day shape: a start date and no dateTime.
+// A timed event with an unparseable dateTime is not all-day; Span falls
+// back to the date for projection, and the write calendar still counts it.
+func (e Event) AllDay() bool {
+	return strings.TrimSpace(e.Start.DateTime) == "" && strings.TrimSpace(e.Start.Date) != ""
+}
+
 // userDeclined reports whether the user, as the attendee marked self=true,
 // declined. Other attendees' responses are not the user's.
 func (e Event) userDeclined() bool {
@@ -285,38 +292,46 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 // boundary clips, it does not become busy for the whole window. Managed
 // events carry no busy time in M4 — no dispositions exist yet — and are
 // returned instead, so forecast can name the hole schedule closes.
-func (c *Client) Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []Event, error) {
+//
+// The report carries the write calendar and its event count; single-calendar
+// reads have no sources, no warnings, and an empty shared mask.
+func (c *Client) Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []Event, BusyReport, error) {
 	events, err := c.List(ctx, now, g.WindowEnd())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, BusyReport{}, err
 	}
 
+	mask, err := busyMask(g, events, now)
+	if err != nil {
+		return nil, nil, BusyReport{}, err
+	}
+	report := BusyReport{
+		WriteCalendar: c.id,
+		WriteEvents:   len(events),
+		Shared:        grid.NewMask(g.Len()),
+	}
+	return mask, managedEvents(events), report, nil
+}
+
+// busyMask projects the busy subset of events onto g: managed and free
+// events contribute nothing. Clipping to [now, window end] happens in
+// projectSpan; zero start means the window never touches the event.
+func busyMask(g *grid.Grid, events []Event, now time.Time) (grid.Mask, error) {
 	mask := grid.NewMask(g.Len())
-	var managed []Event
 	for _, e := range events {
-		switch Classify(e) {
-		case KindManaged:
-			managed = append(managed, e)
-			continue
-		case KindFree:
+		if e.Managed() || Classify(e) == KindFree {
 			continue
 		}
-		start, end, err := e.Span(g.Location())
+		start, end, err := projectSpan(e, g, now)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		if start.Before(now) {
-			start = now
-		}
-		if end.After(g.WindowEnd()) {
-			end = g.WindowEnd()
-		}
-		if !start.Before(end) {
+		if start.IsZero() {
 			continue // the window never touches the rest of it
 		}
 		mask.OrInto(g.Overlapping(start, end))
 	}
-	return mask, managed, nil
+	return mask, nil
 }
 
 // get issues one GET against base+path+query and decodes out (which may be
@@ -331,29 +346,7 @@ func (c *Client) get(ctx context.Context, path []string, q url.Values, out any) 
 	if err != nil {
 		return fmt.Errorf("google calendar api: %w", err)
 	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), errorCause(err))
-	}
-	defer func() { _ = resp.Body.Close() }() // a response body's close error is never actionable
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
-	if err != nil {
-		return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		if msg := decodeError(data); msg != "" {
-			return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, msg)
-		}
-		return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, snippet(data))
-	}
-	if out == nil {
-		return nil
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("google calendar api: %s: decode: %w (body: %s)", strings.Join(path, "/"), err, snippet(data))
-	}
-	return nil
+	return c.do(req, strings.Join(path, "/"), out, http.StatusOK)
 }
 
 // write issues one mutating call (POST/PATCH/DELETE) and decodes out when
@@ -378,29 +371,68 @@ func (c *Client) write(ctx context.Context, method string, path []string, in any
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return c.do(req, strings.Join(path, "/"), out, http.StatusOK, http.StatusCreated, http.StatusNoContent)
+}
+
+// do executes one API request, checks its status, and decodes out when the
+// body is non-empty. Failures carry Google's {"error":{"message"}} or a body
+// snippet. A response body's close error is never actionable.
+func (c *Client) do(req *http.Request, path string, out any, okStatuses ...int) error {
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), errorCause(err))
+		return fmt.Errorf("google calendar api: %s: %w", path, errorCause(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
 	if err != nil {
-		return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), err)
+		return fmt.Errorf("google calendar api: %s: %w", path, err)
 	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
-		if msg := decodeError(data); msg != "" {
-			return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, msg)
+	ok := false
+	for _, s := range okStatuses {
+		if resp.StatusCode == s {
+			ok = true
+			break
 		}
-		return fmt.Errorf("google calendar api: %s: HTTP %s: %s", strings.Join(path, "/"), resp.Status, snippet(data))
+	}
+	if !ok {
+		msg := decodeError(data)
+		if msg == "" {
+			msg = snippet(data)
+		}
+		return &APIError{StatusCode: resp.StatusCode, Message: msg, Path: path}
 	}
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("google calendar api: %s: decode: %w (body: %s)", strings.Join(path, "/"), err, snippet(data))
+		return fmt.Errorf("google calendar api: %s: decode: %w (body: %s)", path, err, snippet(data))
 	}
 	return nil
+}
+
+// APIError is one Google Calendar API failure with its HTTP status, so the
+// multi-calendar read can tell a per-calendar 403/404 (warn-and-continue)
+// from an auth or network failure (fail the run). Message is Google's own
+// {"error":{"message"}} or a body snippet.
+type APIError struct {
+	StatusCode int
+	Message    string
+	Path       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("google calendar api: %s: HTTP %d: %s", e.Path, e.StatusCode, e.Message)
+}
+
+// StatusCodeOf unwraps an API failure's HTTP status. False when the error is
+// not an API failure (network, auth refresh, decode).
+func StatusCodeOf(err error) (int, bool) {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode, true
+	}
+	return 0, false
 }
 
 // decodeError reads Google's error body: {"error": {"message": "…"}}.

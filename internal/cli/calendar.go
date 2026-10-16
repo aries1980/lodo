@@ -26,7 +26,8 @@ var googleCalendarBase = calendar.GoogleBase
 // transparently via the token source `lodo auth google` set up. Errors are
 // operational and exit 1 by construction of the caller — a missing refresh
 // token is the auth hint, a revoked one or an unreachable calendar the
-// operational cause; never a silently empty mask.
+// operational cause; never a silently empty mask. The write calendar plus
+// every read calendar is read; per-calendar 403/404 warns and continues.
 func calendarBusy(ctx context.Context, creds config.Credentials, cfg config.Config) (run.BusySource, error) {
 	c, err := calendarFull(ctx, creds, cfg)
 	if err != nil {
@@ -36,10 +37,10 @@ func calendarBusy(ctx context.Context, creds config.Credentials, cfg config.Conf
 }
 
 // calendarFull builds the read-write client schedule needs: the same OAuth
-// composition as calendarBusy, but returning the concrete client so inserts,
-// patches and deletes are available. List/Busy shape the plan; the writes
-// close the loop.
-func calendarFull(ctx context.Context, creds config.Credentials, cfg config.Config) (*calendar.Client, error) {
+// composition as calendarBusy, but returning the concrete multi-calendar
+// client so inserts, patches and deletes are available on the write calendar
+// only. List/Busy shape the plan; the writes close the loop.
+func calendarFull(ctx context.Context, creds config.Credentials, cfg config.Config) (*calendar.MultiClient, error) {
 	g, err := creds.GoogleAuth()
 	if err != nil {
 		return nil, err
@@ -50,7 +51,10 @@ func calendarFull(ctx context.Context, creds config.Credentials, cfg config.Conf
 	}
 	hc := oauth2.NewClient(ctx, src)
 	hc.Timeout = calendar.DefaultTimeout
-	return calendar.NewClient(hc, cfg.Calendar.ID, googleCalendarBase)
+	return calendar.NewMultiClient(hc, cfg.Calendar.ID, cfg.Calendar.ReadCalendars, googleCalendarBase, calendar.ReadOptions{
+		IgnoreAllDay:         cfg.Calendar.IgnoreReadAllDay,
+		IgnoreAllDayMatching: cfg.Calendar.IgnoreReadAllDayMatching,
+	})
 }
 
 // openStore opens the system of record at its XDG path, creating it when

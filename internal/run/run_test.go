@@ -239,11 +239,12 @@ func issueKinds(outcome run.Outcome) []string {
 type stubBusy struct {
 	mask    grid.Mask
 	managed []calendar.Event
+	report  calendar.BusyReport
 	err     error
 }
 
-func (s stubBusy) Busy(context.Context, *grid.Grid, time.Time) (grid.Mask, []calendar.Event, error) {
-	return s.mask, s.managed, s.err
+func (s stubBusy) Busy(context.Context, *grid.Grid, time.Time) (grid.Mask, []calendar.Event, calendar.BusyReport, error) {
+	return s.mask, s.managed, s.report, s.err
 }
 
 // busyGraph is the smallest useful graph: one 30m Task inside the default

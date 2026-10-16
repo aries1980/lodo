@@ -18,6 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/parse"
 )
 
@@ -60,6 +61,18 @@ type Calendar struct {
 	Provider string
 	// ID selects the one Google Calendar; default "primary".
 	ID string
+	// ReadCalendars holds shared calendar IDs read for busy time only
+	// (person shares use the owner email, resources and groups use their
+	// IDs). Empty means the write calendar alone. Never written to.
+	ReadCalendars []string
+	// IgnoreReadAllDay drops every all-day event on a read calendar from
+	// busy time. The write calendar is unchanged. False keeps all-day events
+	// busy, which is the default.
+	IgnoreReadAllDay bool
+	// IgnoreReadAllDayMatching drops an all-day read-calendar event whose
+	// summary contains one of these phrases, case-insensitively. Timed
+	// events are never matched. Unused when IgnoreReadAllDay is true.
+	IgnoreReadAllDayMatching []string
 }
 
 // ParseGranularity parses a configured scheduling.granularity: a positive
@@ -104,6 +117,13 @@ type rawFile struct {
 	Calendar struct {
 		Provider string `yaml:"provider"`
 		ID       string `yaml:"id"`
+		// ReadCalendars mirrors calendar.read_calendars: shared calendars
+		// read for busy time only.
+		ReadCalendars []string `yaml:"read_calendars"`
+		// IgnoreReadAllDay mirrors calendar.ignore_read_all_day.
+		IgnoreReadAllDay bool `yaml:"ignore_read_all_day"`
+		// IgnoreReadAllDayMatching mirrors calendar.ignore_read_all_day_matching.
+		IgnoreReadAllDayMatching []string `yaml:"ignore_read_all_day_matching"`
 	} `yaml:"calendar"`
 }
 
@@ -132,8 +152,11 @@ func Load(path string) (Config, error) {
 			Timezone:    strings.TrimSpace(raw.Scheduling.Timezone),
 		},
 		Calendar: Calendar{
-			Provider: strings.TrimSpace(raw.Calendar.Provider),
-			ID:       strings.TrimSpace(raw.Calendar.ID),
+			Provider:                 strings.TrimSpace(raw.Calendar.Provider),
+			ID:                       strings.TrimSpace(raw.Calendar.ID),
+			ReadCalendars:            append([]string(nil), raw.Calendar.ReadCalendars...),
+			IgnoreReadAllDay:         raw.Calendar.IgnoreReadAllDay,
+			IgnoreReadAllDayMatching: append([]string(nil), raw.Calendar.IgnoreReadAllDayMatching...),
 		},
 	}
 	return validate(cfg)
@@ -189,7 +212,17 @@ func validate(cfg Config) (Config, error) {
 	if cfg.Calendar.ID == "" {
 		cfg.Calendar.ID = DefaultCalendarID
 	}
+	cfg.Calendar.ReadCalendars = norm.ReadCalendars(cfg.Calendar.ID, cfg.Calendar.ReadCalendars)
+	cfg.Calendar.IgnoreReadAllDayMatching = norm.Phrases(cfg.Calendar.IgnoreReadAllDayMatching)
 	return cfg, nil
+}
+
+// normalizeReadCalendars trims entries, drops empties, silently drops any
+// read entry equal to the write calendar ID, and drops exact duplicates
+// within the read list, preserving config order. Nil in stays nil out when
+// nothing survives, so an absent list and an emptied one compare equal.
+func normalizeReadCalendars(writeID string, reads []string) []string {
+	return norm.ReadCalendars(writeID, reads)
 }
 
 // Overrides are one-run CLI overrides (configuration.md): any setting may be
@@ -199,6 +232,11 @@ type Overrides struct {
 	WindowDays int
 	// Timezone overrides scheduling.timezone; "" keeps the config value.
 	Timezone string
+	// ReadCalendars replaces calendar.read_calendars for one run when
+	// non-nil (the --read-calendar flag given at least once). Nil keeps the
+	// config value; a non-nil but empty-after-normalization list means the
+	// write calendar alone.
+	ReadCalendars []string
 }
 
 // Apply resolves config plus Overrides into the effective config. It is a
@@ -215,6 +253,11 @@ func Apply(cfg Config, o Overrides) (Config, error) {
 			return Config{}, fmt.Errorf("--timezone %q: %w", o.Timezone, err)
 		}
 		cfg.Scheduling.Timezone = o.Timezone
+	}
+	if o.ReadCalendars != nil {
+		// Copy before normalizing: the caller's slice is never mutated.
+		cp := append([]string(nil), o.ReadCalendars...)
+		cfg.Calendar.ReadCalendars = normalizeReadCalendars(cfg.Calendar.ID, cp)
 	}
 	return cfg, nil
 }

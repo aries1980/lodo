@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,8 +40,9 @@ func loadGraph(opts *options, ov configOverrides) (config.Config, logseq.Client,
 		return config.Config{}, nil, config.Credentials{}, err
 	}
 	cfg, err = config.Apply(cfg, config.Overrides{
-		WindowDays: ov.windowDays,
-		Timezone:   ov.timezone,
+		WindowDays:    ov.windowDays,
+		Timezone:      ov.timezone,
+		ReadCalendars: ov.readCalendars,
 	})
 	if err != nil {
 		return config.Config{}, nil, config.Credentials{}, err
@@ -112,11 +113,13 @@ func runCheck(opts *options, strict bool) error {
 	}
 
 	if opts.json {
+		busy := busyView(outcome.Busy)
 		view := checkReport{
 			GraphIssues: outcome.Issues,
 			Shortfalls:  checkShortfalls(outcome),
 			StoodDown:   checkStoodDown(outcome),
 			Orphaned:    checkOrphans(outcome),
+			Busy:        &busy,
 		}
 		if opts.verbose {
 			view.Explanations = checkExplanations(outcome)
@@ -237,6 +240,7 @@ func runForecast(opts *options, ov configOverrides, verbose bool) error {
 			Blocks:     blocks(outcome),
 			Shortfalls: shortfalls(outcome),
 			Managed:    managedEvents(outcome),
+			Busy:       busyView(outcome.Busy),
 		}
 		if verbose {
 			view.Explanations = explanations(outcome)
@@ -259,6 +263,7 @@ type checkReport struct {
 	StoodDown    []stoodDownJSON   `json:"stood_down,omitempty"`
 	Orphaned     []orphanJSON      `json:"orphaned,omitempty"`
 	Explanations []explanationJSON `json:"explanations,omitempty"`
+	Busy         *busyJSON         `json:"busy_sources,omitempty"`
 }
 
 type stoodDownJSON struct {
@@ -275,6 +280,7 @@ type forecastReport struct {
 	// Managed are the calendar's Lodo-made events forecast deliberately
 	// leaves out; schedule's reconciliation closes that hole.
 	Managed []managedJSON `json:"managed_left_out,omitempty"`
+	Busy    busyJSON      `json:"busy_sources"`
 }
 
 // managedJSON is one Managed event run out of the mask, for the note both
@@ -316,52 +322,15 @@ type explanationJSON struct {
 }
 
 func blocks(outcome run.Outcome) []blockJSON {
-	out := make([]blockJSON, 0, len(outcome.Schedule.Blocks))
-	for _, b := range outcome.Schedule.Blocks {
-		out = append(out, blockJSON{
-			TaskID: b.TaskID,
-			Task:   run.TaskText(outcome.Tasks, b.TaskID),
-			Index:  b.Index,
-			Start:  b.Start,
-			End:    b.End,
-			Slots:  b.Slots,
-			Kind:   string(b.Kind),
-		})
-	}
-	return out
+	return blockViews(outcome.Tasks, outcome.Schedule.Blocks)
 }
 
 func shortfalls(outcome run.Outcome) []shortfallJSON {
-	out := make([]shortfallJSON, 0, len(outcome.Schedule.Report.Tasks))
-	for _, r := range outcome.Schedule.Report.Tasks {
-		out = append(out, shortfallJSON{
-			TaskID:    r.TaskID,
-			Task:      run.TaskText(outcome.Tasks, r.TaskID),
-			Required:  r.Required,
-			Placed:    r.Placed,
-			StoodDown: r.StoodDown,
-			Shortfall: r.Shortfall,
-			Reason:    string(r.Reason),
-			BlockedBy: append([]string(nil), r.BlockedBy...),
-		})
-	}
-	return out
+	return shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks)
 }
 
 func explanations(outcome run.Outcome) []explanationJSON {
-	out := make([]explanationJSON, 0, len(outcome.Schedule.Explanations))
-	for _, e := range outcome.Schedule.Explanations {
-		out = append(out, explanationJSON{
-			TaskID:     e.TaskID,
-			BlockIndex: e.BlockIndex,
-			Kind:       string(e.Kind),
-			Start:      e.Start,
-			Slots:      e.Slots,
-			RunStart:   e.RunStart,
-			RunSlots:   e.RunSlots,
-		})
-	}
-	return out
+	return explanationViews(outcome.Schedule.Explanations)
 }
 
 // managedEvents is the note's payload: the events busy deliberately left
@@ -384,23 +353,15 @@ func printJSON(w io.Writer, v any) error {
 // Text rendering, in the Scheduling timezone the blocks were built in.
 
 func checkShortfalls(outcome run.CheckOutcome) []shortfallJSON {
-	out := make([]shortfallJSON, 0, len(outcome.Schedule.Report.Tasks))
-	for _, r := range outcome.Schedule.Report.Tasks {
-		out = append(out, shortfallJSON{
-			TaskID: r.TaskID, Task: run.TaskText(outcome.Tasks, r.TaskID),
-			Required: r.Required, Placed: r.Placed, StoodDown: r.StoodDown,
-			Shortfall: r.Shortfall, Reason: string(r.Reason),
-			BlockedBy: append([]string(nil), r.BlockedBy...),
-		})
-	}
-	return out
+	return shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks)
 }
 
 func checkStoodDown(outcome run.CheckOutcome) []stoodDownJSON {
+	byText := textByTasks(outcome.Tasks)
 	out := make([]stoodDownJSON, 0, len(outcome.StoodDown))
 	for _, d := range outcome.StoodDown {
 		out = append(out, stoodDownJSON{
-			TaskID: d.TaskID, Task: run.TaskText(outcome.Tasks, d.TaskID),
+			TaskID: d.TaskID, Task: byText[d.TaskID],
 			BlockIndex: d.BlockIndex, Slots: d.Slots,
 		})
 	}
@@ -408,33 +369,15 @@ func checkStoodDown(outcome run.CheckOutcome) []stoodDownJSON {
 }
 
 func checkOrphans(outcome run.CheckOutcome) []orphanJSON {
-	out := make([]orphanJSON, 0, len(outcome.Orphans))
-	for _, o := range outcome.Orphans {
-		out = append(out, orphanJSON{
-			EventID: o.EventID, TaskID: o.TaskID,
-			Task:  run.TaskText(outcome.Tasks, o.TaskID),
-			Block: o.Block, Summary: o.Summary,
-		})
-	}
-	return out
+	return orphanViews(outcome.Tasks, outcome.Orphans)
 }
 
 func checkExplanations(outcome run.CheckOutcome) []explanationJSON {
-	out := make([]explanationJSON, 0, len(outcome.Schedule.Explanations))
-	for _, e := range outcome.Schedule.Explanations {
-		out = append(out, explanationJSON{
-			TaskID: e.TaskID, BlockIndex: e.BlockIndex, Kind: string(e.Kind),
-			Start: e.Start, Slots: e.Slots, RunStart: e.RunStart, RunSlots: e.RunSlots,
-		})
-	}
-	return out
+	return explanationViews(outcome.Schedule.Explanations)
 }
 
 func checkTaskLabel(outcome run.CheckOutcome, id string) string {
-	if text := run.TaskText(outcome.Tasks, id); text != "" {
-		return text
-	}
-	return id
+	return labelFor(textByTasks(outcome.Tasks), id)
 }
 
 func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
@@ -476,13 +419,9 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
 		_, _ = fmt.Fprintln(w, "Orphaned: none.")
 	} else {
 		_, _ = fmt.Fprintf(w, "Orphaned: %d Managed event(s) with no home in the plan:\n", len(outcome.Orphans))
+		byText := textByTasks(outcome.Tasks)
 		for _, o := range outcome.Orphans {
-			label := o.TaskID
-			if text := run.TaskText(outcome.Tasks, o.TaskID); text != "" {
-				label = text
-			} else if o.TaskID == "" {
-				label = "(unreadable pointer)"
-			}
+			label := orphanLabel(byText, o)
 			_, _ = fmt.Fprintf(w, "  %s — %s (block %d)\n", o.EventID, label, o.Block)
 		}
 	}
@@ -495,6 +434,8 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
 				e.Start.Format("Mon 15:04"), e.Slots, e.Kind)
 		}
 	}
+
+	printBusyText(w, outcome.Busy)
 }
 
 func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now time.Time, verbose bool) {
@@ -513,6 +454,7 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 		durationMinutes(granularity, 1),
 		loc,
 	)
+	printBusyText(w, outcome.Busy)
 
 	// The known forecast hole, said plainly: Lodo's own events are not in
 	// the busy mask there, and schedule's reconciliation is what folds them
@@ -558,7 +500,15 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 	for _, d := range order {
 		dayRows = append(dayRows, rows[d])
 	}
-	sort.Slice(dayRows, func(i, j int) bool { return dayRows[i].day.Before(dayRows[j].day) })
+	slices.SortFunc(dayRows, func(a, b *dayRow) int {
+		if a.day.Before(b.day) {
+			return -1
+		}
+		if b.day.Before(a.day) {
+			return 1
+		}
+		return 0
+	})
 
 	for _, row := range dayRows {
 		_, _ = fmt.Fprintf(w, "\n%s  %s\n", row.when.Format("Mon"), row.day.String())
@@ -610,32 +560,17 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 
 // taskLabel prefers the Task's text, falling back to its id.
 func taskLabel(outcome run.Outcome, id string) string {
-	if text := run.TaskText(outcome.Tasks, id); text != "" {
-		return text
-	}
-	return id
+	return run.Label(outcome.Tasks, id)
 }
 
 // forecastBlockedLabels prefers Task text for blocker IDs.
 func forecastBlockedLabels(outcome run.Outcome, ids []string) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, taskLabel(outcome, id))
-	}
-	return out
+	return blockerLabels(textByTasks(outcome.Tasks), ids)
 }
 
 // blockedLabels prefers Task text for blocker IDs in check output.
 func blockedLabels(outcome run.CheckOutcome, ids []string) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if text := run.TaskText(outcome.Tasks, id); text != "" {
-			out = append(out, text)
-			continue
-		}
-		out = append(out, id)
-	}
-	return out
+	return blockerLabels(textByTasks(outcome.Tasks), ids)
 }
 
 // durationMinutes renders a Block's span: "30m", "1h" or "1h30m".

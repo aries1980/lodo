@@ -419,3 +419,120 @@ func TestOverrideErrors(t *testing.T) {
 		t.Fatal("Apply accepted an unknown timezone override")
 	}
 }
+
+func TestReadCalendarsNormalization(t *testing.T) {
+	body := `
+logseq:
+  api_url: http://127.0.0.1:12315/api
+scheduling:
+  granularity: 15m
+  window_days: 14
+  timezone: Europe/London
+calendar:
+  provider: google
+  id: primary
+  read_calendars:
+    - " partner@example.com "
+    - ""
+    - "   "
+    - partner@example.com
+    - primary
+    - resource_123@resource.calendar.google.com
+    - partner@example.com
+`
+	cfg, err := config.Load(write(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"partner@example.com", "resource_123@resource.calendar.google.com"}
+	if diff := cmp.Diff(want, cfg.Calendar.ReadCalendars); diff != "" {
+		t.Fatalf("ReadCalendars mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIgnoreReadAllDay(t *testing.T) {
+	body := `
+logseq:
+  api_url: http://127.0.0.1:12315/api
+scheduling:
+  granularity: 15m
+  window_days: 14
+  timezone: Europe/London
+calendar:
+  provider: google
+  id: primary
+  ignore_read_all_day: true
+  ignore_read_all_day_matching:
+    - " Birthday "
+    - ""
+    - birthday
+    - Holiday
+`
+	cfg, err := config.Load(write(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Calendar.IgnoreReadAllDay {
+		t.Fatal("IgnoreReadAllDay = false, want true")
+	}
+	want := []string{"birthday", "holiday"}
+	if diff := cmp.Diff(want, cfg.Calendar.IgnoreReadAllDayMatching); diff != "" {
+		t.Fatalf("matching mismatch (-want +got):\n%s", diff)
+	}
+
+	absent, err := config.Load(write(t, valid))
+	if err != nil {
+		t.Fatalf("Load absent: %v", err)
+	}
+	if absent.Calendar.IgnoreReadAllDay || absent.Calendar.IgnoreReadAllDayMatching != nil {
+		t.Fatalf("absent = %+v, want flag false and nil list", absent.Calendar)
+	}
+}
+
+func TestReadCalendarsEmptyWhenAbsent(t *testing.T) {
+	cfg, err := config.Load(write(t, valid))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Calendar.ReadCalendars) != 0 {
+		t.Fatalf("ReadCalendars = %q, want empty when absent", cfg.Calendar.ReadCalendars)
+	}
+}
+
+func TestReadCalendarsOverrideReplaces(t *testing.T) {
+	cfg := wantConfig()
+	cfg.Calendar.ReadCalendars = []string{"a@example.com", "b@example.com"}
+
+	// Nil keeps the config value.
+	got, err := config.Apply(cfg, config.Overrides{})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if diff := cmp.Diff([]string{"a@example.com", "b@example.com"}, got.Calendar.ReadCalendars); diff != "" {
+		t.Fatalf("nil override changed the list (-want +got):\n%s", diff)
+	}
+
+	// Non-nil replaces, with the same hygiene (trim, drop empties, drop the
+	// write ID, dedupe).
+	got, err = config.Apply(cfg, config.Overrides{ReadCalendars: []string{" c@example.com ", "", "primary", "c@example.com"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if diff := cmp.Diff([]string{"c@example.com"}, got.Calendar.ReadCalendars); diff != "" {
+		t.Fatalf("override mismatch (-want +got):\n%s", diff)
+	}
+
+	// Non-nil empty clears to the write calendar alone.
+	got, err = config.Apply(cfg, config.Overrides{ReadCalendars: []string{}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(got.Calendar.ReadCalendars) != 0 {
+		t.Fatalf("empty override = %q, want the write calendar alone", got.Calendar.ReadCalendars)
+	}
+
+	// The caller's config and slice are never mutated.
+	if diff := cmp.Diff([]string{"a@example.com", "b@example.com"}, cfg.Calendar.ReadCalendars); diff != "" {
+		t.Fatalf("Apply mutated the caller's config (-want +got):\n%s", diff)
+	}
+}

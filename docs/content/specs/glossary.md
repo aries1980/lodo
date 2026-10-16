@@ -44,9 +44,12 @@ themselves, which Lodo only reads as busy time and never moves (External).
 _Avoid_: owned event, foreign event, personal event
 
 **Calendar**:
-The single external calendar (Google Workspace) onto which Lodo projects the Schedule.
-Time Maps partition the *week*; they are not calendars.
-_Avoid_: agendas, multiple calendars
+An external Google Workspace calendar Lodo reads. Exactly one of them is the **write
+calendar**: the calendar named by `calendar.id`, onto which Lodo projects the Schedule.
+The rest are **read calendars**: calendars shared with the user, named by
+`calendar.read_calendars`, read for busy time only and never written to. Time Maps
+partition the *week*; they are not calendars.
+_Avoid_: agendas
 
 **Plan**:
 The user's intent about *when* a Task should happen, expressed loosely (a window, or
@@ -72,7 +75,8 @@ _Avoid_: importance, weight, rank
 **Time Map**:
 A named, weekly-recurring pattern of hours in which the user is willing to do a
 particular category of work (e.g. Deep Work, Errands, Weekends). A Task belongs to
-one or more Time Maps and is scheduled only inside their hours.
+one or more Time Maps and is scheduled only inside their hours. Each window has a
+preference tier; green is filled before yellow, and yellow before red.
 _Avoid_: availability, calendar, working hours
 _Note_: Plan says *when by*; Time Map says *which hours of the week*; Pin says
 *exactly when*. They are orthogonal and must not be conflated.

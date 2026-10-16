@@ -2,12 +2,13 @@ package resolve
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/norm"
 )
 
 // Input is the raw graph as read from the app plus how to interpret it,
@@ -77,9 +78,9 @@ func (r *resolver) timeMapsIndex() int {
 // pageIndex matches a page by name case-insensitively (Logseq page names
 // are case-insensitive), -1 when absent.
 func (r *resolver) pageIndex(name string) int {
-	want := strings.ToLower(strings.TrimSpace(name))
+	want := norm.ID(name)
 	for i, p := range r.in.Pages {
-		if strings.ToLower(strings.TrimSpace(p.Name)) == want {
+		if norm.ID(p.Name) == want {
 			return i
 		}
 	}
@@ -88,9 +89,9 @@ func (r *resolver) pageIndex(name string) int {
 
 // treeFor finds the block tree of a case-insensitive page name.
 func (r *resolver) treeFor(name string) []*logseq.Block {
-	want := strings.ToLower(strings.TrimSpace(name))
+	want := norm.ID(name)
 	for key, tree := range r.in.Trees {
-		if strings.ToLower(strings.TrimSpace(key)) == want {
+		if norm.ID(key) == want {
 			return tree
 		}
 	}
@@ -102,13 +103,11 @@ func (r *resolver) treeFor(name string) []*logseq.Block {
 func (r *resolver) sortedPages() []*logseq.Page {
 	pages := make([]*logseq.Page, len(r.in.Pages))
 	copy(pages, r.in.Pages)
-	sort.Slice(pages, func(i, j int) bool {
-		a, b := pages[i].Name, pages[j].Name
-		la, lb := strings.ToLower(strings.TrimSpace(a)), strings.ToLower(strings.TrimSpace(b))
-		if la != lb {
-			return la < lb
+	slices.SortFunc(pages, func(a, b *logseq.Page) int {
+		if c := strings.Compare(norm.ID(a.Name), norm.ID(b.Name)); c != 0 {
+			return c
 		}
-		return a < b
+		return strings.Compare(a.Name, b.Name)
 	})
 	return pages
 }

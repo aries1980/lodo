@@ -11,7 +11,7 @@ package run
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +20,7 @@ import (
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/resolve"
 )
@@ -27,9 +28,10 @@ import (
 // BusySource is the calendar part of the loop: busy time already projected
 // onto the run's own grid, plus the Managed events deliberately left out of
 // it — forecast notes them and schedule's reconcile folds their Blocks
-// back. A nil BusySource means no calendar is consulted.
+// back. A nil BusySource means no calendar is consulted. The report carries
+// the write calendar plus per-read-calendar audit for the busy sources line.
 type BusySource interface {
-	Busy(ctx context.Context, g *grid.Grid, now time.Time) (busy grid.Mask, managed []calendar.Event, err error)
+	Busy(ctx context.Context, g *grid.Grid, now time.Time) (busy grid.Mask, managed []calendar.Event, report calendar.BusyReport, err error)
 }
 
 // Outcome is one forecast's read side: the Tasks that were seen, the graph
@@ -42,6 +44,9 @@ type Outcome struct {
 	// Managed is the one hole in the forecast mask: Lodo's own events are
 	// not folded into busy there; schedule and check reconcile them.
 	Managed []calendar.Event
+	// Busy carries the write calendar plus per-read-calendar status for the
+	// busy sources line and warnings.
+	Busy calendar.BusyReport
 }
 
 // Graph reads the graph fresh, resolves it, projects the calendar's busy
@@ -64,9 +69,10 @@ func Graph(ctx context.Context, client logseq.Client, busy BusySource, cfg confi
 
 	var inputBusy grid.Mask
 	var managed []calendar.Event
+	var busyReport calendar.BusyReport
 	if busy != nil {
 		g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
-		inputBusy, managed, err = busy.Busy(ctx, g, now)
+		inputBusy, managed, busyReport, err = busy.Busy(ctx, g, now)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -86,7 +92,7 @@ func Graph(ctx context.Context, client logseq.Client, busy BusySource, cfg confi
 		return Outcome{}, err
 	}
 
-	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed}, nil
+	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed, Busy: busyReport}, nil
 }
 
 // Read walks the read strategy from logseq-integration.md: enumerate pages,
@@ -150,19 +156,40 @@ func hasCandidate(tree []*logseq.Block) bool {
 
 // lowerTrim compares page names the way Logseq does: case-insensitively.
 func lowerTrim(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
+	return norm.ID(s)
 }
 
 // sortPages fixes the enumeration order lexicographically so outline order
 // never depends on the app's internal page order.
 func sortPages(pages []*logseq.Page) {
-	sort.Slice(pages, func(i, j int) bool {
-		a, b := lowerTrim(pages[i].Name), lowerTrim(pages[j].Name)
-		if a != b {
-			return a < b
+	slices.SortFunc(pages, func(a, b *logseq.Page) int {
+		if c := strings.Compare(norm.ID(a.Name), norm.ID(b.Name)); c != 0 {
+			return c
 		}
-		return pages[i].Name < pages[j].Name
+		return strings.Compare(a.Name, b.Name)
 	})
+}
+
+// TextMap indexes Task display text by ID for O(1) rendering lookups.
+func TextMap(tasks []model.Task) map[string]string {
+	out := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		out[t.ID] = t.Text
+	}
+	return out
+}
+
+// Label prefers the Task's text, falling back to its id.
+func Label(tasks []model.Task, id string) string {
+	return LabelWithMap(TextMap(tasks), id)
+}
+
+// LabelWithMap prefers the mapped text, falling back to the id.
+func LabelWithMap(byID map[string]string, id string) string {
+	if text, ok := byID[id]; ok && text != "" {
+		return text
+	}
+	return id
 }
 
 // TaskText returns the display text of the Task with the given id, for

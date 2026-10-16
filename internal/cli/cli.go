@@ -133,14 +133,19 @@ func newScheduleCmd(opts *options) *cobra.Command {
 }
 
 func newRefreshCmd(opts *options) *cobra.Command {
-	return &cobra.Command{
+	var overrides configOverrides
+
+	cmd := &cobra.Command{
 		Use:   "refresh",
 		Short: "Fold calendar edits into local state without recomputing",
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
-			return runRefresh(opts)
+			return runRefresh(opts, overrides)
 		},
 	}
+	cmd.Flags().StringArrayVar(&overrides.readCalendars, "read-calendar", nil, "shared calendar to read for busy time; repeatable, replaces config read_calendars for one run")
+
+	return cmd
 }
 
 func newAuthCmd(opts *options) *cobra.Command {
@@ -196,11 +201,13 @@ Run the command again after a revocation. Missing client credentials exit
 }
 
 type configOverrides struct {
-	windowDays int
-	timezone   string
+	windowDays    int
+	timezone      string
+	readCalendars []string
 }
 
 func addSchedulingOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {
 	cmd.Flags().IntVar(&overrides.windowDays, "window-days", 0, "override scheduling.window_days for one run")
 	cmd.Flags().StringVar(&overrides.timezone, "timezone", "", "override scheduling.timezone for one run")
+	cmd.Flags().StringArrayVar(&overrides.readCalendars, "read-calendar", nil, "shared calendar to read for busy time; repeatable, replaces config read_calendars for one run")
 }

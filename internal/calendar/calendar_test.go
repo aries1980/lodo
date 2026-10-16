@@ -332,9 +332,12 @@ func TestBusyProjectsTheGoldenMask(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	mask, managed, err := c.Busy(context.Background(), g, now)
+	mask, managed, report, err := c.Busy(context.Background(), g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v", err)
+	}
+	if report.WriteCalendar != "primary" || report.WriteEvents != 8 {
+		t.Fatalf("report = %+v, want primary with 8 events", report)
 	}
 
 	// The golden, slot by slot like the grid's own tests: the clipped
@@ -375,7 +378,7 @@ func TestBusyRefusesAnUntruthfulCalendar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, _, err := c.Busy(context.Background(), g, now); err == nil ||
+	if _, _, _, err := c.Busy(context.Background(), g, now); err == nil ||
 		!strings.Contains(err.Error(), "broken") {
 		t.Fatalf("Busy = %v, want a time-parse refusal, not a silent hole", err)
 	}

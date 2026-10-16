@@ -302,7 +302,7 @@ func TestCalendarBeforeStoreAdoptsOnRecovery(t *testing.T) {
 		t.Fatalf("All: %v", err)
 	}
 	g := grid.Build(now, london, 15*time.Minute, cfg.Scheduling.WindowDays)
-	_, managed, err := cal.Busy(ctx, g, now)
+	_, managed, _, err := cal.Busy(ctx, g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v", err)
 	}

@@ -16,10 +16,12 @@ The core loop: **read Tasks from Logseq → decide when → write Blocks to Goog
 - **Plan** = optional `plan-start::`/`plan-end::` date bounds; absent bounds mean flexible ("as soon as possible").
 - **Pin** via Logseq's native `scheduled::`; **Deadline** via native `deadline::`; **Priority** via native `priority::` (A/B/C).
 - **Dependencies** via `depends:: ((uuid))` (strict finish-to-start, AND, full-gate) plus SkedPal-parity nesting: containers (parents with Task children unscheduled), `order:: sequential|parallel` chains, block-cascade inheritance, DONE-parent suppression.
-- **Time Maps** authored in the graph on a configurable page, in a line-based format; **binary** (tiers parse but are treated as green).
+- **Time Maps** authored in the graph on a configurable page, in a line-based format, with green/yellow/red preference tiers.
 - **Scheduling**: front-loading, deterministic, minimal-churn displacement; a no-change run is a strict no-op. Highlights the rules in [`scheduling.md`](./scheduling.md).
 - **Infeasibility** is reported, never silently resolved: no Auto-Defer, no plan or Time-Map violation. Partial placement is allowed with a reported shortfall.
-- **Google Workspace Calendar** only, one calendar, Managed Events identified by private extended properties; moves become Pinned Blocks, deletes stand the Task down, everything else is busy time.
+- **Google Workspace Calendar** only: one write calendar plus shared read calendars for
+  busy time. Managed Events identified by private extended properties; moves become
+  Pinned Blocks, deletes stand the Task down, everything else is busy time.
 - **Configuration** in a file, secrets in a `0600` credentials file; no secrets in the graph.
 - **CLI**: `check`, `forecast`, `schedule`, `refresh`, `auth google`.
 
@@ -28,7 +30,6 @@ The core loop: **read Tasks from Logseq → decide when → write Blocks to Goog
 Each of these is a deliberate deferral, not an oversight. They are roughly ordered by how
 soon they are likely to matter.
 
-- **Preference tiers** (green/yellow/red Time Map fitting) — the schema already carries the words.
 - **Bundling** — packing small Tasks into shared events.
 - **Minimum Block Length** as a user property — v0.1 leans on granularity plus "largest-first" splitting.
 - **Buffers** and **Auto-Defer**.

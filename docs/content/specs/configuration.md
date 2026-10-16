@@ -41,7 +41,11 @@ scheduling:
 
 calendar:
   provider: google
-  id: primary           # the single output Calendar
+  id: primary           # the single write Calendar
+  read_calendars:       # shared calendars read for busy time only
+    - partner@example.com
+  ignore_read_all_day: false          # true: all-day events on read calendars are free
+  ignore_read_all_day_matching: []    # or phrases, e.g. birthday; all-day events only
 ```
 
 - **`scheduling.granularity`** — the quantum of the Schedule. A whole number of minutes
@@ -51,7 +55,18 @@ calendar:
   synced.
 - **`scheduling.timezone`** — the timezone Time Map hours are interpreted in. Time Map
   hours are absolute local times, so this is what "09:00" means.
-- **`calendar.id`** — the one Google calendar Lodo writes to. Time Maps are not calendars.
+- **`calendar.id`**: the one Google calendar Lodo writes to. Time Maps are not calendars.
+- **`calendar.read_calendars`**: shared Google calendars read for busy time only
+  (owner email for person shares, resource or group ID otherwise). Empty means the
+  write calendar alone. Lodo never writes to these, even if the share grants write
+  access. Entries are trimmed; empties, duplicates, and entries equal to
+  `calendar.id` are ignored.
+- **`calendar.ignore_read_all_day`**: when true, all-day events on read calendars
+  contribute no busy time. Default false. The write calendar is unchanged.
+- **`calendar.ignore_read_all_day_matching`**: phrases. An all-day event on a read
+  calendar whose summary contains one (case-insensitive) is free. Timed events are
+  never matched. Unused when `ignore_read_all_day` is true. Entries are trimmed,
+  lowercased, and de-duplicated.
 - **`logseq.insecure`** — skip TLS verification for an app serving a self-signed
   certificate. It is machine-bound, so it lives in this file rather than a flag: writing
   `true` here is the acceptance of that one certificate.
@@ -72,6 +87,8 @@ device/loopback-based and writes the refresh token here on first run.
 
 Any setting may be overridden for a single run by a CLI flag (e.g.
 `--window-days 30`, `--timezone America/New_York`). Overrides are not persisted.
+The repeatable `--read-calendar` flag replaces the `read_calendars` list for one
+run when given at least once.
 
 ## What is *not* here
 

@@ -146,3 +146,30 @@ func TestCommitIsAtomic(t *testing.T) {
 		t.Fatalf("bindings=%d snapshots=%d, want 1/1", len(bindings), len(snapshots))
 	}
 }
+
+func TestRunRecord(t *testing.T) {
+	s, err := Open(tempPath(t))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	now := time.Now().UTC()
+	if err := s.RecordRun("schedule", "primary", 5,
+		[]RunSource{{CalendarID: "a@example.com", Status: "read", Events: 3}}, now); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+	if err := s.RecordRun("refresh", "primary", 5,
+		[]RunSource{{CalendarID: "bad@example.com", Status: "skipped:403", Events: 0}}, now); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+	rec, err := s.LastRun()
+	if err != nil {
+		t.Fatalf("LastRun: %v", err)
+	}
+	if rec.Command != "refresh" || rec.WriteCalendar != "primary" || rec.WriteEvents != 5 {
+		t.Fatalf("last run = %+v", rec)
+	}
+	if len(rec.Sources) != 1 || rec.Sources[0].Status != "skipped:403" {
+		t.Fatalf("sources = %+v", rec.Sources)
+	}
+}

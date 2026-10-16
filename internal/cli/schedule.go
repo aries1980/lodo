@@ -3,7 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
@@ -44,6 +45,7 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose bool
 			Shortfalls: scheduleShortfalls(outcome),
 			Writes:     scheduleWrites(outcome),
 			Orphans:    scheduleOrphans(outcome),
+			Busy:       busyView(outcome.Busy),
 		}
 		if verbose {
 			view.Explanations = scheduleExplanations(outcome)
@@ -82,6 +84,7 @@ type scheduleReport struct {
 	Orphans      []orphanJSON      `json:"orphaned,omitempty"`
 	Reconciled   *reconcileJSON    `json:"reconciled,omitempty"`
 	Dispositions []dispositionJSON `json:"dispositions,omitempty"`
+	Busy         busyJSON          `json:"busy_sources"`
 }
 
 type writeJSON struct {
@@ -120,45 +123,24 @@ type dispositionJSON struct {
 }
 
 func scheduleBlocks(outcome run.ScheduleOutcome) []blockJSON {
-	out := make([]blockJSON, 0, len(outcome.Schedule.Blocks))
-	for _, b := range outcome.Schedule.Blocks {
-		out = append(out, blockJSON{
-			TaskID: b.TaskID, Task: run.TaskText(outcome.Tasks, b.TaskID),
-			Index: b.Index, Start: b.Start, End: b.End, Slots: b.Slots, Kind: string(b.Kind),
-		})
-	}
-	return out
+	return blockViews(outcome.Tasks, outcome.Schedule.Blocks)
 }
 
 func scheduleShortfalls(outcome run.ScheduleOutcome) []shortfallJSON {
-	out := make([]shortfallJSON, 0, len(outcome.Schedule.Report.Tasks))
-	for _, r := range outcome.Schedule.Report.Tasks {
-		out = append(out, shortfallJSON{
-			TaskID: r.TaskID, Task: run.TaskText(outcome.Tasks, r.TaskID),
-			Required: r.Required, Placed: r.Placed, StoodDown: r.StoodDown,
-			Shortfall: r.Shortfall, Reason: string(r.Reason),
-		})
-	}
-	return out
+	return shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks)
 }
 
 func scheduleExplanations(outcome run.ScheduleOutcome) []explanationJSON {
-	out := make([]explanationJSON, 0, len(outcome.Schedule.Explanations))
-	for _, e := range outcome.Schedule.Explanations {
-		out = append(out, explanationJSON{
-			TaskID: e.TaskID, BlockIndex: e.BlockIndex, Kind: string(e.Kind),
-			Start: e.Start, Slots: e.Slots, RunStart: e.RunStart, RunSlots: e.RunSlots,
-		})
-	}
-	return out
+	return explanationViews(outcome.Schedule.Explanations)
 }
 
 func scheduleWrites(outcome run.ScheduleOutcome) []writeJSON {
+	byText := textByTasks(outcome.Tasks)
 	out := make([]writeJSON, 0, len(outcome.Writes))
 	for _, w := range outcome.Writes {
 		out = append(out, writeJSON{
 			Op: w.Op, EventID: w.EventID, TaskID: w.TaskID,
-			Task:       run.TaskText(outcome.Tasks, w.TaskID),
+			Task:       byText[w.TaskID],
 			BlockIndex: w.BlockIndex, Start: w.Start, End: w.End, Summary: w.Summary,
 		})
 	}
@@ -166,15 +148,7 @@ func scheduleWrites(outcome run.ScheduleOutcome) []writeJSON {
 }
 
 func scheduleOrphans(outcome run.ScheduleOutcome) []orphanJSON {
-	out := make([]orphanJSON, 0, len(outcome.Orphans))
-	for _, o := range outcome.Orphans {
-		out = append(out, orphanJSON{
-			EventID: o.EventID, TaskID: o.TaskID,
-			Task:  run.TaskText(outcome.Tasks, o.TaskID),
-			Block: o.Block, Summary: o.Summary,
-		})
-	}
-	return out
+	return orphanViews(outcome.Tasks, outcome.Orphans)
 }
 
 func reconcileSummary(outcome run.ScheduleOutcome) *reconcileJSON {
@@ -186,25 +160,7 @@ func reconcileSummary(outcome run.ScheduleOutcome) *reconcileJSON {
 }
 
 func scheduleDispositions(outcome run.ScheduleOutcome) []dispositionJSON {
-	out := make([]dispositionJSON, 0, len(outcome.Dispositions))
-	for _, d := range outcome.Dispositions {
-		out = append(out, dispositionView(outcome.Tasks, d))
-	}
-	return out
-}
-
-func dispositionView(tasks []model.Task, d model.Disposition) dispositionJSON {
-	text := ""
-	for _, t := range tasks {
-		if t.ID == d.TaskID {
-			text = t.Text
-			break
-		}
-	}
-	return dispositionJSON{
-		TaskID: d.TaskID, Task: text, BlockIndex: d.BlockIndex,
-		Kind: string(d.Kind), Start: d.Start, End: d.End, Slots: d.Slots,
-	}
+	return dispositionViews(outcome.Tasks, outcome.Dispositions)
 }
 
 func renderScheduleText(w interface {
@@ -214,6 +170,7 @@ func renderScheduleText(w interface {
 	// Schedule has no managed hole: reconciliation accounted for it.
 	inner := run.Outcome{
 		Tasks: outcome.Tasks, Issues: outcome.Issues, Schedule: outcome.Schedule,
+		Busy: outcome.Busy,
 	}
 	renderForecastText(w, cfg, inner, now, verbose)
 
@@ -237,13 +194,9 @@ func renderScheduleText(w interface {
 	}
 	if len(outcome.Orphans) > 0 {
 		_, _ = fmt.Fprintf(w, "\nOrphaned (%d Managed event(s) with no home in the plan, removed):\n", len(outcome.Orphans))
+		byText := textByTasks(outcome.Tasks)
 		for _, o := range outcome.Orphans {
-			label := o.TaskID
-			if text := run.TaskText(outcome.Tasks, o.TaskID); text != "" {
-				label = text
-			} else if o.TaskID == "" {
-				label = "(unreadable pointer)"
-			}
+			label := orphanLabel(byText, o)
 			_, _ = fmt.Fprintf(w, "  %s — %s (block %d)\n", o.EventID, label, o.Block)
 		}
 	}
@@ -254,11 +207,11 @@ func renderScheduleText(w interface {
 		if len(outcome.Dispositions) > 0 {
 			_, _ = fmt.Fprintln(w, "Dispositions in force:")
 			ordered := append([]model.Disposition{}, outcome.Dispositions...)
-			sort.Slice(ordered, func(i, j int) bool {
-				if ordered[i].TaskID != ordered[j].TaskID {
-					return ordered[i].TaskID < ordered[j].TaskID
+			slices.SortFunc(ordered, func(a, b model.Disposition) int {
+				if a.TaskID != b.TaskID {
+					return strings.Compare(a.TaskID, b.TaskID)
 				}
-				return ordered[i].BlockIndex < ordered[j].BlockIndex
+				return a.BlockIndex - b.BlockIndex
 			})
 			for _, d := range ordered {
 				_, _ = fmt.Fprintf(w, "  %s block %d: %s\n",

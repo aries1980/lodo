@@ -2,11 +2,12 @@ package resolve
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/parse"
 )
 
@@ -74,7 +75,7 @@ func (r *resolver) resolveTasks() {
 				all = append(all, everyBlock{page: page, block: b, ancestors: append([]*logseq.Block(nil), ancestors...)})
 				marker := model.Marker(strings.ToUpper(strings.TrimSpace(b.Marker)))
 				if marker == model.MarkerDONE || marker == model.MarkerCANCELLED {
-					if id := strings.ToLower(strings.TrimSpace(b.UUID)); id != "" {
+					if id := norm.ID(b.UUID); id != "" {
 						doneSet[id] = true
 					}
 				}
@@ -125,22 +126,21 @@ func (r *resolver) resolveTasks() {
 	// Index tasks by lower UUID.
 	byID := map[string]int{}
 	for i, x := range res {
-		byID[strings.ToLower(strings.TrimSpace(x.task.ID))] = i
+		byID[norm.ID(x.task.ID)] = i
 	}
 	// Descendant map: task index -> descendant task indices.
+	// For each task, walk its ancestors once and link to the ancestor
+	// tasks directly: O(n*depth) instead of O(n²).
 	descendants := make(map[int][]int)
 	for i, x := range res {
-		ancIDs := map[string]bool{}
+		seen := map[int]bool{}
 		for _, a := range x.ancestors {
-			if id := strings.ToLower(strings.TrimSpace(a.UUID)); id != "" {
-				ancIDs[id] = true
-			}
-		}
-		for j, y := range res {
-			if i == j {
+			id := norm.ID(a.UUID)
+			if id == "" {
 				continue
 			}
-			if ancIDs[strings.ToLower(strings.TrimSpace(y.task.ID))] {
+			if j, ok := byID[id]; ok && j != i && !seen[j] {
+				seen[j] = true
 				descendants[j] = append(descendants[j], i)
 			}
 		}
@@ -154,7 +154,7 @@ func (r *resolver) resolveTasks() {
 	// ParentID: nearest ancestor that is a Task.
 	for i, x := range res {
 		for k := len(x.ancestors) - 1; k >= 0; k-- {
-			id := strings.ToLower(strings.TrimSpace(x.ancestors[k].UUID))
+			id := norm.ID(x.ancestors[k].UUID)
 			if j, ok := byID[id]; ok {
 				res[i].task.ParentID = res[j].task.ID
 				break
@@ -178,7 +178,7 @@ func (r *resolver) resolveTasks() {
 				out = append(out, d)
 			}
 		}
-		sort.Slice(out, func(a, b int) bool { return res[out[a]].task.OutlineOrder < res[out[b]].task.OutlineOrder })
+		slices.SortFunc(out, func(a, b int) int { return res[a].task.OutlineOrder - res[b].task.OutlineOrder })
 		return out
 	}
 
@@ -186,7 +186,7 @@ func (r *resolver) resolveTasks() {
 	for i := range res {
 		var kept []string
 		for _, dep := range res[i].explicit {
-			lower := strings.ToLower(strings.TrimSpace(dep))
+			lower := norm.ID(dep)
 			if lower == "" {
 				continue
 			}
@@ -194,7 +194,7 @@ func (r *resolver) resolveTasks() {
 				kept = append(kept, lower)
 				continue
 			}
-			if lower == strings.ToLower(strings.TrimSpace(res[i].task.ID)) {
+			if lower == norm.ID(res[i].task.ID) {
 				r.issue(IssueDependencyCycle, taskContext(res[i].task),
 					fmt.Sprintf("depends:: references itself ((%s)); the Task is left unscheduled", res[i].task.ID))
 				kept = append(kept, res[i].task.ID)
@@ -223,23 +223,30 @@ func (r *resolver) resolveTasks() {
 	// Sequential chaining: for every block (and page) with effective
 	// order==sequential, chain descendant leaf Tasks in outline order.
 	// Effective order for a block: block explicit > ancestors > page > parallel.
+	// Explicit orders are parsed once and cached; descendant leaves are
+	// indexed once by ancestor block ID so each sequential block is a map
+	// lookup instead of a full res scan.
+	explicitCache := make(map[*logseq.Block]model.OrderMode)
+	hasExplicit := make(map[*logseq.Block]bool)
+	explicitOrder := func(b *logseq.Block) (model.OrderMode, bool) {
+		if b == nil {
+			return "", false
+		}
+		if v, ok := hasExplicit[b]; ok {
+			return explicitCache[b], v
+		}
+		m, ok := parseExplicitOrder(b)
+		explicitCache[b] = m
+		hasExplicit[b] = ok
+		return m, ok
+	}
 	effectiveOrder := func(page *logseq.Page, ancestors []*logseq.Block, b *logseq.Block) model.OrderMode {
-		if b != nil {
-			if raw, ok := blockProps(b)["order"]; ok {
-				if text, okT := propsText(raw); okT && strings.TrimSpace(text) != "" {
-					if m, err := parse.ParseOrder(text); err == nil {
-						return m
-					}
-				}
-			}
+		if m, ok := explicitOrder(b); ok {
+			return m
 		}
 		for k := len(ancestors) - 1; k >= 0; k-- {
-			if raw, ok := blockProps(ancestors[k])["order"]; ok {
-				if text, okT := propsText(raw); okT && strings.TrimSpace(text) != "" {
-					if m, err := parse.ParseOrder(text); err == nil {
-						return m
-					}
-				}
+			if m, ok := explicitOrder(ancestors[k]); ok {
+				return m
 			}
 		}
 		if page != nil {
@@ -251,30 +258,34 @@ func (r *resolver) resolveTasks() {
 		}
 		return model.OrderParallel
 	}
+	// Ancestor block ID -> descendant leaf task indices (in res order,
+	// which is outline order).
+	leavesByAncestor := make(map[string][]int)
+	for idx, x := range res {
+		if isContainer[idx] {
+			continue
+		}
+		for _, a := range x.ancestors {
+			id := norm.ID(a.UUID)
+			if id == "" {
+				continue
+			}
+			leavesByAncestor[id] = append(leavesByAncestor[id], idx)
+		}
+	}
 	// Map block UUID -> task index for leaves lookup.
 	// For each block in all, if sequential, find descendant leaf tasks.
 	for _, eb := range all {
 		if effectiveOrder(eb.page, eb.ancestors, eb.block) != model.OrderSequential {
 			continue
 		}
-		id := strings.ToLower(strings.TrimSpace(eb.block.UUID))
-		var leaves []int
-		for idx, x := range res {
-			if isContainer[idx] {
-				continue
-			}
-			for _, a := range x.ancestors {
-				if strings.ToLower(strings.TrimSpace(a.UUID)) == id {
-					leaves = append(leaves, idx)
-					break
-				}
-			}
-		}
-		sort.Slice(leaves, func(a, b int) bool { return res[leaves[a]].task.OutlineOrder < res[leaves[b]].task.OutlineOrder })
+		id := norm.ID(eb.block.UUID)
+		leaves := append([]int(nil), leavesByAncestor[id]...)
+		slices.SortFunc(leaves, func(a, b int) int { return res[a].task.OutlineOrder - res[b].task.OutlineOrder })
 		for k := 1; k < len(leaves); k++ {
 			prev := res[leaves[k-1]].task.ID
 			cur := leaves[k]
-			if !containsString(res[cur].explicit, prev) && !strings.EqualFold(res[cur].task.ID, prev) {
+			if !slices.Contains(res[cur].explicit, prev) && !strings.EqualFold(res[cur].task.ID, prev) {
 				res[cur].explicit = append(res[cur].explicit, prev)
 			}
 		}
@@ -282,7 +293,7 @@ func (r *resolver) resolveTasks() {
 	// Page-level sequential: chain all leaf Tasks on the page.
 	pagesSeen := map[string]bool{}
 	for _, x := range res {
-		key := strings.ToLower(strings.TrimSpace(x.page.Name))
+		key := norm.ID(x.page.Name)
 		if pagesSeen[key] {
 			continue
 		}
@@ -294,15 +305,15 @@ func (r *resolver) resolveTasks() {
 					if isContainer[idx] {
 						continue
 					}
-					if strings.ToLower(strings.TrimSpace(y.page.Name)) == key {
+					if norm.ID(y.page.Name) == key {
 						leaves = append(leaves, idx)
 					}
 				}
-				sort.Slice(leaves, func(a, b int) bool { return res[leaves[a]].task.OutlineOrder < res[leaves[b]].task.OutlineOrder })
+				slices.SortFunc(leaves, func(a, b int) int { return res[a].task.OutlineOrder - res[b].task.OutlineOrder })
 				for k := 1; k < len(leaves); k++ {
 					prev := res[leaves[k-1]].task.ID
 					cur := leaves[k]
-					if !containsString(res[cur].explicit, prev) {
+					if !slices.Contains(res[cur].explicit, prev) {
 						res[cur].explicit = append(res[cur].explicit, prev)
 					}
 				}
@@ -315,7 +326,7 @@ func (r *resolver) resolveTasks() {
 		seen := map[string]bool{}
 		var out []string
 		for _, d := range res[i].explicit {
-			key := strings.ToLower(strings.TrimSpace(d))
+			key := norm.ID(d)
 			// Preserve original case for Task IDs? Use stored ID case.
 			display := d
 			if j, ok := byID[key]; ok {
@@ -327,7 +338,7 @@ func (r *resolver) resolveTasks() {
 				out = append(out, display)
 			}
 		}
-		sort.Strings(out)
+		slices.Sort(out)
 		res[i].task.Depends = out
 	}
 
@@ -335,7 +346,7 @@ func (r *resolver) resolveTasks() {
 	adj := make(map[int][]int)
 	for i := range res {
 		for _, dep := range res[i].task.Depends {
-			if j, ok := byID[strings.ToLower(strings.TrimSpace(dep))]; ok {
+			if j, ok := byID[norm.ID(dep)]; ok {
 				adj[i] = append(adj[i], j)
 			}
 		}
@@ -364,17 +375,10 @@ func (r *resolver) resolveTasks() {
 	}
 }
 
-// findCycleNodes returns the set of nodes in or reachable-from cycles via
-// iterative DFS (Tarjan-lite): nodes remaining after Kahn's removal.
+// findCycleNodes returns the nodes on a dependency cycle via DFS colouring:
+// white unvisited, grey on the current stack, black done. When an edge hits
+// a grey node, every node from that target up to the stack top is on a cycle.
 func findCycleNodes(n int, adj map[int][]int) map[int]bool {
-	indeg := make([]int, n)
-	for _, tos := range adj {
-		for _, to := range tos {
-			indeg[to]++
-		}
-	}
-	// Kahn on reversed edges? We need nodes in cycles: remove nodes with
-	// no outgoing? Simpler: DFS colouring.
 	const (
 		white = 0
 		grey  = 1
@@ -457,7 +461,7 @@ func (r *resolver) taskWithAncestors(page *logseq.Page, b *logseq.Block, ancesto
 
 	if text := r.inheritedValue(page, b, ancestors, "time-map"); text != "" {
 		for _, slug := range splitSlugs(text) {
-			if !containsString(t.TimeMaps, slug) {
+			if !slices.Contains(t.TimeMaps, slug) {
 				t.TimeMaps = append(t.TimeMaps, slug)
 			}
 		}
@@ -526,7 +530,7 @@ func (r *resolver) taskWithAncestors(page *logseq.Page, b *logseq.Block, ancesto
 		deps, dErr := parse.ParseDepends(text)
 		if dErr != nil {
 			r.appendBad(r.blockContext(page, b), "depends", text, dErr)
-			t.Depends = []string{fmt.Sprintf("malformed-depends:%s", strings.ToLower(strings.TrimSpace(t.ID)))}
+			t.Depends = []string{fmt.Sprintf("malformed-depends:%s", norm.ID(t.ID))}
 		} else {
 			t.Depends = deps
 		}
@@ -540,7 +544,7 @@ func (r *resolver) taskWithAncestors(page *logseq.Page, b *logseq.Block, ancesto
 		}
 		_ = v
 	}
-	sort.Strings(unknown)
+	slices.Sort(unknown)
 	for _, key := range unknown {
 		detail := fmt.Sprintf("%q is not a property lodo reads (it reads duration::, time-map::, priority::, plan-start::, plan-end::, deadline::, scheduled::, depends::, order::)", key)
 		if text, ok := propsText(blockProps(b)[key]); ok && text != "" {
@@ -553,7 +557,9 @@ func (r *resolver) taskWithAncestors(page *logseq.Page, b *logseq.Block, ancesto
 }
 
 // inheritedValue resolves an inheritable property: block explicit, then
-// ancestors nearest-first, then the page default.
+// ancestors nearest-first, then the page default. A blank explicit value
+// falls through; a malformed block value issues and stops (ancestors are
+// skipped, matching historic behavior).
 func (r *resolver) inheritedValue(page *logseq.Page, b *logseq.Block, ancestors []*logseq.Block, key string) string {
 	if raw, ok := blockProps(b)[key]; ok {
 		text, okT := propsText(raw)
@@ -567,14 +573,8 @@ func (r *resolver) inheritedValue(page *logseq.Page, b *logseq.Block, ancestors 
 		}
 	}
 	for k := len(ancestors) - 1; k >= 0; k-- {
-		if raw, ok := blockProps(ancestors[k])[key]; ok {
-			text, okT := propsText(raw)
-			if !okT {
-				continue
-			}
-			if trimmed := strings.TrimSpace(text); trimmed != "" {
-				return trimmed
-			}
+		if v := blockTextOnly(ancestors[k], key); v != "" {
+			return v
 		}
 	}
 	if !inheritableKeys[key] || page == nil {
@@ -585,25 +585,41 @@ func (r *resolver) inheritedValue(page *logseq.Page, b *logseq.Block, ancestors 
 
 // blockValue is the block-level value only — for keys that never inherit.
 func (r *resolver) blockValue(page *logseq.Page, b *logseq.Block, key string) string {
-	return r.blockOneValue(page, b, key)
+	return r.blockText(page, b, key, true)
 }
 
-func (r *resolver) blockOneValue(page *logseq.Page, b *logseq.Block, key string) string {
-	if raw, ok := blockProps(b)[key]; ok {
-		text, okT := propsText(raw)
-		if !okT {
+// blockText reads one block's property text, reporting malformed values.
+func (r *resolver) blockText(page *logseq.Page, b *logseq.Block, key string, report bool) string {
+	raw, ok := blockProps(b)[key]
+	if !ok {
+		return ""
+	}
+	text, okT := propsText(raw)
+	if !okT {
+		if report {
 			r.issue(IssueBadProperty, r.blockContext(page, b),
 				fmt.Sprintf("%s:: has a malformed value the app parsed as %v; the property is skipped", key, raw))
-			return ""
 		}
-		return strings.TrimSpace(text)
+		return ""
 	}
-	return ""
+	return strings.TrimSpace(text)
+}
+
+func blockTextOnly(b *logseq.Block, key string) string {
+	raw, ok := blockProps(b)[key]
+	if !ok {
+		return ""
+	}
+	text, okT := propsText(raw)
+	if !okT {
+		return ""
+	}
+	return strings.TrimSpace(text)
 }
 
 // pageDefault reads or sets the inheritable page default for key on page.
 func (r *resolver) pageDefault(pageName, key, text string) string {
-	at := fmt.Sprintf("%s\x00%s", strings.ToLower(strings.TrimSpace(pageName)), key)
+	at := fmt.Sprintf("%s\x00%s", norm.ID(pageName), key)
 	if text == "" {
 		return r.pageProps[at]
 	}
@@ -652,12 +668,21 @@ func (r *resolver) appendBad(context, key, raw string, err error) {
 	r.issue(IssueBadProperty, context, fmt.Sprintf("%s:: %q: %v", key, raw, err))
 }
 
-// containsString reports whether want is in list.
-func containsString(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
+// parseExplicitOrder parses a block's own order:: value without inheritance.
+// ok is false when the block carries no usable value (absent, blank or
+// unparseable), in which case callers fall through to ancestors/page.
+func parseExplicitOrder(b *logseq.Block) (model.OrderMode, bool) {
+	raw, ok := blockProps(b)["order"]
+	if !ok {
+		return "", false
 	}
-	return false
+	text, okT := propsText(raw)
+	if !okT || strings.TrimSpace(text) == "" {
+		return "", false
+	}
+	m, err := parse.ParseOrder(text)
+	if err != nil {
+		return "", false
+	}
+	return m, true
 }

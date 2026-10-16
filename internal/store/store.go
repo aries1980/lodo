@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -104,11 +105,75 @@ CREATE TABLE IF NOT EXISTS dispositions (
   snapshot_json TEXT NOT NULL DEFAULT '',
   recorded_at TEXT NOT NULL,
   PRIMARY KEY (task_id, block_index)
+);
+CREATE TABLE IF NOT EXISTS runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  recorded_at TEXT NOT NULL,
+  command TEXT NOT NULL,
+  write_calendar TEXT NOT NULL,
+  write_events INTEGER NOT NULL DEFAULT 0,
+  sources_json TEXT NOT NULL
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("store %s: migrate: %w", s.path, err)
 	}
 	return nil
+}
+
+// RunSource is one read calendar's audit row for the run record.
+type RunSource struct {
+	CalendarID string `json:"calendar_id"`
+	Status     string `json:"status"`
+	Events     int    `json:"events"`
+}
+
+// RunRecord is one schedule/refresh run's calendar audit: the write calendar
+// plus per-read-calendar status and counts. Forecast stays store-free by
+// design and never records.
+type RunRecord struct {
+	ID            int64
+	RecordedAt    time.Time
+	Command       string // schedule or refresh
+	WriteCalendar string
+	WriteEvents   int
+	Sources       []RunSource
+}
+
+// RecordRun appends one run's calendar audit. Sources stay in config order.
+func (s *Store) RecordRun(command, writeCalendar string, writeEvents int, sources []RunSource, recordedAt time.Time) error {
+	raw, err := json.Marshal(sources)
+	if err != nil {
+		return fmt.Errorf("store: run sources: %w", err)
+	}
+	if sources == nil {
+		raw = []byte("[]")
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO runs(recorded_at, command, write_calendar, write_events, sources_json) VALUES(?,?,?,?,?)`,
+		recordedAt.UTC().Format(time.RFC3339Nano), command, writeCalendar, writeEvents, string(raw),
+	); err != nil {
+		return fmt.Errorf("store: record run: %w", err)
+	}
+	return nil
+}
+
+// LastRun returns the most recent run record, or an error when none exists.
+func (s *Store) LastRun() (RunRecord, error) {
+	row := s.db.QueryRow(`SELECT id, recorded_at, command, write_calendar, write_events, sources_json FROM runs ORDER BY id DESC LIMIT 1`)
+	var rec RunRecord
+	var recordedS, sourcesRaw string
+	if err := row.Scan(&rec.ID, &recordedS, &rec.Command, &rec.WriteCalendar, &rec.WriteEvents, &sourcesRaw); err != nil {
+		return RunRecord{}, fmt.Errorf("store: last run: %w", err)
+	}
+	recordedAt, err := time.Parse(time.RFC3339Nano, recordedS)
+	if err != nil {
+		return RunRecord{}, fmt.Errorf("store: run recorded_at: %w", err)
+	}
+	rec.RecordedAt = recordedAt
+	if err := json.Unmarshal([]byte(sourcesRaw), &rec.Sources); err != nil {
+		return RunRecord{}, fmt.Errorf("store: run sources: %w", err)
+	}
+	return rec, nil
 }
 
 // All loads every row: bindings, task snapshots and dispositions.
@@ -338,15 +403,9 @@ func SnapshotToJSON(s model.Snapshot) (string, error) {
 		Depends:  s.Depends,
 		Order:    s.Order,
 	}
-	if s.Deadline != nil {
-		dto.Deadline = &civilDateJSON{Year: s.Deadline.Year, Month: s.Deadline.Month, Day: s.Deadline.Day}
-	}
-	if s.PlanStart != nil {
-		dto.PlanStart = &civilDateJSON{Year: s.PlanStart.Year, Month: s.PlanStart.Month, Day: s.PlanStart.Day}
-	}
-	if s.PlanEnd != nil {
-		dto.PlanEnd = &civilDateJSON{Year: s.PlanEnd.Year, Month: s.PlanEnd.Month, Day: s.PlanEnd.Day}
-	}
+	dto.Deadline = civilToJSON(s.Deadline)
+	dto.PlanStart = civilToJSON(s.PlanStart)
+	dto.PlanEnd = civilToJSON(s.PlanEnd)
 	raw, err := json.Marshal(dto)
 	if err != nil {
 		return "", err
@@ -370,16 +429,24 @@ func SnapshotFromJSON(raw string) (model.Snapshot, error) {
 		Depends:  dto.Depends,
 		Order:    dto.Order,
 	}
-	if dto.Deadline != nil {
-		out.Deadline = &model.CivilDate{Year: dto.Deadline.Year, Month: dto.Deadline.Month, Day: dto.Deadline.Day}
-	}
-	if dto.PlanStart != nil {
-		out.PlanStart = &model.CivilDate{Year: dto.PlanStart.Year, Month: dto.PlanStart.Month, Day: dto.PlanStart.Day}
-	}
-	if dto.PlanEnd != nil {
-		out.PlanEnd = &model.CivilDate{Year: dto.PlanEnd.Year, Month: dto.PlanEnd.Month, Day: dto.PlanEnd.Day}
-	}
+	out.Deadline = civilFromJSON(dto.Deadline)
+	out.PlanStart = civilFromJSON(dto.PlanStart)
+	out.PlanEnd = civilFromJSON(dto.PlanEnd)
 	return out, nil
+}
+
+func civilToJSON(d *model.CivilDate) *civilDateJSON {
+	if d == nil {
+		return nil
+	}
+	return &civilDateJSON{Year: d.Year, Month: d.Month, Day: d.Day}
+}
+
+func civilFromJSON(d *civilDateJSON) *model.CivilDate {
+	if d == nil {
+		return nil
+	}
+	return &model.CivilDate{Year: d.Year, Month: d.Month, Day: d.Day}
 }
 
 // SnapshotEqual reports whether two snapshots carry the same inputs.
@@ -389,26 +456,16 @@ func SnapshotEqual(a, b model.Snapshot) bool {
 	if a.Text != b.Text || a.Marker != b.Marker || a.Duration != b.Duration || a.Priority != b.Priority || a.Order != b.Order {
 		return false
 	}
-	// Nil and empty TimeMaps both mean "no maps" (len 0); element order
-	// matters otherwise.
-	if len(a.TimeMaps) != len(b.TimeMaps) {
+	// Nil and empty slices both mean "none" (len 0); element order matters
+	// otherwise.
+	if !slices.Equal(a.TimeMaps, b.TimeMaps) {
 		return false
-	}
-	for i := range a.TimeMaps {
-		if i >= len(b.TimeMaps) || a.TimeMaps[i] != b.TimeMaps[i] {
-			return false
-		}
 	}
 	if !civilEqual(a.Deadline, b.Deadline) || !civilEqual(a.PlanStart, b.PlanStart) || !civilEqual(a.PlanEnd, b.PlanEnd) {
 		return false
 	}
-	if len(a.Depends) != len(b.Depends) {
+	if !slices.Equal(a.Depends, b.Depends) {
 		return false
-	}
-	for i := range a.Depends {
-		if a.Depends[i] != b.Depends[i] {
-			return false
-		}
 	}
 	if a.Pin == nil || b.Pin == nil {
 		return a.Pin == nil && b.Pin == nil
