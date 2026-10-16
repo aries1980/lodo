@@ -11,6 +11,24 @@ How Lodo turns Tasks into Blocks. Inputs are Tasks ([`tasks.md`](./tasks.md)), t
 Time Maps ([`time-maps.md`](./time-maps.md)), the Calendar's busy time, and the
 Scheduling granularity and window ([`configuration.md`](./configuration.md)).
 
+## Eligibility
+
+Not every `TODO` is scheduled. This decision runs before ordering:
+
+```mermaid
+flowchart TD
+    B[Logseq block] --> M{"Marker TODO or DOING?"}
+    M -->|No| N["Not a Task<br/>DONE / CANCELLED satisfies dependents<br/>DONE parent suppresses subtree"]
+    M -->|Yes| D{"Has duration:: ?"}
+    D -->|No| NN["Note / checklist<br/>never scheduled<br/>check warns todo-missing-duration"]
+    D -->|Yes| P{"Suppressed by DONE or CANCELLED parent?"}
+    P -->|Yes| S["Unscheduled until parent reopens"]
+    P -->|No| T["Task: enters ordering below"]
+```
+
+The gate is `TODO`/`DOING` **and** `duration::` ([`tasks.md`](./tasks.md)). Everything
+below assumes the block passed it.
+
 ## Ordering
 
 Only the *order in which Tasks are considered* is settled here; how a Task is placed is
@@ -54,12 +72,61 @@ flowchart TD
 
 ## Objective
 
-**Front-load.** Place each Task as early as its constraints (Plan window, Time Maps,
-busy time) allow — SkedPal's "as early as possible" / fuzzy planning, not just-in-time.
+**Front-load, inside a preference tier.** Place each Task as early as its constraints
+(Plan window, Time Maps, busy time) allow — SkedPal's "as early as possible" / fuzzy
+planning, not just-in-time. Time Map windows carry a tier. Hours still required are
+placed in green first, then yellow, then red, so a later green window beats an earlier
+yellow one ([ADR 0014](../ADRs/0014-preference-tiers-before-the-comparator.md)).
 
-Between candidate placements, completeness comes first, then the comparator in
+Inside one tier, completeness comes first, then the comparator in
 [ADR 0010](../ADRs/0010-placement-comparator.md): placed hours, start day, Block count,
 earliest start, largest-first sizes.
+
+### Placement decision for one Task
+
+```mermaid
+flowchart TD
+    S["Task in consideration order"] --> PIN{"Has scheduled:: Pin?"}
+    PIN -->|Yes| P1["Place at exact time<br/>Pin wins, violation reported if dependency unmet"]
+    PIN -->|No| DEP{"Dependencies met?<br/>all placed Blocks ended?"}
+    DEP -->|No| BLK["Leave unscheduled<br/>report blocked by ..."]
+    DEP -->|Yes| PLAN{"Inside plan window and scheduling window?"}
+    PLAN -->|Not yet due| FUT["Not due yet<br/>leave silently"]
+    PLAN -->|Overdue| OVER["Overdue: ASAP like flexible<br/>maximum urgency, never dropped"]
+    PLAN -->|Due| TM{"Free hours in union of Time Maps? Green, then yellow, then red"}
+    TM -->|None| SHORT["Shortfall: Time Map too thin"]
+    TM -->|Hours free| BUSY{"Subtract busy time?<br/>External + Pins + Pinned Blocks"}
+    BUSY -->|No room| FULL["Shortfall: window full"]
+    BUSY -->|Room| GRAN["Round up to granularity<br/>fewest, largest, contiguous first<br/>floor is 2 units"]
+    GRAN --> PART{"All hours fit?"}
+    PART -->|Yes| PLACE["Emit Blocks front-loaded"]
+    PART -->|Partial| PARTIAL["Place what fits<br/>report shortfall, fragments below floor count as shortfall"]
+```
+
+Shared and read-only calendars only ever narrow the `Subtract busy time` step —
+see [`calendar.md`](./calendar.md). Time Maps pick *which* hours, the Plan picks
+*which days*, busy time removes what is already taken.
+
+## Run sequence
+
+```mermaid
+sequenceDiagram
+    participant LS as Logseq graph
+    participant L as Lodo schedule
+    participant WC as Write calendar
+    participant RC as Read calendars
+    participant DB as SQLite
+    L->>LS: read Tasks + properties + Time Maps page
+    L->>WC: list Managed + External events in window
+    L->>RC: list busy time in window
+    L->>DB: load snapshot + Pinned / stood-down
+    Note over L: reconcile first, then order Pins > topo > time-bound > flexible, place front-loaded in tier
+    L->>WC: create / move Managed Events
+    L->>DB: store assignments + snapshot
+```
+
+`schedule` always reconciles before computing, so a calendar move made between runs
+is never clobbered. `refresh` stops after reconciliation (SQLite only).
 
 ## Stability
 
@@ -95,6 +162,22 @@ reported, with the reason.
   the cycle is never broken silently.
 - **Pin precedes dependency** — the Pin stays at its authored time and the order
   violation is reported.
+
+```mermaid
+flowchart TD
+    U["Unplaced hours"] --> H{"Past scheduling window?"}
+    H -->|Not yet due| W["Wait silently, not infeasible"]
+    H -->|Due| C{"In a dependency cycle?"}
+    C -->|Yes| CY["Report dependency cycle<br/>nothing in cycle placed"]
+    C -->|No| K{"Dependency unknown, incomplete,<br/>stood-down, or not yet due?"}
+    K -->|Yes| BD["Report blocked by ... with blocker IDs"]
+    K -->|No| PW{"Pin before dependency end?"}
+    PW -->|Yes| PV["Keep Pin at authored time<br/>report pin precedes dependency"]
+    PW -->|No| PE{"Dependency would push past plan-end?"}
+    PE -->|Yes| PE2["Leave short, warn explicitly<br/>never slide past plan-end"]
+    PE -->|No| SF{"Zero hours fit,<br/>or only fragments below floor?"}
+    SF -->|Yes| SH["Report window full / Time Map too thin<br/>with hours needed vs available"]
+```
 
 No Auto-Defer, no Time-Map-violation escape hatch, and no Suggestions in v0.1. Each of
 those is a policy for breaking a rule, and v0.1 has none.
