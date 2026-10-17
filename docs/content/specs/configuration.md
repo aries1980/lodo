@@ -41,9 +41,11 @@ scheduling:
 
 calendar:
   provider: google
-  id: primary           # the single write Calendar
-  read_calendars:       # shared calendars read for busy time only
-    - partner@example.com
+  id: primary           # the single write Calendar; v0.1 writes to exactly one
+  read_calendars:       # shared calendars read for busy time only; add as many as needed
+    - partner@example.com                              # person share: owner email
+    - team@group.calendar.google.com                   # group share: group ID
+    - resource_123@resource.calendar.google.com        # resource: resource ID
   ignore_read_all_day: false          # true: all-day events on read calendars are free
   ignore_read_all_day_matching: []    # or phrases, e.g. birthday; all-day events only
 ```
@@ -56,11 +58,11 @@ calendar:
 - **`scheduling.timezone`** — the timezone Time Map hours are interpreted in. Time Map
   hours are absolute local times, so this is what "09:00" means.
 - **`calendar.id`**: the one Google calendar Lodo writes to. Time Maps are not calendars.
-- **`calendar.read_calendars`**: shared Google calendars read for busy time only
-  (owner email for person shares, resource or group ID otherwise). Empty means the
-  write calendar alone. Lodo never writes to these, even if the share grants write
-  access. Entries are trimmed; empties, duplicates, and entries equal to
-  `calendar.id` are ignored.
+- **`calendar.read_calendars`**: list of shared Google calendars read for busy time only
+  (owner email for person shares, resource or group ID otherwise). Add one entry
+  per calendar. Empty means the write calendar alone. Lodo never writes to these,
+  even if the share grants write access. Entries are trimmed; empties, duplicates,
+  and entries equal to `calendar.id` are ignored.
 - **`calendar.ignore_read_all_day`**: when true, all-day events on read calendars
   contribute no busy time. Default false. The write calendar is unchanged.
 - **`calendar.ignore_read_all_day_matching`**: phrases. An all-day event on a read
