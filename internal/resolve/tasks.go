@@ -25,8 +25,9 @@ func (r *resolver) resolveTasks() {
 		if page == nil || page.Properties == nil {
 			continue
 		}
+		pageProps := normPageProps(page)
 		for _, key := range []string{"time-map", "priority", "plan-start", "plan-end", "order"} {
-			raw, ok := page.Properties[key]
+			raw, ok := pageProps[key]
 			if !ok {
 				continue
 			}

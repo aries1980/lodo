@@ -55,7 +55,9 @@ parent suppresses its whole subtree; a `DONE`/`CANCELLED` block satisfies any
 - The `Time Maps` page name is configurable (`logseq.time_maps_page`, default
   `Time Maps`), so a namespaced page (`lodo/time-maps`) is a one-line change rather than
   a format decision.
-- Parsing is permissive about whitespace and case in property keys; slugs are
+- Parsing is permissive about whitespace and case in property keys, and folds
+  the app's camelCase normalisation back to kebab-case (`timeMap` reads as
+  `time-map::`); slugs are
   case-insensitive. `depends::` is strict: comma-separated `((uuid))` block
   references only, duplicates collapsed; bare UUIDs and typos are errors that
   block the dependent.

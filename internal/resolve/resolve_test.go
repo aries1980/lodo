@@ -334,6 +334,43 @@ func TestPermissiveKeys(t *testing.T) {
 	}
 }
 
+// TestCamelCaseKeys: the app exposes hyphenated properties camelCased
+// (time-map:: arrives as timeMap) in both parsed and text values; they must
+// resolve exactly like the kebab-case the specs use, on blocks and pages,
+// with no unknown-property issue.
+func TestCamelCaseKeys(t *testing.T) {
+	res, err := fixture(
+		[]*logseq.Page{page(day, map[string]any{"planStart": "2026-10-17"})},
+		map[string][]*logseq.Block{day: {
+			props(marked("TODO", id1, "TODO The assignment"),
+				map[string]any{
+					"duration": "45m",
+					"timeMap":  "deep-work",
+					"planEnd":  "2026-10-24",
+				}),
+		}},
+	)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(res.Tasks) != 1 {
+		t.Fatalf("Tasks = %+v, want one", res.Tasks)
+	}
+	got := res.Tasks[0]
+	if len(got.TimeMaps) != 1 || got.TimeMaps[0] != "deep-work" {
+		t.Fatalf("TimeMaps = %v, want [deep-work]", got.TimeMaps)
+	}
+	if got.PlanStart == nil || got.PlanStart.Day != 17 {
+		t.Fatalf("PlanStart = %+v, want day 17 from the camelCased page default", got.PlanStart)
+	}
+	if got.PlanEnd == nil || got.PlanEnd.Day != 24 {
+		t.Fatalf("PlanEnd = %+v, want day 24", got.PlanEnd)
+	}
+	if len(res.Issues) != 0 {
+		t.Fatalf("Issues = %+v, want none", res.Issues)
+	}
+}
+
 func TestMissingBlockIDIsReportedAndSkipped(t *testing.T) {
 	res, err := fixture(
 		[]*logseq.Page{page(day)},

@@ -37,9 +37,21 @@ var inheritableKeys = map[string]bool{
 	"order":      true,
 }
 
-// normKey compares a property key permissively: case-insensitive, trimmed.
+// normKey compares a property key permissively: case-insensitive, trimmed,
+// with the app's camelCase normalisation folded back to the kebab-case the
+// specs use (a time-map:: line arrives as timeMap in parsed properties).
 func normKey(k string) string {
-	return strings.ToLower(strings.TrimSpace(k))
+	k = strings.TrimSpace(k)
+	var b strings.Builder
+	for i, r := range k {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			if p := k[i-1]; (p >= 'a' && p <= 'z') || (p >= '0' && p <= '9') {
+				b.WriteByte('-')
+			}
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String())
 }
 
 // blockProps collects a block's properties into one permissive map: parsed
@@ -51,6 +63,16 @@ func blockProps(b *logseq.Block) map[string]any {
 		out[normKey(k)] = v
 	}
 	for k, v := range b.Properties {
+		out[normKey(k)] = v
+	}
+	return out
+}
+
+// normPageProps returns the page's properties under normalised keys: like
+// block properties, the app exposes parsed page properties camelCased.
+func normPageProps(page *logseq.Page) map[string]any {
+	out := make(map[string]any, len(page.Properties))
+	for k, v := range page.Properties {
 		out[normKey(k)] = v
 	}
 	return out
