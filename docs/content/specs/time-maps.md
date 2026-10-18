@@ -66,8 +66,9 @@ none of the three are a shortfall. Red is a last resort, not a forbidden band.
 - A Task may belong to one or more Time Maps, declared on the Task (or inherited from
   parent blocks or page) as `time-map::`. Multiple maps are comma-separated: `time-map:: deep-work, weekends`.
 - A Task with its own map prefers that map and spills into the default map when
-  the project map is full. Each tier runs primary first, then default fallback,
-  so green-default beats yellow-primary. A Task with no `time-map::` uses only
+  the project map is full, but never upward: fallback runs only for the task's
+  best primary tier and worse, so a yellow-only map spills into default
+  yellow/red, never green. A Task with no `time-map::` uses only
   the default map.
 - **Default map (proposed):** the map block may carry `default:: true`. A Task with no
   `time-map::` (direct or inherited) uses the default map. Exactly one default must exist.
@@ -87,8 +88,8 @@ hours; overload spills tier-first into the default map instead of shortfalling.
   user's current timezone, mirroring SkedPal's stated behaviour.
 - Maps may overlap. A Task with several maps draws on the union of their windows;
   where two tiers cover one slot, the better tier wins. A project Task prefers
-  its own map first, then spills tier-first into the default map (green-default
-  before yellow-primary). Competition for the same
+  its own map first, then spills into the default map at the same tier or
+  worse — never into a better tier than its own best. Competition for the same
   hours between Tasks is resolved by Priority.
 - Windows are intersected with the Schedule's busy time (External Events and Corporate
   Pins) and with the Plan window; a Task is placed only in hours that satisfy all three.

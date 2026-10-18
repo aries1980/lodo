@@ -80,8 +80,8 @@ default map instead of shortfalling.
 ```
 
 What Lodo sees: both leaves prefer `company-a` hours; when `company-a` is
-full the remainder spills into the default map, green-default before
-yellow-primary.
+full the remainder spills into the default map at the same tier or worse —
+never into a better tier than the project map's best.
 
 Raw file example (`pages/thesis.md` on disk):
 

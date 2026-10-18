@@ -77,7 +77,7 @@ granularity — and it blocks every slot it overlaps.
 inherited from parent blocks (nearest first), then the enclosing page, and failing
 that, the default Time Map applies. Put `time-map:: company-a` on a project parent
 block and every child TODO inherits it. A project Task prefers its
-own map and spills tier-first into the default map when full. See
+own map and spills into the default map at the same tier or worse when full. See
 [`time-maps.md`](./time-maps.md).
 
 ### Priority — *ordering*

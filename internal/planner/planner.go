@@ -679,8 +679,9 @@ func (b *builder) addFlexible(block model.Block, run grid.Run) {
 // Hours still required are placed in three tier passes — green, then yellow,
 // then red — so a later green window beats an earlier yellow one. A Task that
 // names its own Time Maps prefers those hours first and spills into the
-// default map when its project map is full: each tier runs a primary pass
-// then a default fallback pass, so green-default beats yellow-primary. Each
+// default map when its project map is full, but never upward: a fallback pass
+// runs only for the task's best primary tier and worse, so a yellow-only
+// project map spills into default yellow/red, never green. Each
 // pass uses the ADR 0010 comparator on that tier's free runs. A Block never
 // crosses a tier boundary. The minimum-Block floor applies per pass, so a
 // one-slot green fragment is left unused and the hours can spill.
@@ -704,6 +705,7 @@ func (b *builder) placeWithBound(p *taskPlan, maps map[string]model.TimeMap, ove
 	left := p.required()
 	next := 0
 	primary, fallback := b.splitMaps(p.task, maps)
+	best := bestTierRank(primary)
 	placeMask := func(mask grid.Mask) {
 		if left == 0 {
 			return
@@ -739,7 +741,7 @@ func (b *builder) placeWithBound(p *taskPlan, maps map[string]model.TimeMap, ove
 			break
 		}
 		placeMask(b.eligibilityFor(primary, tier))
-		if fallback != nil {
+		if fallback != nil && tierRank(tier) >= best {
 			placeMask(b.eligibilityFor(fallback, tier))
 		}
 	}
@@ -828,6 +830,35 @@ func windowTier(w model.Window) model.Tier {
 	default:
 		return model.TierGreen
 	}
+}
+
+// tierRank orders tiers by preference: green first, then yellow, then red.
+func tierRank(t model.Tier) int {
+	switch t {
+	case model.TierYellow:
+		return 1
+	case model.TierRed:
+		return 2
+	default:
+		return 0
+	}
+}
+
+// bestTierRank is the best (lowest-rank) tier in the given maps. A set with
+// no windows at all ranks worst, so an empty project map spills everything
+// into the default map instead of shortfalling.
+func bestTierRank(maps []model.TimeMap) int {
+	best := 2
+	found := false
+	for _, tm := range maps {
+		for _, w := range tm.Windows {
+			if r := tierRank(windowTier(w)); !found || r < best {
+				best = r
+				found = true
+			}
+		}
+	}
+	return best
 }
 
 // sorted returns the blocks and explanations in chronological order; ties are
