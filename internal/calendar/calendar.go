@@ -254,7 +254,10 @@ func (c *Client) Get(ctx context.Context, id string) (Event, error) {
 }
 
 // Insert creates one Managed event (events.insert) with its deterministic
-// id, so re-inserting is idempotent and cannot duplicate. The payload
+// id. A re-insert of an id that still lives on the calendar answers 409
+// ("The requested identifier already exists"); the schedule write path
+// treats that as patch-into-place, so deterministic ids converge rather
+// than duplicate. The payload
 // carries calendar.md's shape: title is the Task's own text, times in the
 // Scheduling timezone, private lodo/task/block ownership, and the
 // calendar's default reminders.

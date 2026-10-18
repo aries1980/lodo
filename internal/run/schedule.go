@@ -6,6 +6,7 @@ package run
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -431,32 +432,92 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 
 // applyWrites issues the calendar mutations in a stable order: deletes,
 // patches, then inserts (all ordered by event id by diffPlan). A delete
-// 404 is already-gone success; anything else is operational.
+// 404 is already-gone success; anything else is operational. Inserts and
+// patches cross-heal: an insert that hits an existing id (the event lives
+// on the calendar but outside the list window, e.g. in the past) falls
+// back to patch, and a patch that hits a missing event falls back to
+// insert. Either fallback covers the List-then-write race with an external
+// edit.
 func applyWrites(ctx context.Context, cal Calendar, writes []WriteOp) error {
 	for _, w := range writes {
-		switch w.Op {
-		case "delete":
-			if err := cal.Delete(ctx, w.EventID); err != nil {
-				if isNotFound(err) {
-					continue
-				}
-				return err
-			}
-		case "patch":
-			e := patchPayload(w)
-			if _, err := cal.Patch(ctx, w.EventID, e); err != nil {
-				return err
-			}
-		case "insert":
-			e := insertPayload(w)
-			if _, err := cal.Insert(ctx, e); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("run: unknown write op %q", w.Op)
+		if err := applyWrite(ctx, cal, w); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// applyWrite dispatches one calendar mutation to its per-op helper so each
+// path stays flat.
+func applyWrite(ctx context.Context, cal Calendar, w WriteOp) error {
+	switch w.Op {
+	case "delete":
+		return applyDelete(ctx, cal, w)
+	case "patch":
+		return applyPatch(ctx, cal, w)
+	case "insert":
+		return applyInsert(ctx, cal, w)
+	default:
+		return fmt.Errorf("run: unknown write op %q", w.Op)
+	}
+}
+
+// applyDelete removes one Managed event. A missing event is already-gone
+// success.
+func applyDelete(ctx context.Context, cal Calendar, w WriteOp) error {
+	err := cal.Delete(ctx, w.EventID)
+	if err == nil || isNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// applyInsert creates one Managed event. An existing id means the event
+// lives on the calendar outside the list window, so patch it into place.
+func applyInsert(ctx context.Context, cal Calendar, w WriteOp) error {
+	if _, err := cal.Insert(ctx, insertPayload(w)); err == nil {
+		return nil
+	} else if !isAlreadyExists(err) {
+		return err
+	}
+	return patchExisting(ctx, cal, w)
+}
+
+// patchExisting is the insert fallback: move the already-present event to
+// the planned span. A miss means it was deleted between the failed insert
+// and this patch, so one insert retry converges.
+func patchExisting(ctx context.Context, cal Calendar, w WriteOp) error {
+	if _, err := cal.Patch(ctx, w.EventID, patchPayload(w)); err == nil {
+		return nil
+	} else if !isNotFound(err) {
+		return err
+	}
+	_, err := cal.Insert(ctx, insertPayload(w))
+	return err
+}
+
+// applyPatch moves one Managed event to its planned span. A missing event
+// means it vanished after List, so create it.
+func applyPatch(ctx context.Context, cal Calendar, w WriteOp) error {
+	if _, err := cal.Patch(ctx, w.EventID, patchPayload(w)); err == nil {
+		return nil
+	} else if !isNotFound(err) {
+		return err
+	}
+	return insertMissing(ctx, cal, w)
+}
+
+// insertMissing is the patch fallback: recreate the vanished event. A
+// collision means it was recreated between the failed patch and this
+// insert, so one patch retry converges.
+func insertMissing(ctx context.Context, cal Calendar, w WriteOp) error {
+	if _, err := cal.Insert(ctx, insertPayload(w)); err == nil {
+		return nil
+	} else if !isAlreadyExists(err) {
+		return err
+	}
+	_, err := cal.Patch(ctx, w.EventID, patchPayload(w))
+	return err
 }
 
 func insertPayload(w WriteOp) calendar.Event {
@@ -650,6 +711,24 @@ func isNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
+	if code, ok := calendar.StatusCodeOf(err); ok && code == http.StatusNotFound {
+		return true
+	}
 	s := err.Error()
 	return strings.Contains(s, "404") || strings.Contains(s, "notFound") || strings.Contains(s, "no such event")
+}
+
+// isAlreadyExists reports Google's duplicate-id failure on insert: HTTP 409
+// ("The requested identifier already exists"). The deterministic event id
+// collides whenever the event lives on the calendar but outside the list
+// window, so the caller patches the existing event into place instead.
+func isAlreadyExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	if code, ok := calendar.StatusCodeOf(err); ok && code == http.StatusConflict {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "already exists") || strings.Contains(s, "duplicate")
 }
