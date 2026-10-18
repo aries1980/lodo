@@ -676,11 +676,14 @@ func (b *builder) addFlexible(block model.Block, run grid.Run) {
 // Bound is the dependency-aware lower bound: the Task may not start before
 // bound (max of now and its dependencies' ends).
 //
-// Hours still required are placed in three passes — green, then yellow, then
-// red — so a later green window beats an earlier yellow one. Each pass uses
-// the ADR 0010 comparator on that tier's free runs. A Block never crosses a
-// tier boundary. The minimum-Block floor applies per pass, so a one-slot
-// green fragment is left unused and the hours can spill.
+// Hours still required are placed in three tier passes — green, then yellow,
+// then red — so a later green window beats an earlier yellow one. A Task that
+// names its own Time Maps prefers those hours first and spills into the
+// default map when its project map is full: each tier runs a primary pass
+// then a default fallback pass, so green-default beats yellow-primary. Each
+// pass uses the ADR 0010 comparator on that tier's free runs. A Block never
+// crosses a tier boundary. The minimum-Block floor applies per pass, so a
+// one-slot green fragment is left unused and the hours can spill.
 func (b *builder) placeWithBound(p *taskPlan, maps map[string]model.TimeMap, overdue bool, bound time.Time) {
 	from, to := b.g.WindowStart(), b.g.WindowEnd()
 	if !overdue {
@@ -700,11 +703,12 @@ func (b *builder) placeWithBound(p *taskPlan, maps map[string]model.TimeMap, ove
 
 	left := p.required()
 	next := 0
-	for _, tier := range []model.Tier{model.TierGreen, model.TierYellow, model.TierRed} {
+	primary, fallback := b.splitMaps(p.task, maps)
+	placeMask := func(mask grid.Mask) {
 		if left == 0 {
-			break
+			return
 		}
-		free := b.eligibility(p.task, maps, tier).And(window).AndNot(b.busy)
+		free := mask.And(window).AndNot(b.busy)
 		runs := make([]placementRun, 0, 8)
 		for _, r := range free.Runs(b.g.Len()) {
 			if r.Slots >= floor {
@@ -730,27 +734,58 @@ func (b *builder) placeWithBound(p *taskPlan, maps map[string]model.TimeMap, ove
 			next++
 		}
 	}
+	for _, tier := range []model.Tier{model.TierGreen, model.TierYellow, model.TierRed} {
+		if left == 0 {
+			break
+		}
+		placeMask(b.eligibilityFor(primary, tier))
+		if fallback != nil {
+			placeMask(b.eligibilityFor(fallback, tier))
+		}
+	}
 	p.shortfall = left
 }
 
-// eligibility returns the slots of one preference tier in the Task's Time
-// Maps, or in the default maps when the Task names none. A slot covered by
-// two tiers takes the better one: yellow excludes green, red excludes both.
-func (b *builder) eligibility(t model.Task, maps map[string]model.TimeMap, tier model.Tier) grid.Mask {
-	var selected []model.TimeMap
-	if len(t.TimeMaps) > 0 {
-		for _, slug := range t.TimeMaps {
-			if tm, ok := maps[slug]; ok {
-				selected = append(selected, tm)
-			}
-		}
-	} else {
-		for _, tm := range maps {
-			if tm.Default {
-				selected = append(selected, tm)
-			}
+// splitMaps partitions the Time Maps a Task may use into its primary set and
+// its default fallback. A Task with no explicit time-map:: uses the default
+// maps with no fallback. A Task naming its own maps keeps those as primary
+// and spills into the default maps; unknown-only names resolve to nothing
+// and stay strict so the unknown-time-map issue is not masked.
+func (b *builder) splitMaps(t model.Task, maps map[string]model.TimeMap) (primary, fallback []model.TimeMap) {
+	var defaults []model.TimeMap
+	for _, tm := range maps {
+		if tm.Default {
+			defaults = append(defaults, tm)
 		}
 	}
+	if len(t.TimeMaps) == 0 {
+		return defaults, nil
+	}
+	primarySlugs := map[string]bool{}
+	for _, slug := range t.TimeMaps {
+		if tm, ok := maps[slug]; ok {
+			primary = append(primary, tm)
+			primarySlugs[tm.Slug] = true
+		}
+	}
+	if len(primary) == 0 {
+		return nil, nil
+	}
+	for _, tm := range defaults {
+		if !primarySlugs[tm.Slug] {
+			fallback = append(fallback, tm)
+		}
+	}
+	if len(fallback) == 0 {
+		fallback = nil
+	}
+	return primary, fallback
+}
+
+// eligibilityFor returns the slots of one preference tier in the given map
+// set. A slot covered by two tiers takes the better one: yellow excludes
+// green, red excludes both.
+func (b *builder) eligibilityFor(selected []model.TimeMap, tier model.Tier) grid.Mask {
 	green := tierMask(b.g, selected, model.TierGreen)
 	switch tier {
 	case model.TierYellow:

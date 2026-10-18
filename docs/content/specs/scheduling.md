@@ -77,6 +77,8 @@ flowchart TD
 planning, not just-in-time. Time Map windows carry a tier. Hours still required are
 placed in green first, then yellow, then red, so a later green window beats an earlier
 yellow one ([ADR 0014](../ADRs/0014-preference-tiers-before-the-comparator.md)).
+A Task naming its own map prefers that map, then spills tier-first into the
+default map (green-default before yellow-primary).
 
 Inside one tier, completeness comes first, then the comparator in
 [ADR 0010](../ADRs/0010-placement-comparator.md): placed hours, start day, Block count,
@@ -93,7 +95,7 @@ flowchart TD
     DEP -->|Yes| PLAN{"Inside plan window and scheduling window?"}
     PLAN -->|Not yet due| FUT["Not due yet<br/>leave silently"]
     PLAN -->|Overdue| OVER["Overdue: ASAP like flexible<br/>maximum urgency, never dropped"]
-    PLAN -->|Due| TM{"Free hours in union of Time Maps? Green, then yellow, then red"}
+    PLAN -->|Due| TM{"Free hours in project map, then default spillover? Green, then yellow, then red"}
     TM -->|None| SHORT["Shortfall: Time Map too thin"]
     TM -->|Hours free| BUSY{"Subtract busy time?<br/>External + Pins + Pinned Blocks"}
     BUSY -->|No room| FULL["Shortfall: window full"]

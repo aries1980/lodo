@@ -63,18 +63,32 @@ none of the three are a shortfall. Red is a last resort, not a forbidden band.
 
 ## Assignment
 
-- A Task may belong to one or more Time Maps, declared on the Task (or inherited from its
-  page) as `time-map::`. Multiple maps are comma-separated: `time-map:: deep-work, weekends`.
-- A Task is scheduled **only** inside the union of its maps' windows.
+- A Task may belong to one or more Time Maps, declared on the Task (or inherited from
+  parent blocks or page) as `time-map::`. Multiple maps are comma-separated: `time-map:: deep-work, weekends`.
+- A Task with its own map prefers that map and spills into the default map when
+  the project map is full. Each tier runs primary first, then default fallback,
+  so green-default beats yellow-primary. A Task with no `time-map::` uses only
+  the default map.
 - **Default map (proposed):** the map block may carry `default:: true`. A Task with no
   `time-map::` (direct or inherited) uses the default map. Exactly one default must exist.
+- A Task naming only unknown maps stays strict and shortfalls; the spillover
+  never masks an `unknown-time-map` authoring error.
+
+### Project pattern
+
+Put `time-map::` on the project parent block and every child inherits it
+(child > parent blocks nearest first > page > default). Example: a `Company A`
+parent with `time-map:: company-a` keeps all its TODO children in that map's
+hours; overload spills tier-first into the default map instead of shortfalling.
 
 ## Semantics (v0.1)
 
 - Windows recur weekly and are **absolute local times**: they stay 09:00–11:00 in the
   user's current timezone, mirroring SkedPal's stated behaviour.
 - Maps may overlap. A Task with several maps draws on the union of their windows;
-  where two tiers cover one slot, the better tier wins. Competition for the same
+  where two tiers cover one slot, the better tier wins. A project Task prefers
+  its own map first, then spills tier-first into the default map (green-default
+  before yellow-primary). Competition for the same
   hours between Tasks is resolved by Priority.
 - Windows are intersected with the Schedule's busy time (External Events and Corporate
   Pins) and with the Plan window; a Task is placed only in hours that satisfy all three.

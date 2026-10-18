@@ -64,6 +64,25 @@ default): `time-map::`, `priority::`, `plan-start::`, `plan-end::`, `order::`.
 Everything else (`duration::`, `deadline::`, `scheduled::`, `depends::`) is
 per-block and never inherits.
 
+### Project pattern: one Time Map per client
+
+Put `time-map::` on the project parent block. Every child TODO inherits it
+without repeating the property, and overload spills tier-first into the
+default map instead of shortfalling.
+
+```markdown
+- Company A
+  time-map:: company-a
+  - TODO Review access request
+    duration:: 2h
+  - TODO Update supplier list
+    duration:: 1h
+```
+
+What Lodo sees: both leaves prefer `company-a` hours; when `company-a` is
+full the remainder spills into the default map, green-default before
+yellow-primary.
+
 Raw file example (`pages/thesis.md` on disk):
 
 ```markdown
