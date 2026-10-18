@@ -16,7 +16,7 @@ func (r *resolver) timeMaps() {
 	idx := r.pageIndex(r.in.TimeMapsPage)
 	if idx < 0 {
 		r.issue(IssueMissingTimeMapsPage,
-			fmt.Sprintf("page %s", r.in.TimeMapsPage),
+			r.pageContext(r.in.TimeMapsPage),
 			fmt.Sprintf("no page named %q: the Time Maps are authored in the graph on it (ADR 0003)", r.in.TimeMapsPage))
 		return
 	}
@@ -67,7 +67,7 @@ func (r *resolver) timeMaps() {
 
 	switch {
 	case defaults == 0:
-		r.issue(IssueDefaultMapCount, fmt.Sprintf("page %s", r.in.TimeMapsPage),
+		r.issue(IssueDefaultMapCount, r.pageContext(r.in.TimeMapsPage),
 			"no Time Map carries default:: true, so Tasks with no time-map:: have no fallback hours")
 	case defaults > 1:
 		var slugs []string
@@ -76,7 +76,7 @@ func (r *resolver) timeMaps() {
 				slugs = append(slugs, m.Slug)
 			}
 		}
-		r.issue(IssueDefaultMapCount, fmt.Sprintf("page %s", r.in.TimeMapsPage),
+		r.issue(IssueDefaultMapCount, r.pageContext(r.in.TimeMapsPage),
 			fmt.Sprintf("%d Time Maps have default:: true (%s); exactly one must — none applies", defaults, strings.Join(slugs, ", ")))
 		// More than one default is a guess if any is used: strip them all.
 		for i := range r.maps {

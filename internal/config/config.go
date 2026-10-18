@@ -40,6 +40,28 @@ type Logseq struct {
 	// certificate. It is machine-bound, so it lives in the file (ADR 0005),
 	// never as a flag: whoever wrote the config accepted that certificate.
 	Insecure bool
+	// Graphs lists the Logseq graphs to merge, in priority order. Empty
+	// means single-graph mode (APIURL alone). When non-empty, each entry
+	// needs its own Logseq window on its own HTTP port: one endpoint
+	// always serves its current graph only.
+	Graphs []GraphSource
+}
+
+// GraphSource is one Logseq graph in a multi-graph setup.
+type GraphSource struct {
+	// Name is the graph slug (work, family, personal). It fills
+	// Task.Graph, check/forecast output and the calendar graph field.
+	Name string
+	// APIURL is this graph HTTP API endpoint.
+	APIURL string
+	// TimeMapsPage optionally overrides the canonical page for this graph;
+	// empty means the global TimeMapsPage. Canonical Time Maps are read
+	// from the first graph; this field is reserved for a future union.
+	TimeMapsPage string
+	// DefaultTimeMap is the graph-level fallback Time Map slug.
+	// Explicit time-map:: on block, parent or page wins over it; it wins
+	// over the global default:: true map.
+	DefaultTimeMap string
 }
 
 // Scheduling settings.
@@ -102,12 +124,21 @@ func (s Scheduling) Location() (*time.Location, error) {
 	return loc, nil
 }
 
+// rawGraph mirrors one graphs: entry before validation.
+type rawGraph struct {
+	Name           string `yaml:"name"`
+	APIURL         string `yaml:"api_url"`
+	TimeMapsPage   string `yaml:"time_maps_page"`
+	DefaultTimeMap string `yaml:"default_time_map"`
+}
+
 // rawFile mirrors the YAML document before validation.
 type rawFile struct {
 	Logseq struct {
-		APIURL       string `yaml:"api_url"`
-		TimeMapsPage string `yaml:"time_maps_page"`
-		Insecure     bool   `yaml:"insecure"`
+		APIURL       string     `yaml:"api_url"`
+		TimeMapsPage string     `yaml:"time_maps_page"`
+		Insecure     bool       `yaml:"insecure"`
+		Graphs       []rawGraph `yaml:"graphs"`
 	} `yaml:"logseq"`
 	Scheduling struct {
 		Granularity string `yaml:"granularity"`
@@ -145,6 +176,7 @@ func Load(path string) (Config, error) {
 			APIURL:       strings.TrimSpace(raw.Logseq.APIURL),
 			TimeMapsPage: raw.Logseq.TimeMapsPage,
 			Insecure:     raw.Logseq.Insecure,
+			Graphs:       decodeGraphs(raw.Logseq.Graphs),
 		},
 		Scheduling: Scheduling{
 			Granularity: raw.Scheduling.Granularity,
@@ -176,15 +208,32 @@ const (
 )
 
 func validate(cfg Config) (Config, error) {
-	if cfg.Logseq.APIURL == "" {
-		return Config{}, fmt.Errorf("logseq.api_url: required")
-	}
-	u, err := url.Parse(cfg.Logseq.APIURL)
-	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
-		return Config{}, fmt.Errorf("logseq.api_url %q: must be an absolute http(s) URL", cfg.Logseq.APIURL)
+	if len(cfg.Logseq.Graphs) == 0 {
+		if cfg.Logseq.APIURL == "" {
+			return Config{}, fmt.Errorf("logseq.api_url: required")
+		}
+		if err := checkAPIURL(cfg.Logseq.APIURL); err != nil {
+			return Config{}, err
+		}
+	} else {
+		if err := validateGraphs(cfg.Logseq.Graphs); err != nil {
+			return Config{}, err
+		}
+		// Single api_url stays allowed as documentation/fallback but is
+		// otherwise unused when graphs: is set; still validate its shape.
+		if cfg.Logseq.APIURL != "" {
+			if err := checkAPIURL(cfg.Logseq.APIURL); err != nil {
+				return Config{}, err
+			}
+		}
 	}
 	if cfg.Logseq.TimeMapsPage == "" {
 		cfg.Logseq.TimeMapsPage = DefaultTimeMapsPage
+	}
+	for i := range cfg.Logseq.Graphs {
+		if strings.TrimSpace(cfg.Logseq.Graphs[i].TimeMapsPage) == "" {
+			cfg.Logseq.Graphs[i].TimeMapsPage = cfg.Logseq.TimeMapsPage
+		}
 	}
 	if cfg.Scheduling.Granularity == "" {
 		return Config{}, fmt.Errorf("scheduling.granularity: required (e.g. 15m: a whole number of minutes that divides 60)")
@@ -215,6 +264,101 @@ func validate(cfg Config) (Config, error) {
 	cfg.Calendar.ReadCalendars = norm.ReadCalendars(cfg.Calendar.ID, cfg.Calendar.ReadCalendars)
 	cfg.Calendar.IgnoreReadAllDayMatching = norm.Phrases(cfg.Calendar.IgnoreReadAllDayMatching)
 	return cfg, nil
+}
+
+// decodeGraphs trims one graphs: entry each; validation slugifies and checks URLs.
+func decodeGraphs(in []rawGraph) []GraphSource {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]GraphSource, 0, len(in))
+	for _, g := range in {
+		out = append(out, GraphSource{
+			Name:           strings.TrimSpace(g.Name),
+			APIURL:         strings.TrimSpace(g.APIURL),
+			TimeMapsPage:   strings.TrimSpace(g.TimeMapsPage),
+			DefaultTimeMap: strings.TrimSpace(g.DefaultTimeMap),
+		})
+	}
+	return out
+}
+
+// checkAPIURL validates one absolute http(s) URL.
+func checkAPIURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("logseq.api_url %q: must be an absolute http(s) URL", raw)
+	}
+	return nil
+}
+
+// validateGraphs checks names (required, slugifiable, unique
+// case-insensitively), per-graph URLs and default_time_map slugs.
+func validateGraphs(graphs []GraphSource) error {
+	seen := map[string]bool{}
+	for i, g := range graphs {
+		if strings.TrimSpace(g.Name) == "" {
+			return fmt.Errorf("logseq.graphs[%d].name: required (e.g. work)", i)
+		}
+		slug := parse.Slugify(g.Name)
+		if slug == "" {
+			return fmt.Errorf("logseq.graphs[%d].name %q: must slugify to a non-empty key", i, g.Name)
+		}
+		if seen[slug] {
+			return fmt.Errorf("logseq.graphs[%d].name %q: duplicate graph name (slug %s)", i, g.Name, slug)
+		}
+		seen[slug] = true
+		if g.APIURL == "" {
+			return fmt.Errorf("logseq.graphs[%d].api_url: required", i)
+		}
+		u, err := url.Parse(g.APIURL)
+		if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+			return fmt.Errorf("logseq.graphs[%d].api_url %q: must be an absolute http(s) URL", i, g.APIURL)
+		}
+		if g.DefaultTimeMap != "" && parse.Slugify(g.DefaultTimeMap) == "" {
+			return fmt.Errorf("logseq.graphs[%d].default_time_map %q: must slugify to a non-empty key", i, g.DefaultTimeMap)
+		}
+	}
+	return nil
+}
+
+// PrimaryTimeMapsPage is the canonical page Time Maps are read from:
+// the first graph time_maps_page override, else the global one.
+func (l Logseq) PrimaryTimeMapsPage() string {
+	if len(l.Graphs) > 0 && strings.TrimSpace(l.Graphs[0].TimeMapsPage) != "" {
+		return strings.TrimSpace(l.Graphs[0].TimeMapsPage)
+	}
+	if strings.TrimSpace(l.TimeMapsPage) != "" {
+		return strings.TrimSpace(l.TimeMapsPage)
+	}
+	return DefaultTimeMapsPage
+}
+
+// GraphDefault returns the graph-level fallback Time Map slug for name,
+// slugified, or empty when none is configured. Lookup is case-insensitive.
+func (l Logseq) GraphDefault(name string) string {
+	want := parse.Slugify(name)
+	for _, g := range l.Graphs {
+		if parse.Slugify(g.Name) == want {
+			return parse.Slugify(g.DefaultTimeMap)
+		}
+	}
+	return ""
+}
+
+// GraphOrder returns the config index of name, or -1 when unknown.
+// Single-graph mode returns 0 for any name.
+func (l Logseq) GraphOrder(name string) int {
+	if len(l.Graphs) == 0 {
+		return 0
+	}
+	want := parse.Slugify(name)
+	for i, g := range l.Graphs {
+		if parse.Slugify(g.Name) == want {
+			return i
+		}
+	}
+	return -1
 }
 
 // normalizeReadCalendars trims entries, drops empties, silently drops any
@@ -274,6 +418,13 @@ type Credentials struct {
 // LogseqCredentials carries the Logseq HTTP API token.
 type LogseqCredentials struct {
 	Token string `json:"token"`
+	// Graphs holds per-graph tokens, keyed by graph name (work, family).
+	Graphs map[string]LogseqGraphCredentials `json:"graphs,omitempty"`
+}
+
+// LogseqGraphCredentials is one graph token.
+type LogseqGraphCredentials struct {
+	Token string `json:"token"`
 }
 
 // GoogleCredentials is the google section: the OAuth client the user
@@ -306,12 +457,80 @@ const (
 	EnvGoogleRefreshToken = "LODO_GOOGLE_REFRESH_TOKEN"
 )
 
+// GraphTokenEnvVar names the per-graph token variable:
+// work -> LODO_LOGSEQ_TOKEN_WORK, my-work -> LODO_LOGSEQ_TOKEN_MY_WORK.
+func GraphTokenEnvVar(graph string) string {
+	slug := parse.Slugify(graph)
+	slug = strings.ReplaceAll(slug, "-", "_")
+	return EnvLogseqToken + "_" + strings.ToUpper(slug)
+}
+
+// TokenForGraph resolves the effective token for one graph: per-graph env
+// wins, then the per-graph file entry (case-insensitive), then the global
+// token (file+env fallback already applied). Empty means unconfigured.
+func (c Credentials) TokenForGraph(graph string) string {
+	if v := strings.TrimSpace(os.Getenv(GraphTokenEnvVar(graph))); v != "" {
+		return v
+	}
+	want := parse.Slugify(graph)
+	for name, g := range c.Logseq.Graphs {
+		if parse.Slugify(name) == want {
+			if v := strings.TrimSpace(g.Token); v != "" {
+				return v
+			}
+			break
+		}
+	}
+	return strings.TrimSpace(c.Logseq.Token)
+}
+
+// HasAnyLogseqToken reports whether any Logseq token exists: global file,
+// per-graph file, global env or any LODO_LOGSEQ_TOKEN_* env var.
+func (c Credentials) HasAnyLogseqToken() bool {
+	if strings.TrimSpace(c.Logseq.Token) != "" {
+		return true
+	}
+	for _, g := range c.Logseq.Graphs {
+		if strings.TrimSpace(g.Token) != "" {
+			return true
+		}
+	}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, EnvLogseqToken+"_") || e == EnvLogseqToken {
+			if idx := strings.Index(e, "="); idx >= 0 && strings.TrimSpace(e[idx+1:]) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // CredentialsFromEnv reads the credential environment: each non-empty,
 // trimmed variable becomes its field. A Google section is present when any
 // of its three variables is non-empty.
 func CredentialsFromEnv() Credentials {
 	var c Credentials
 	c.Logseq.Token = strings.TrimSpace(os.Getenv(EnvLogseqToken))
+	for _, e := range os.Environ() {
+		const prefix = EnvLogseqToken + "_"
+		if !strings.HasPrefix(e, prefix) {
+			continue
+		}
+		kv := strings.SplitN(e, "=", 2)
+		if len(kv) != 2 || strings.TrimSpace(kv[1]) == "" {
+			continue
+		}
+		suffix := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(kv[0], prefix)))
+		suffix = strings.ReplaceAll(suffix, "_", "-")
+		if parse.Slugify(suffix) == "" {
+			continue
+		}
+		if c.Logseq.Graphs == nil {
+			c.Logseq.Graphs = map[string]LogseqGraphCredentials{}
+		}
+		// Key by slug; TokenForGraph matches case-insensitively anyway.
+		c.Logseq.Graphs[suffix] = LogseqGraphCredentials{Token: strings.TrimSpace(kv[1])}
+	}
 	if id := strings.TrimSpace(os.Getenv(EnvGoogleClientID)); id != "" {
 		if c.Google == nil {
 			c.Google = &GoogleCredentials{}
@@ -339,6 +558,11 @@ func (c Credentials) isEmpty() bool {
 	if c.Logseq.Token != "" {
 		return false
 	}
+	for _, g := range c.Logseq.Graphs {
+		if strings.TrimSpace(g.Token) != "" {
+			return false
+		}
+	}
 	if c.Google == nil {
 		return true
 	}
@@ -351,6 +575,20 @@ func (c Credentials) withEnv() Credentials {
 	env := CredentialsFromEnv()
 	if env.Logseq.Token != "" {
 		c.Logseq.Token = env.Logseq.Token
+	}
+	if len(env.Logseq.Graphs) > 0 {
+		if c.Logseq.Graphs == nil {
+			c.Logseq.Graphs = map[string]LogseqGraphCredentials{}
+		} else {
+			cp := make(map[string]LogseqGraphCredentials, len(c.Logseq.Graphs))
+			for k, v := range c.Logseq.Graphs {
+				cp[k] = v
+			}
+			c.Logseq.Graphs = cp
+		}
+		for k, v := range env.Logseq.Graphs {
+			c.Logseq.Graphs[k] = v
+		}
 	}
 	if env.Google != nil {
 		if c.Google == nil {
@@ -378,6 +616,9 @@ func (c Credentials) withEnv() Credentials {
 type CredentialOverrides struct {
 	// LogseqToken overrides logseq.token; "" keeps the file/environment value.
 	LogseqToken string
+	// LogseqGraphTokens overrides per-graph tokens by graph name (slug,
+	// case-insensitive); empty values are ignored. Never persisted.
+	LogseqGraphTokens map[string]string
 	// GoogleClientID overrides google.client_id; "" keeps the file/environment value.
 	GoogleClientID string
 	// GoogleClientSecret overrides google.client_secret; "" keeps the file/environment value.
@@ -392,6 +633,22 @@ type CredentialOverrides struct {
 func (c Credentials) WithCredentialOverrides(o CredentialOverrides) Credentials {
 	if v := strings.TrimSpace(o.LogseqToken); v != "" {
 		c.Logseq.Token = v
+	}
+	if len(o.LogseqGraphTokens) > 0 {
+		if c.Logseq.Graphs == nil {
+			c.Logseq.Graphs = map[string]LogseqGraphCredentials{}
+		} else {
+			cp := make(map[string]LogseqGraphCredentials, len(c.Logseq.Graphs))
+			for k, v := range c.Logseq.Graphs {
+				cp[k] = v
+			}
+			c.Logseq.Graphs = cp
+		}
+		for k, v := range o.LogseqGraphTokens {
+			if vv := strings.TrimSpace(v); vv != "" {
+				c.Logseq.Graphs[k] = LogseqGraphCredentials{Token: vv}
+			}
+		}
 	}
 	if v := strings.TrimSpace(o.GoogleClientID); v != "" {
 		if c.Google == nil {
@@ -515,8 +772,8 @@ func LoadCredentials(path string) (Credentials, error) {
 	if err != nil {
 		return Credentials{}, err
 	}
-	if c.Logseq.Token == "" {
-		return Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations) or set %s", path, EnvLogseqToken)
+	if !c.HasAnyLogseqToken() {
+		return Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or add per-graph tokens (logseq.graphs.*.token / LODO_LOGSEQ_TOKEN_<GRAPH>)", path, EnvLogseqToken)
 	}
 	return c, nil
 }

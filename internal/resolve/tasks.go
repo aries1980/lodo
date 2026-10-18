@@ -34,7 +34,7 @@ func (r *resolver) resolveTasks() {
 			text, okT := propsText(raw)
 			if !okT {
 				r.issue(IssueBadProperty,
-					fmt.Sprintf("page %s", page.Name),
+					r.pageContext(page.Name),
 					fmt.Sprintf("%s:: has a malformed value the app parsed as %v; the page-level default is skipped", key, raw))
 				continue
 			}
@@ -421,15 +421,17 @@ func findCycleNodes(n int, adj map[int][]int) map[int]bool {
 // and depends never inherit.
 func (r *resolver) taskWithAncestors(page *logseq.Page, b *logseq.Block, ancestors []*logseq.Block) (model.Task, bool, *Issue) {
 	t := model.Task{
-		ID:     strings.TrimSpace(b.UUID),
-		Text:   taskText(b),
-		Marker: model.Marker(strings.ToUpper(strings.TrimSpace(b.Marker))),
+		ID:         strings.TrimSpace(b.UUID),
+		Graph:      r.in.Graph,
+		GraphOrder: r.in.GraphOrder,
+		Text:       taskText(b),
+		Marker:     model.Marker(strings.ToUpper(strings.TrimSpace(b.Marker))),
 	}
 
 	if t.ID == "" {
 		return t, false, &Issue{
 			Kind:    IssueMissingBlockID,
-			Context: fmt.Sprintf("page %s", page.Name),
+			Context: r.pageContext(page.Name),
 			Detail:  "the task-marked block has no UUID, so it cannot be tracked across runs",
 		}
 	}
@@ -465,6 +467,13 @@ func (r *resolver) taskWithAncestors(page *logseq.Page, b *logseq.Block, ancesto
 			if !slices.Contains(t.TimeMaps, slug) {
 				t.TimeMaps = append(t.TimeMaps, slug)
 			}
+		}
+	} else if r.in.DefaultTimeMap != "" {
+		// Graph-level fallback: explicit time-map:: on block, parent or
+		// page wins; otherwise the graph default applies before the
+		// global default:: true map.
+		if slug := parse.Slugify(r.in.DefaultTimeMap); slug != "" {
+			t.TimeMaps = []string{slug}
 		}
 	}
 

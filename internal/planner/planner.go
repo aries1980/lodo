@@ -1013,11 +1013,17 @@ func orderBefore(a, b model.Task) bool {
 }
 
 func compareTasks(a, b model.Task) int {
+	if a.GraphOrder != b.GraphOrder {
+		return a.GraphOrder - b.GraphOrder
+	}
 	if ra, rb := a.Priority.Rank(), b.Priority.Rank(); ra != rb {
 		return ra - rb
 	}
 	if a.OutlineOrder != b.OutlineOrder {
 		return a.OutlineOrder - b.OutlineOrder
+	}
+	if a.Graph != b.Graph {
+		return strings.Compare(a.Graph, b.Graph)
 	}
 	return strings.Compare(a.ID, b.ID)
 }

@@ -8,7 +8,12 @@ import (
 // Task is a schedulable unit of work, resolved from a Logseq block. A block is
 // a Task iff it is TODO/DOING and carries an explicit duration.
 type Task struct {
-	ID           string // Logseq block UUID; the Task's identity across runs
+	ID string // Logseq block UUID; the Task's identity across runs
+	// Graph is the source graph slug (work, family); empty in single-graph mode.
+	Graph string
+	// GraphOrder is the graph config index for deterministic cross-graph
+	// ordering; 0 in single-graph mode. Not user intent, never snapshotted.
+	GraphOrder   int
 	Text         string
 	Marker       Marker
 	Duration     time.Duration
@@ -49,6 +54,7 @@ const (
 // one recorded with a Stood-down disposition to decide whether the Task's
 // inputs have changed.
 type Snapshot struct {
+	Graph     string
 	Text      string
 	Marker    Marker
 	Duration  time.Duration
@@ -65,6 +71,7 @@ type Snapshot struct {
 // Snapshot returns t's current resolved inputs.
 func (t Task) Snapshot() Snapshot {
 	return Snapshot{
+		Graph:     t.Graph,
 		Text:      t.Text,
 		Marker:    t.Marker,
 		Duration:  t.Duration,

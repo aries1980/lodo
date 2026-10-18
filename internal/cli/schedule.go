@@ -20,11 +20,11 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 	if dryRun {
 		return runForecast(opts, ov, verbose, yes)
 	}
-	cfg, client, creds, err := loadGraph(opts, ov)
+	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), client, cfg.Logseq.TimeMapsPage, yes, errWriter(opts)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	cal, err := calendarFull(context.Background(), creds, cfg)
@@ -38,7 +38,7 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 	defer func() { _ = st.Close() }()
 
 	now := time.Now()
-	outcome, err := run.Schedule(context.Background(), client, cal, st, cfg, now)
+	outcome, err := run.ScheduleSources(context.Background(), sources, cal, st, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -96,6 +96,7 @@ type writeJSON struct {
 	EventID    string    `json:"event_id"`
 	TaskID     string    `json:"task_id,omitempty"`
 	Task       string    `json:"task,omitempty"`
+	Graph      string    `json:"graph,omitempty"`
 	BlockIndex int       `json:"block_index,omitempty"`
 	Start      time.Time `json:"start,omitempty"`
 	End        time.Time `json:"end,omitempty"`
@@ -106,6 +107,7 @@ type orphanJSON struct {
 	EventID string `json:"event_id"`
 	TaskID  string `json:"task_id,omitempty"`
 	Task    string `json:"task,omitempty"`
+	Graph   string `json:"graph,omitempty"`
 	Block   int    `json:"block"`
 	Summary string `json:"summary,omitempty"`
 }
@@ -119,6 +121,7 @@ type reconcileJSON struct {
 type dispositionJSON struct {
 	TaskID     string    `json:"task_id"`
 	Task       string    `json:"task"`
+	Graph      string    `json:"graph,omitempty"`
 	BlockIndex int       `json:"block_index"`
 	Kind       string    `json:"kind"`
 	Start      time.Time `json:"start,omitempty"`
@@ -140,15 +143,23 @@ func scheduleExplanations(outcome run.ScheduleOutcome) []explanationJSON {
 
 func scheduleWrites(outcome run.ScheduleOutcome) []writeJSON {
 	byText := textByTasks(outcome.Tasks)
+	byGraph := graphByTasks(outcome.Tasks)
 	out := make([]writeJSON, 0, len(outcome.Writes))
 	for _, w := range outcome.Writes {
 		out = append(out, writeJSON{
-			Op: w.Op, EventID: w.EventID, TaskID: w.TaskID,
+			Op: w.Op, EventID: w.EventID, TaskID: w.TaskID, Graph: graphForWrite(outcome.Tasks, byGraph, w),
 			Task:       byText[w.TaskID],
 			BlockIndex: w.BlockIndex, Start: w.Start, End: w.End, Summary: w.Summary,
 		})
 	}
 	return out
+}
+
+func graphForWrite(tasks []model.Task, byGraph map[string]string, w run.WriteOp) string {
+	if w.Graph != "" {
+		return w.Graph
+	}
+	return byGraph[w.TaskID]
 }
 
 func scheduleOrphans(outcome run.ScheduleOutcome) []orphanJSON {

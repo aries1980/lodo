@@ -15,6 +15,15 @@ import (
 // after the read strategy in logseq-integration.md: every page, the trees
 // to walk, and the page the Time Maps live on.
 type Input struct {
+	// Graph is the source graph slug; empty in single-graph mode.
+	Graph string
+	// GraphOrder is the graph config index for deterministic cross-graph
+	// ordering; 0 in single-graph mode.
+	GraphOrder int
+	// DefaultTimeMap is the graph-level fallback Time Map slug (already
+	// slugified); empty means none. Explicit time-map:: on block, parent
+	// or page wins over it; it wins over the global default:: true map.
+	DefaultTimeMap string
 	// Pages enumerates the graph's pages; Properties may carry inheritable
 	// defaults for the blocks on the page.
 	Pages []*logseq.Page
@@ -112,17 +121,34 @@ func (r *resolver) sortedPages() []*logseq.Page {
 	return pages
 }
 
+// graphPrefix prefixes Issue contexts in multi-graph mode so two graphs
+// never report an identical "page X, block Y".
+func (r *resolver) graphPrefix() string {
+	if r.in.Graph == "" {
+		return ""
+	}
+	return fmt.Sprintf("graph %s, ", r.in.Graph)
+}
+
+// pageContext locates a page for an Issue.
+func (r *resolver) pageContext(name string) string {
+	return fmt.Sprintf("%spage %s", r.graphPrefix(), name)
+}
+
 // blockContext locates a block for an Issue: the page and the block UUID.
 func (r *resolver) blockContext(page *logseq.Page, b *logseq.Block) string {
-	return fmt.Sprintf("page %s, block %s", page.Name, b.UUID)
+	return fmt.Sprintf("%spage %s, block %s", r.graphPrefix(), page.Name, b.UUID)
 }
 
 // tmBlockContext locates a block on the Time Maps page.
 func (r *resolver) tmBlockContext(b *logseq.Block) string {
-	return fmt.Sprintf("page %s, block %s", r.in.TimeMapsPage, b.UUID)
+	return fmt.Sprintf("%spage %s, block %s", r.graphPrefix(), r.in.TimeMapsPage, b.UUID)
 }
 
 // taskContext locates a Task for an Issue.
 func taskContext(t model.Task) string {
+	if t.Graph != "" {
+		return fmt.Sprintf("graph %s, task %s", t.Graph, t.ID)
+	}
 	return fmt.Sprintf("task %s", t.ID)
 }

@@ -372,6 +372,7 @@ func (s *Store) Commit(bindingUpserts []Binding, bindingDeletes []BindingKey, di
 // deterministic field order. No omitempty: nil pointers and null slices
 // round-trip as null so empty-vs-missing stays faithful.
 type snapshotJSON struct {
+	Graph     string          `json:"graph"`
 	Text      string          `json:"text"`
 	Marker    model.Marker    `json:"marker"`
 	Duration  int64           `json:"duration_ns"`
@@ -394,6 +395,7 @@ type civilDateJSON struct {
 // SnapshotToJSON marshals one snapshot with deterministic field order.
 func SnapshotToJSON(s model.Snapshot) (string, error) {
 	dto := snapshotJSON{
+		Graph:    s.Graph,
 		Text:     s.Text,
 		Marker:   s.Marker,
 		Duration: int64(s.Duration),
@@ -420,6 +422,7 @@ func SnapshotFromJSON(raw string) (model.Snapshot, error) {
 		return model.Snapshot{}, err
 	}
 	out := model.Snapshot{
+		Graph:    dto.Graph,
 		Text:     dto.Text,
 		Marker:   dto.Marker,
 		Duration: time.Duration(dto.Duration),
@@ -453,7 +456,7 @@ func civilFromJSON(d *civilDateJSON) *model.CivilDate {
 // Times compare by instant (time.Equal), so a JSON round-trip that loses
 // the location name still matches; nil pointers must match nil.
 func SnapshotEqual(a, b model.Snapshot) bool {
-	if a.Text != b.Text || a.Marker != b.Marker || a.Duration != b.Duration || a.Priority != b.Priority || a.Order != b.Order {
+	if a.Graph != b.Graph || a.Text != b.Text || a.Marker != b.Marker || a.Duration != b.Duration || a.Priority != b.Priority || a.Order != b.Order {
 		return false
 	}
 	// Nil and empty slices both mean "none" (len 0); element order matters

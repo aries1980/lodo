@@ -13,6 +13,9 @@ Lodo is a CLI you invoke; cron calling `lodo schedule` is the intended deploymen
 The Logseq graph is the single source of truth for intent, local SQLite state is the
 source of truth for the Schedule, and the calendar is a projection of it.
 
+- [Features](features.md): what Lodo does, in one page.
+- [Getting Started](getting-started.md): from zero to the first `schedule`.
 - [Specifications](specs/): the language, concepts, and behaviour of Lodo. Start with the
   [Glossary](specs/glossary.md).
+- [Guides](guides/): how to enter Tasks in Logseq.
 - [Decision Records](adrs/): the decisions worth remembering, with reasons.

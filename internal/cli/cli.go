@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -240,6 +241,7 @@ type configOverrides struct {
 	readCalendars []string
 
 	logseqToken        string
+	logseqGraphTokens  []string
 	googleClientID     string
 	googleClientSecret string
 	googleRefreshToken string
@@ -249,14 +251,50 @@ type configOverrides struct {
 func (o configOverrides) credentialOverrides() config.CredentialOverrides {
 	return config.CredentialOverrides{
 		LogseqToken:        o.logseqToken,
+		LogseqGraphTokens:  parseGraphTokens(o.logseqGraphTokens),
 		GoogleClientID:     o.googleClientID,
 		GoogleClientSecret: o.googleClientSecret,
 		GoogleRefreshToken: o.googleRefreshToken,
 	}
 }
 
+// parseGraphTokens parses NAME=TOKEN entries (repeatable
+// --logseq-graph-token) into a name-keyed map; malformed entries are
+// ignored so a typo cannot become a token.
+func parseGraphTokens(in []string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for _, e := range in {
+		name, tok, ok := splitCut(e, "=")
+		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		tok = strings.TrimSpace(tok)
+		if name == "" || tok == "" {
+			continue
+		}
+		out[name] = tok
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func splitCut(s, sep string) (string, string, bool) {
+	i := strings.Index(s, sep)
+	if i < 0 {
+		return "", "", false
+	}
+	return s[:i], s[i+len(sep):], true
+}
+
 func addCredentialOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {
 	cmd.Flags().StringVar(&overrides.logseqToken, "logseq-token", "", "Logseq API token for one run (overrides file and env)")
+	cmd.Flags().StringArrayVar(&overrides.logseqGraphTokens, "logseq-graph-token", nil, "per-graph Logseq token NAME=TOKEN; repeatable, overrides file and env for that graph")
 	cmd.Flags().StringVar(&overrides.googleClientID, "google-client-id", "", "Google OAuth client_id for one run (overrides file and env)")
 	cmd.Flags().StringVar(&overrides.googleClientSecret, "google-client-secret", "", "Google OAuth client_secret for one run (overrides file and env)")
 	cmd.Flags().StringVar(&overrides.googleRefreshToken, "google-refresh-token", "", "Google refresh token for one run (overrides file and env)")

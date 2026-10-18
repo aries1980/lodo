@@ -31,7 +31,7 @@ think.
 | Property | Meaning | Inherits? |
 | --- | --- | --- |
 | `duration::` | estimated effort (`90m`, `2h`, `1h30m`) | **no** |
-| `time-map::` | one or more Time Map slugs, comma-separated | page, then parent blocks |
+| `time-map::` | one or more Time Map slugs, comma-separated | page, then parent blocks, then graph default |
 | `priority::` | relative rank (`A` / `B` / `C`) | page, then parent blocks |
 | `deadline::` | reference due date | **no** |
 | `plan-start::` | earliest day to schedule | page, then parent blocks |
@@ -74,8 +74,9 @@ granularity — and it blocks every slot it overlaps.
 ### Time Map — *which hours of the week*
 
 `time-map:: deep-work` or `time-map:: deep-work, weekends`. If absent, the value is
-inherited from parent blocks (nearest first), then the enclosing page, and failing
-that, the default Time Map applies. Put `time-map:: company-a` on a project parent
+inherited from parent blocks (nearest first), then the enclosing page, then the
+graph default (multi-graph `default_time_map` only), and failing that, the default
+Time Map applies. Put `time-map:: company-a` on a project parent
 block and every child TODO inherits it. A project Task prefers its
 own map and spills into the default map at the same tier or worse when full. See
 [`time-maps.md`](./time-maps.md).

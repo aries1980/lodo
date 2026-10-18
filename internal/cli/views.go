@@ -27,13 +27,19 @@ func blockerLabels(byText map[string]string, ids []string) []string {
 	return out
 }
 
+// graphByTasks indexes Task graph by ID.
+func graphByTasks(tasks []model.Task) map[string]string {
+	return run.GraphMap(tasks)
+}
+
 // blockViews converts planner blocks with resolved task text.
 func blockViews(tasks []model.Task, blocks []model.Block) []blockJSON {
 	byText := textByTasks(tasks)
+	byGraph := graphByTasks(tasks)
 	out := make([]blockJSON, 0, len(blocks))
 	for _, b := range blocks {
 		out = append(out, blockJSON{
-			TaskID: b.TaskID, Task: byText[b.TaskID],
+			TaskID: b.TaskID, Task: byText[b.TaskID], Graph: byGraph[b.TaskID],
 			Index: b.Index, Start: b.Start, End: b.End, Slots: b.Slots, Kind: string(b.Kind),
 		})
 	}
@@ -43,10 +49,11 @@ func blockViews(tasks []model.Task, blocks []model.Block) []blockJSON {
 // shortfallViews converts planner task reports with resolved task text.
 func shortfallViews(tasks []model.Task, reports []planner.TaskReport) []shortfallJSON {
 	byText := textByTasks(tasks)
+	byGraph := graphByTasks(tasks)
 	out := make([]shortfallJSON, 0, len(reports))
 	for _, r := range reports {
 		out = append(out, shortfallJSON{
-			TaskID: r.TaskID, Task: byText[r.TaskID],
+			TaskID: r.TaskID, Task: byText[r.TaskID], Graph: byGraph[r.TaskID],
 			Required: r.Required, Placed: r.Placed, StoodDown: r.StoodDown,
 			Shortfall: r.Shortfall, Reason: string(r.Reason),
 			BlockedBy: append([]string(nil), r.BlockedBy...),
@@ -70,10 +77,11 @@ func explanationViews(expls []planner.Explanation) []explanationJSON {
 // dispositionViews converts dispositions with resolved task text.
 func dispositionViews(tasks []model.Task, disps []model.Disposition) []dispositionJSON {
 	byText := textByTasks(tasks)
+	byGraph := graphByTasks(tasks)
 	out := make([]dispositionJSON, 0, len(disps))
 	for _, d := range disps {
 		out = append(out, dispositionJSON{
-			TaskID: d.TaskID, Task: byText[d.TaskID], BlockIndex: d.BlockIndex,
+			TaskID: d.TaskID, Task: byText[d.TaskID], Graph: byGraph[d.TaskID], BlockIndex: d.BlockIndex,
 			Kind: string(d.Kind), Start: d.Start, End: d.End, Slots: d.Slots,
 		})
 	}
@@ -83,10 +91,11 @@ func dispositionViews(tasks []model.Task, disps []model.Disposition) []dispositi
 // orphanViews converts schedule orphans with resolved task text.
 func orphanViews(tasks []model.Task, orphans []run.Orphan) []orphanJSON {
 	byText := textByTasks(tasks)
+	byGraph := graphByTasks(tasks)
 	out := make([]orphanJSON, 0, len(orphans))
 	for _, o := range orphans {
 		out = append(out, orphanJSON{
-			EventID: o.EventID, TaskID: o.TaskID,
+			EventID: o.EventID, TaskID: o.TaskID, Graph: byGraph[o.TaskID],
 			Task:  byText[o.TaskID],
 			Block: o.Block, Summary: o.Summary,
 		})

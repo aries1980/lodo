@@ -23,11 +23,10 @@ import (
 	"github.com/aries1980/lodo/internal/store"
 )
 
-// loadGraph assembles the read side: config (with resolved overrides),
-// credentials (file, environment, then CLI flags), and the Logseq HTTP API
-// client. The credentials travel too, for the commands that read past the
-// Logseq side of their file (forecast's calendar).
-func loadGraph(opts *options, ov configOverrides) (config.Config, logseq.Client, config.Credentials, error) {
+// loadSources builds one run.Source per configured graph, resolving
+// per-graph tokens (file, LODO_LOGSEQ_TOKEN_<GRAPH>, global fallback).
+// Single-graph mode returns one source with empty name.
+func loadSources(opts *options, ov configOverrides) (config.Config, []run.Source, config.Credentials, error) {
 	path := opts.config
 	if path == "" {
 		def, err := config.DefaultConfigPath()
@@ -58,15 +57,41 @@ func loadGraph(opts *options, ov configOverrides) (config.Config, logseq.Client,
 		return config.Config{}, nil, config.Credentials{}, err
 	}
 	creds = creds.WithCredentialOverrides(ov.credentialOverrides())
-	if creds.Logseq.Token == "" {
+	if !creds.HasAnyLogseqToken() {
 		return config.Config{}, nil, config.Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or pass --logseq-token", credPath, config.EnvLogseqToken)
 	}
 
-	client, err := logseq.NewClient(cfg.Logseq.APIURL, creds.Logseq.Token, httpClient(cfg))
-	if err != nil {
-		return config.Config{}, nil, config.Credentials{}, err
+	hc := httpClient(cfg)
+	if len(cfg.Logseq.Graphs) == 0 {
+		if creds.TokenForGraph("") == "" {
+			return config.Config{}, nil, config.Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or pass --logseq-token", credPath, config.EnvLogseqToken)
+		}
+		client, err := logseq.NewClient(cfg.Logseq.APIURL, creds.TokenForGraph(""), hc)
+		if err != nil {
+			return config.Config{}, nil, config.Credentials{}, err
+		}
+		sources := []run.Source{{Client: client}}
+		return cfg, sources, creds, nil
 	}
-	return cfg, client, creds, nil
+
+	sources := make([]run.Source, 0, len(cfg.Logseq.Graphs))
+	for i, g := range cfg.Logseq.Graphs {
+		tok := creds.TokenForGraph(g.Name)
+		if tok == "" {
+			return config.Config{}, nil, config.Credentials{}, fmt.Errorf("graph %s: no Logseq token; set logseq.graphs.%s.token in %s or %s", g.Name, g.Name, credPath, config.GraphTokenEnvVar(g.Name))
+		}
+		client, err := logseq.NewClient(g.APIURL, tok, hc)
+		if err != nil {
+			return config.Config{}, nil, config.Credentials{}, fmt.Errorf("graph %s: %w", g.Name, err)
+		}
+		sources = append(sources, run.Source{
+			Name:           g.Name,
+			Order:          i,
+			Client:         client,
+			DefaultTimeMap: cfg.Logseq.GraphDefault(g.Name),
+		})
+	}
+	return cfg, sources, creds, nil
 }
 
 // httpClient builds the transport the API adapter speaks through. An
@@ -110,11 +135,11 @@ func errWriter(opts *options) io.Writer {
 // behaviour), so a fresh checkout still checks. It writes nowhere, except
 // for a missing Time Maps page the user confirms (or pre-answers with -y).
 func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
-	cfg, client, creds, err := loadGraph(opts, ov)
+	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), client, cfg.Logseq.TimeMapsPage, yes, errWriter(opts)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	st, err := openStore()
@@ -126,13 +151,13 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 	cal, err := calendarFull(context.Background(), creds, cfg)
 	if err != nil {
 		if strings.Contains(err.Error(), "google credentials") {
-			return runCheckWithoutCalendar(opts, strict, cfg, client, st)
+			return runCheckWithoutCalendar(opts, strict, cfg, sources, st)
 		}
 		return &exitError{code: codeError, err: err}
 	}
 
 	now := time.Now()
-	outcome, err := run.Check(context.Background(), client, cal, st, cfg, now)
+	outcome, err := run.CheckSources(context.Background(), sources, cal, st, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -172,7 +197,7 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 // stored stood-down, planned with no busy time. No in-memory reconcile
 // happens here — with no observed events, every binding would look deleted.
 // Orphaned needs the calendar, so it stays empty.
-func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, client logseq.Client, st *store.Store) error {
+func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store) error {
 	now := time.Now()
 	location, err := cfg.Scheduling.Location()
 	if err != nil {
@@ -182,7 +207,7 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, clie
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	result, err := run.Read(context.Background(), client, cfg.Logseq.TimeMapsPage, location)
+	result, err := run.ReadSources(context.Background(), sources, cfg.Logseq.PrimaryTimeMapsPage(), location)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -245,11 +270,11 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, clie
 // never prints against a silently free calendar. The one write it may make
 // is a missing Time Maps page the user confirms (or pre-answers with -y).
 func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
-	cfg, client, creds, err := loadGraph(opts, ov)
+	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), client, cfg.Logseq.TimeMapsPage, yes, errWriter(opts)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 
@@ -259,7 +284,7 @@ func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 	}
 
 	now := time.Now()
-	outcome, err := run.Graph(context.Background(), client, busy, cfg, now)
+	outcome, err := run.GraphSources(context.Background(), sources, busy, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -298,6 +323,7 @@ type checkReport struct {
 type stoodDownJSON struct {
 	TaskID     string `json:"task_id"`
 	Task       string `json:"task"`
+	Graph      string `json:"graph,omitempty"`
 	BlockIndex int    `json:"block_index"`
 	Slots      int    `json:"slots"`
 }
@@ -322,6 +348,7 @@ type managedJSON struct {
 type blockJSON struct {
 	TaskID string    `json:"task_id"`
 	Task   string    `json:"task"`
+	Graph  string    `json:"graph,omitempty"`
 	Index  int       `json:"index"`
 	Start  time.Time `json:"start"`
 	End    time.Time `json:"end"`
@@ -332,6 +359,7 @@ type blockJSON struct {
 type shortfallJSON struct {
 	TaskID    string   `json:"task_id"`
 	Task      string   `json:"task"`
+	Graph     string   `json:"graph,omitempty"`
 	Required  int      `json:"required"`
 	Placed    int      `json:"placed"`
 	StoodDown int      `json:"stood_down"`
@@ -387,10 +415,11 @@ func checkShortfalls(outcome run.CheckOutcome) []shortfallJSON {
 
 func checkStoodDown(outcome run.CheckOutcome) []stoodDownJSON {
 	byText := textByTasks(outcome.Tasks)
+	byGraph := graphByTasks(outcome.Tasks)
 	out := make([]stoodDownJSON, 0, len(outcome.StoodDown))
 	for _, d := range outcome.StoodDown {
 		out = append(out, stoodDownJSON{
-			TaskID: d.TaskID, Task: byText[d.TaskID],
+			TaskID: d.TaskID, Task: byText[d.TaskID], Graph: byGraph[d.TaskID],
 			BlockIndex: d.BlockIndex, Slots: d.Slots,
 		})
 	}
@@ -406,7 +435,18 @@ func checkExplanations(outcome run.CheckOutcome) []explanationJSON {
 }
 
 func checkTaskLabel(outcome run.CheckOutcome, id string) string {
-	return labelFor(textByTasks(outcome.Tasks), id)
+	return graphLabel(outcome.Tasks, id)
+}
+
+// graphLabel prefixes the task text with [graph] in multi-graph mode.
+func graphLabel(tasks []model.Task, id string) string {
+	text := run.Label(tasks, id)
+	for _, tk := range tasks {
+		if tk.ID == id && tk.Graph != "" {
+			return "[" + tk.Graph + "] " + text
+		}
+	}
+	return text
 }
 
 func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
@@ -589,7 +629,7 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 
 // taskLabel prefers the Task's text, falling back to its id.
 func taskLabel(outcome run.Outcome, id string) string {
-	return run.Label(outcome.Tasks, id)
+	return graphLabel(outcome.Tasks, id)
 }
 
 // forecastBlockedLabels prefers Task text for blocker IDs.

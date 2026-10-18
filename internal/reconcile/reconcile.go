@@ -54,6 +54,12 @@ func TaskRef(e calendar.Event) (taskID string, blockIndex int, ok bool) {
 	return taskID, n, true
 }
 
+// EventGraph reads the optional graph slug off a Managed event.
+// Empty means single-graph mode or an event written before graphs.
+func EventGraph(e calendar.Event) string {
+	return strings.TrimSpace(e.ExtendedProperties.Private["graph"])
+}
+
 // Result is what the caller commits: binding upserts (moves and adoptions),
 // binding deletes (user deletes), and disposition upserts (pinned and
 // stood-down). Dispositions are upserts only; nothing is ever removed here.

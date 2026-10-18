@@ -73,6 +73,38 @@ calendar:
   certificate. It is machine-bound, so it lives in this file rather than a flag: writing
   `true` here is the acceptance of that one certificate.
 
+## Multiple graphs
+
+One endpoint always serves its current graph only, so each graph needs its
+own Logseq window on its own HTTP port. List them under `logseq.graphs`
+(in priority order — ties break by list order, then outline order):
+
+```yaml
+logseq:
+  time_maps_page: Time Maps   # canonical page, read from graphs[0]
+  graphs:
+    - name: work
+      api_url: http://127.0.0.1:12315/api
+      default_time_map: deep-work
+    - name: family
+      api_url: http://127.0.0.1:12316/api
+      default_time_map: weekends
+```
+
+- **`name`** — graph slug (`work`, `family`). Shown in output as `[work]`,
+  stored on Managed Events as `graph`, and used for token lookup. Unique,
+  case-insensitively.
+- **`api_url`** — this graph HTTP API endpoint. Required per graph; the
+  top-level `logseq.api_url` is then optional (single-graph mode uses it).
+- **`default_time_map`** — graph-level fallback Time Map slug. Explicit
+  `time-map::` on a block, parent block, or page wins over it; it wins over
+  the global `default:: true` map. Must name a map from the canonical page.
+- **`time_maps_page` per graph** is reserved (defaults to the global page).
+  The canonical Time Maps are always read from the first graph; other graphs
+  `Time Maps` pages are skipped for tasks and contribute no maps.
+- **`depends::` and `order::` stay graph-local.** A ref to another graph
+  reports `unknown-dependency` and blocks — cross-graph chains are unsupported.
+
 ## `credentials.json`
 
 ```json
@@ -81,6 +113,26 @@ calendar:
   "google": { "refresh_token": "…", "client_id": "…", "client_secret": "…" }
 }
 ```
+
+Per-graph tokens (file shape mirrors the graph names):
+
+```json
+{
+  "logseq": {
+    "token": "…",
+    "graphs": {
+      "work": { "token": "…" },
+      "family": { "token": "…" }
+    }
+  }
+}
+```
+
+Resolution per graph: `LODO_LOGSEQ_TOKEN_<GRAPH>` wins (e.g.
+`LODO_LOGSEQ_TOKEN_WORK`), then the per-graph file entry
+(case-insensitive), then the global token (file, env, or
+`--logseq-token`). A missing token for a configured graph fails the run
+naming the graph and its env var.
 
 Never committed, never synced, never written into the graph. The OAuth flow is
 device/loopback-based and writes the refresh token here on first run.

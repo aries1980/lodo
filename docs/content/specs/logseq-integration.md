@@ -33,6 +33,13 @@ Exclusively through the **Logseq HTTP API**, via a per-flavour adapter (file-bas
 today, DB graph after the planned upgrade). The API URL comes from `config.yaml`; the
 token from `credentials.json`. See [`configuration.md`](./configuration.md).
 
+One endpoint always serves its **current graph only**: every `Editor.*` call
+resolves against `(state/get-current-repo)` with no repo argument, and
+`App.getCurrentGraph` is read-only. Multi-graph therefore means N clients
+(N `api_url` + token pairs) — one Logseq window per graph, each on its own
+HTTP port. Lodo reads the canonical Time Maps page from the first graph and
+merges Tasks from all graphs; `depends::`/`order::` resolve per graph.
+
 Reads are performed fresh on each run. Lodo's SQLite store keeps a snapshot of the
 inputs it last read, so it can tell which Tasks changed without diffing the whole graph.
 

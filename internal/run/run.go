@@ -11,6 +11,7 @@ package run
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -32,6 +33,17 @@ import (
 // the write calendar plus per-read-calendar audit for the busy sources line.
 type BusySource interface {
 	Busy(ctx context.Context, g *grid.Grid, now time.Time) (busy grid.Mask, managed []calendar.Event, report calendar.BusyReport, err error)
+}
+
+// Source is one Logseq graph to read: its client plus identity.
+// Name is the graph slug (empty in single-graph mode), Order the config
+// index for deterministic cross-graph ordering, DefaultTimeMap the
+// graph-level fallback Time Map slug.
+type Source struct {
+	Name           string
+	Order          int
+	Client         logseq.Client
+	DefaultTimeMap string
 }
 
 // Outcome is one forecast's read side: the Tasks that were seen, the graph
@@ -137,6 +149,135 @@ func Read(ctx context.Context, client logseq.Client, timeMapsPage string, loc *t
 	return resolve.Resolve(input)
 }
 
+// ReadSources reads every graph and merges the resolved results.
+// Time Maps come from the first source only (canonical page); other
+// sources contribute Tasks and task issues. Time-Maps issues from
+// non-primary sources are dropped — they do not own the page.
+// depends:: and order:: chains stay graph-local by construction: each
+// graph resolves in isolation, so a cross-graph ref reports
+// unknown-dependency and blocks.
+func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc *time.Location) (resolve.Result, error) {
+	if len(sources) == 1 {
+		res, err := readOne(ctx, sources[0].Client, timeMapsPage, loc, sources[0].Name, sources[0].Order, sources[0].DefaultTimeMap)
+		if err != nil {
+			return resolve.Result{}, err
+		}
+		return res, nil
+	}
+	var allTasks []model.Task
+	var allIssues []resolve.Issue
+	var maps []model.TimeMap
+	first := true
+	for _, s := range sources {
+		res, err := readOne(ctx, s.Client, timeMapsPage, loc, s.Name, s.Order, s.DefaultTimeMap)
+		if err != nil {
+			return resolve.Result{}, fmt.Errorf("graph %s: %w", s.Name, err)
+		}
+		allTasks = append(allTasks, res.Tasks...)
+		if first {
+			maps = res.TimeMaps
+			allIssues = append(allIssues, res.Issues...)
+			first = false
+			continue
+		}
+		for _, is := range res.Issues {
+			switch is.Kind {
+			case resolve.IssueMissingTimeMapsPage, resolve.IssueDefaultMapCount,
+				resolve.IssueDuplicateMap, resolve.IssueBadWindow,
+				resolve.IssueBadTimeMap, resolve.IssueBadDefault:
+				continue
+			}
+			allIssues = append(allIssues, is)
+		}
+	}
+	return resolve.Result{Tasks: allTasks, TimeMaps: maps, Issues: allIssues}, nil
+}
+
+// readOne is Read plus graph identity.
+func readOne(ctx context.Context, client logseq.Client, timeMapsPage string, loc *time.Location, graph string, order int, defaultMap string) (resolve.Result, error) {
+	pages, err := client.Pages(ctx)
+	if err != nil {
+		return resolve.Result{}, err
+	}
+	sortPages(pages)
+
+	tmName := lowerTrim(timeMapsPage)
+	input := resolve.Input{
+		Graph:          graph,
+		GraphOrder:     order,
+		DefaultTimeMap: defaultMap,
+		Pages:          pages,
+		Trees:          make(map[string][]*logseq.Block, len(pages)),
+		TimeMapsPage:   timeMapsPage,
+		Location:       loc,
+	}
+
+	for _, p := range pages {
+		tree, err := client.Tree(ctx, p.Name)
+		if err != nil {
+			return resolve.Result{}, err
+		}
+		input.Trees[p.Name] = tree
+
+		if lowerTrim(p.Name) != tmName && !hasCandidate(tree) {
+			continue // page properties cannot matter for a page with no candidates
+		}
+		info, err := client.Page(ctx, p.Name)
+		if err != nil {
+			return resolve.Result{}, err
+		}
+		if info == nil {
+			continue // the page vanished between enumeration and the fetch
+		}
+		p.Properties = info.Properties
+	}
+
+	return resolve.Resolve(input)
+}
+
+// GraphSources is Graph over multiple graphs.
+func GraphSources(ctx context.Context, sources []Source, busy BusySource, cfg config.Config, now time.Time) (Outcome, error) {
+	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
+	if err != nil {
+		return Outcome{}, err
+	}
+	location, err := cfg.Scheduling.Location()
+	if err != nil {
+		return Outcome{}, err
+	}
+	result, err := ReadSources(ctx, sources, cfg.Logseq.PrimaryTimeMapsPage(), location)
+	if err != nil {
+		return Outcome{}, err
+	}
+
+	var inputBusy grid.Mask
+	var managed []calendar.Event
+	var busyReport calendar.BusyReport
+	if busy != nil {
+		g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
+		inputBusy, managed, busyReport, err = busy.Busy(ctx, g, now)
+		if err != nil {
+			return Outcome{}, err
+		}
+	}
+
+	schedule, err := planner.Plan(planner.Input{
+		Tasks:        result.Tasks,
+		TimeMaps:     result.TimeMaps,
+		Busy:         inputBusy,
+		Dispositions: nil, // forecast stays store-free by design
+		Now:          now,
+		Granularity:  granularity,
+		WindowDays:   cfg.Scheduling.WindowDays,
+		Location:     location,
+	})
+	if err != nil {
+		return Outcome{}, err
+	}
+
+	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed, Busy: busyReport}, nil
+}
+
 // hasCandidate reports whether any block in the tree is marked TODO or
 // DOING — exactly the gate halves (ADR 0004) a page can pass on via its
 // properties.
@@ -175,6 +316,17 @@ func TextMap(tasks []model.Task) map[string]string {
 	out := make(map[string]string, len(tasks))
 	for _, t := range tasks {
 		out[t.ID] = t.Text
+	}
+	return out
+}
+
+// GraphMap indexes Task graph by ID.
+func GraphMap(tasks []model.Task) map[string]string {
+	out := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		if _, ok := out[t.ID]; !ok {
+			out[t.ID] = t.Graph
+		}
 	}
 	return out
 }

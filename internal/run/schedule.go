@@ -75,6 +75,7 @@ type WriteOp struct {
 	Op         string // insert, patch, delete
 	EventID    string
 	TaskID     string
+	Graph      string // source graph slug; empty in single-graph mode
 	BlockIndex int
 	Start      time.Time
 	End        time.Time
@@ -180,11 +181,10 @@ func loadCalendarState(ctx context.Context, cal interface {
 	return cs, nil
 }
 
-// resolveAndPlan resolves the graph fresh and plans with the effective
-// dispositions for this run: stored plus newly reconciled, filtered by the
-// freshly resolved snapshots.
-func resolveAndPlan(ctx context.Context, lc logseq.Client, cs calendarState, cfg config.Config, now time.Time) (result resolve.Result, combined, effective []model.Disposition, schedule planner.Schedule, err error) {
-	result, err = Read(ctx, lc, cfg.Logseq.TimeMapsPage, cs.location)
+// resolveAndPlanSources resolves every graph fresh and plans with the
+// effective dispositions. Single-graph callers wrap it with one Source.
+func resolveAndPlanSources(ctx context.Context, sources []Source, cs calendarState, cfg config.Config, now time.Time) (result resolve.Result, combined, effective []model.Disposition, schedule planner.Schedule, err error) {
+	result, err = ReadSources(ctx, sources, cfg.Logseq.PrimaryTimeMapsPage(), cs.location)
 	if err != nil {
 		return resolve.Result{}, nil, nil, planner.Schedule{}, err
 	}
@@ -217,12 +217,18 @@ func resolveAndPlan(ctx context.Context, lc logseq.Client, cs calendarState, cfg
 // writes the calendar, then commits the store. Calendar writes precede the
 // store commit (ADR 0007); a crash between them is adopted on the next run.
 func Schedule(ctx context.Context, lc logseq.Client, cal Calendar, st Store, cfg config.Config, now time.Time) (ScheduleOutcome, error) {
+	sources := []Source{{Client: lc}}
+	return ScheduleSources(ctx, sources, cal, st, cfg, now)
+}
+
+// ScheduleSources is Schedule over multiple graphs.
+func ScheduleSources(ctx context.Context, sources []Source, cal Calendar, st Store, cfg config.Config, now time.Time) (ScheduleOutcome, error) {
 	cs, err := loadCalendarState(ctx, cal, st, cfg, now)
 	if err != nil {
 		return ScheduleOutcome{}, err
 	}
 
-	result, _, effective, schedule, err := resolveAndPlan(ctx, lc, cs, cfg, now)
+	result, _, effective, schedule, err := resolveAndPlanSources(ctx, sources, cs, cfg, now)
 	if err != nil {
 		return ScheduleOutcome{}, err
 	}
@@ -344,6 +350,7 @@ func sharedConflicts(managed []calendar.Event, shared grid.Mask, g *grid.Grid, n
 //     Task gone, invalid pointer, beyond-window) → delete.
 func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.Event, loc *time.Location) (writes []WriteOp, orphans []Orphan, bindings []store.Binding) {
 	textByTask := TextMap(tasks)
+	graphByTask := GraphMap(tasks)
 	planByKey := make(map[string]model.Block, len(schedule.Blocks))
 	for _, b := range schedule.Blocks {
 		planByKey[norm.BlockKey(b.TaskID, b.Index)] = b
@@ -371,7 +378,7 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 		if !ok {
 			writes = append(writes, WriteOp{
 				Op: "insert", EventID: reconcile.EventID(b.TaskID, b.Index),
-				TaskID: b.TaskID, BlockIndex: b.Index, Start: b.Start, End: b.End,
+				TaskID: b.TaskID, Graph: graphByTask[b.TaskID], BlockIndex: b.Index, Start: b.Start, End: b.End,
 				Summary: textByTask[b.TaskID],
 			})
 			continue
@@ -383,7 +390,7 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 			// busy; here honesty means repairing, not skipping.
 			writes = append(writes, WriteOp{
 				Op: "patch", EventID: e.ID,
-				TaskID: b.TaskID, BlockIndex: b.Index, Start: b.Start, End: b.End,
+				TaskID: b.TaskID, Graph: graphByTask[b.TaskID], BlockIndex: b.Index, Start: b.Start, End: b.End,
 				Summary: textByTask[b.TaskID],
 			})
 			continue
@@ -455,9 +462,13 @@ func applyWrites(ctx context.Context, cal Calendar, writes []WriteOp) error {
 func insertPayload(w WriteOp) calendar.Event {
 	e := eventTimes(w)
 	e.ID = w.EventID
-	e.ExtendedProperties = calendar.Extended{Private: map[string]string{
+	priv := map[string]string{
 		"lodo": "true", "task": w.TaskID, "block": strconv.Itoa(w.BlockIndex),
-	}}
+	}
+	if w.Graph != "" {
+		priv["graph"] = w.Graph
+	}
+	e.ExtendedProperties = calendar.Extended{Private: priv}
 	e.Reminders = &calendar.Reminders{UseDefault: true}
 	return e
 }
@@ -500,11 +511,17 @@ type CheckOutcome struct {
 // (without committing) so fresh moves shape the plan it judges, but nothing
 // is written anywhere.
 func Check(ctx context.Context, lc logseq.Client, cal CalendarReader, st Store, cfg config.Config, now time.Time) (CheckOutcome, error) {
+	sources := []Source{{Client: lc}}
+	return CheckSources(ctx, sources, cal, st, cfg, now)
+}
+
+// CheckSources is Check over multiple graphs.
+func CheckSources(ctx context.Context, sources []Source, cal CalendarReader, st Store, cfg config.Config, now time.Time) (CheckOutcome, error) {
 	cs, err := loadCalendarState(ctx, cal, st, cfg, now)
 	if err != nil {
 		return CheckOutcome{}, err
 	}
-	result, combined, effective, schedule, err := resolveAndPlan(ctx, lc, cs, cfg, now)
+	result, combined, effective, schedule, err := resolveAndPlanSources(ctx, sources, cs, cfg, now)
 	if err != nil {
 		return CheckOutcome{}, err
 	}

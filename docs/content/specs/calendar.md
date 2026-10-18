@@ -56,7 +56,9 @@ client. Create a **Desktop app** client in your own Cloud project:
 Ownership is recorded on the event itself, so it survives Lodo losing its local state:
 
 - Every Managed Event carries **`extendedProperties.private`**:
-  `lodo=true`, `task=<Logseq block UUID>`, `block=<index>`.
+  `lodo=true`, `task=<Logseq block UUID>`, `block=<index>`, and
+  `graph=<slug>` in multi-graph mode (absent for single-graph events
+  written before graphs).
 - Every Managed Event is inserted with a **client-supplied deterministic `id`**
   (base32hex, derived from the Task's block UUID and block index), so re-inserting is
   idempotent and cannot duplicate.
