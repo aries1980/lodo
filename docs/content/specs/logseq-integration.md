@@ -6,10 +6,15 @@ weight: 80
 
 > Status: **draft (v0.1).**
 
-## Direction: read-only
+## Direction: read-only, except one prompted bootstrap
 
-In v0.1 Lodo **only reads** the Logseq graph. It never writes Tasks, Blocks, or
-properties. The Schedule lives in SQLite and is projected onto the Calendar; the graph
+In v0.1 Lodo **only reads** the Logseq graph, with one exception: when the
+configured Time Maps page is missing, `check`/`forecast`/`schedule` offer to
+create it with the recommended defaults, on explicit confirmation
+(interactively, or up front with `-y`/`--yes`). See
+[ADR 0015](../ADRs/0015-bootstrap-missing-time-maps-on-confirmation.md).
+Lodo never writes Tasks, Blocks, or properties. The Schedule lives in SQLite
+and is projected onto the Calendar; the graph
 is the source of truth for *intent* and nothing else.
 
 This is deliberate. Logseq is a second writer to the same graph: writes made behind a

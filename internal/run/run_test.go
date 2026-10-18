@@ -80,6 +80,28 @@ func (c *stubClient) Tree(_ context.Context, name string) ([]*logseq.Block, erro
 	return tree, nil
 }
 
+// Writes are unsupported in the run package's stub: resolution never
+// writes, so any write call is a test setup error.
+func (c *stubClient) CreatePage(context.Context, string) (*logseq.Page, error) {
+	return nil, errors.New("stubClient: writes unsupported")
+}
+
+func (c *stubClient) AppendBlock(context.Context, string, string) (*logseq.Block, error) {
+	return nil, errors.New("stubClient: writes unsupported")
+}
+
+func (c *stubClient) UpdateBlock(context.Context, string, string) error {
+	return errors.New("stubClient: writes unsupported")
+}
+
+func (c *stubClient) InsertBlock(context.Context, string, string) (*logseq.Block, error) {
+	return nil, errors.New("stubClient: writes unsupported")
+}
+
+func (c *stubClient) SetBlockProperty(context.Context, string, string, any) error {
+	return errors.New("stubClient: writes unsupported")
+}
+
 type graphFixture struct {
 	pages []*logseq.Page
 	trees map[string][]*logseq.Block

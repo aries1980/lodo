@@ -33,6 +33,9 @@ type options struct {
 
 	// out receives command output; Run wires in the process stdout.
 	out io.Writer
+	// errOut receives prompts and operational notes; Run wires in the
+	// process stderr, so --json stdout stays machine-readable.
+	errOut io.Writer
 }
 
 // Run builds the command tree, executes it and returns the process exit code.
@@ -83,34 +86,42 @@ func newRootCmd() *cobra.Command {
 func newCheckCmd(opts *options) *cobra.Command {
 	var (
 		strict    bool
+		yes       bool
 		overrides configOverrides
 	)
 
 	cmd := &cobra.Command{
 		Use:   "check",
-		Short: "Validate the graph and local state; no side effects",
+		Short: "Validate the graph and local state; prompts before any write",
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
-			return runCheck(opts, overrides, strict)
+			opts.errOut = c.ErrOrStderr()
+			return runCheck(opts, overrides, strict, yes)
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, "treat reported problems as a non-zero exit")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer yes to prompts (create a missing Time Maps page without asking)")
 	addCredentialOverrideFlags(cmd, &overrides)
 
 	return cmd
 }
 
 func newForecastCmd(opts *options) *cobra.Command {
-	var overrides configOverrides
+	var (
+		yes       bool
+		overrides configOverrides
+	)
 
 	cmd := &cobra.Command{
 		Use:   "forecast",
 		Short: "Print the Schedule that would be written; a dry run",
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
-			return runForecast(opts, overrides, opts.verbose)
+			opts.errOut = c.ErrOrStderr()
+			return runForecast(opts, overrides, opts.verbose, yes)
 		},
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer yes to prompts (create a missing Time Maps page without asking)")
 	addSchedulingOverrideFlags(cmd, &overrides)
 	addCredentialOverrideFlags(cmd, &overrides)
 
@@ -121,6 +132,7 @@ func newScheduleCmd(opts *options) *cobra.Command {
 	var (
 		dryRun    bool
 		strict    bool
+		yes       bool
 		overrides configOverrides
 	)
 
@@ -129,11 +141,13 @@ func newScheduleCmd(opts *options) *cobra.Command {
 		Short: "Reconcile, compute the Schedule and write it to the Calendar",
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
-			return runSchedule(opts, overrides, dryRun, strict, opts.verbose)
+			opts.errOut = c.ErrOrStderr()
+			return runSchedule(opts, overrides, dryRun, strict, opts.verbose, yes)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "same as forecast")
 	cmd.Flags().BoolVar(&strict, "strict", false, "treat reported problems as a non-zero exit")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer yes to prompts (create a missing Time Maps page without asking)")
 	addSchedulingOverrideFlags(cmd, &overrides)
 	addCredentialOverrideFlags(cmd, &overrides)
 

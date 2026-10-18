@@ -52,6 +52,11 @@ type Block struct {
 // Client reads from one Logseq app instance over the HTTP API. One adapter
 // per graph flavour (logseq-integration.md); the file-based-graph adapter
 // below is the only one in v0.1.
+//
+// Reads are the whole loop, with one exception: the prompted bootstrap of
+// a missing Time Maps page (internal/cli), which creates the page and its
+// recommended defaults through the same adapter. Lodo never edits the
+// user's Tasks, Blocks, or properties.
 type Client interface {
 	// Pages lists every page in the graph.
 	Pages(ctx context.Context) ([]*Page, error)
@@ -61,6 +66,17 @@ type Client interface {
 	// Tree returns a page's block tree, top-level blocks with children
 	// nested; nil when the page is empty.
 	Tree(ctx context.Context, name string) ([]*Block, error)
+
+	// CreatePage creates a page with no blocks yet.
+	CreatePage(ctx context.Context, name string) (*Page, error)
+	// AppendBlock appends one top-level block to a page.
+	AppendBlock(ctx context.Context, page, content string) (*Block, error)
+	// UpdateBlock replaces a block's content in place.
+	UpdateBlock(ctx context.Context, uuid, content string) error
+	// InsertBlock inserts a block as the last child of its parent.
+	InsertBlock(ctx context.Context, parentUUID, content string) (*Block, error)
+	// SetBlockProperty sets one block property (e.g. default:: true).
+	SetBlockProperty(ctx context.Context, uuid, key string, value any) error
 }
 
 // Walk visits every block in depth-first, top-to-bottom display order —

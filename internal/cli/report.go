@@ -92,15 +92,29 @@ func httpClient(cfg config.Config) *http.Client {
 	return &http.Client{Timeout: logseq.DefaultTimeout, Transport: cloned}
 }
 
+// errWriter is where prompts and operational notes go: stderr when the
+// command wired it, stdout as a fallback, so --json stdout stays
+// machine-readable.
+func errWriter(opts *options) io.Writer {
+	if opts.errOut != nil {
+		return opts.errOut
+	}
+	return opts.out
+}
+
 // runCheck implements lodo check: the graph report plus the state section
 // (stood-down Blocks with their Task, orphaned event ids). When the calendar
 // is configured it reads real busy time — so infeasibility is judged
 // against real availability — and lists orphaned events; without calendar
 // credentials it falls back to the graph plus stored stood-down (the M3
-// behaviour), so a fresh checkout still checks. It writes nowhere.
-func runCheck(opts *options, ov configOverrides, strict bool) error {
+// behaviour), so a fresh checkout still checks. It writes nowhere, except
+// for a missing Time Maps page the user confirms (or pre-answers with -y).
+func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 	cfg, client, creds, err := loadGraph(opts, ov)
 	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	if _, err := ensureTimeMapsPage(context.Background(), client, cfg.Logseq.TimeMapsPage, yes, errWriter(opts)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	st, err := openStore()
@@ -228,10 +242,14 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, clie
 // that would be written; a dry run with no writes. The calendar read is a
 // hard part: resolve (M3), busy time (M4), then the planner — a bad or
 // unreachable calendar is an operational error (exit 1), so the forecast
-// never prints against a silently free calendar.
-func runForecast(opts *options, ov configOverrides, verbose bool) error {
+// never prints against a silently free calendar. The one write it may make
+// is a missing Time Maps page the user confirms (or pre-answers with -y).
+func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 	cfg, client, creds, err := loadGraph(opts, ov)
 	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	if _, err := ensureTimeMapsPage(context.Background(), client, cfg.Logseq.TimeMapsPage, yes, errWriter(opts)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 

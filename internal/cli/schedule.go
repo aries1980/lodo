@@ -14,13 +14,17 @@ import (
 
 // runSchedule implements lodo schedule: reconcile first, compute, write the
 // calendar before committing the store (ADR 0007). --dry-run is forecast:
-// no writes, no store commit.
-func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose bool) error {
+// no writes, no store commit. Before any of that, a missing Time Maps page
+// is offered with the recommended defaults on confirmation (or -y).
+func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes bool) error {
 	if dryRun {
-		return runForecast(opts, ov, verbose)
+		return runForecast(opts, ov, verbose, yes)
 	}
 	cfg, client, creds, err := loadGraph(opts, ov)
 	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	if _, err := ensureTimeMapsPage(context.Background(), client, cfg.Logseq.TimeMapsPage, yes, errWriter(opts)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	cal, err := calendarFull(context.Background(), creds, cfg)

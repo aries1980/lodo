@@ -201,3 +201,46 @@ func canonTree(tree []*Block) {
 		}
 	}
 }
+
+// CreatePage creates a page with no blocks yet (logseq.Editor.create_page).
+func (c *apiClient) CreatePage(ctx context.Context, name string) (*Page, error) {
+	var p *Page
+	if err := c.call(ctx, "logseq.Editor.create_page",
+		[]any{name, nil, map[string]any{"redirect": false, "format": "markdown"}}, &p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// AppendBlock appends one top-level block to a page
+// (logseq.Editor.append_block_in_page) and returns it.
+func (c *apiClient) AppendBlock(ctx context.Context, page, content string) (*Block, error) {
+	var b *Block
+	if err := c.call(ctx, "logseq.Editor.append_block_in_page", []any{page, content, nil}, &b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// UpdateBlock replaces a block's content in place
+// (logseq.Editor.update_block); the app answers an empty object.
+func (c *apiClient) UpdateBlock(ctx context.Context, uuid, content string) error {
+	return c.call(ctx, "logseq.Editor.update_block", []any{uuid, content, nil}, nil)
+}
+
+// InsertBlock inserts a block as the last child of its parent
+// (logseq.Editor.insert_block) and returns it.
+func (c *apiClient) InsertBlock(ctx context.Context, parentUUID, content string) (*Block, error) {
+	var b *Block
+	if err := c.call(ctx, "logseq.Editor.insert_block",
+		[]any{parentUUID, content, map[string]any{"sibling": false}}, &b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// SetBlockProperty sets one block property, e.g. default:: true
+// (logseq.Editor.upsert_block_property).
+func (c *apiClient) SetBlockProperty(ctx context.Context, uuid, key string, value any) error {
+	return c.call(ctx, "logseq.Editor.upsert_block_property", []any{uuid, key, value, nil}, nil)
+}

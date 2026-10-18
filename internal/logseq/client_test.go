@@ -324,3 +324,81 @@ func TestInsecureTransportSkipsVerify(t *testing.T) {
 		t.Fatalf("pages = %+v, want the one stub page", pages)
 	}
 }
+
+func TestWriteMethodsShapeAndDecode(t *testing.T) {
+	client, calls := newStubApp(t, func(c stubCall) (string, int) {
+		switch c.Method {
+		case "logseq.Editor.create_page":
+			return `{"name":"time maps","originalName":"Time Maps","uuid":"tm-new"}`, http.StatusOK
+		case "logseq.Editor.append_block_in_page":
+			return `{"uuid":"b-1","content":"Errands"}`, http.StatusOK
+		case "logseq.Editor.update_block":
+			return `{}`, http.StatusOK
+		case "logseq.Editor.insert_block":
+			return `{"uuid":"w-1","content":"Sat 10:00-13:00"}`, http.StatusOK
+		case "logseq.Editor.upsert_block_property":
+			return `{}`, http.StatusOK
+		default:
+			return "unexpected method", http.StatusNotFound
+		}
+	})
+	ctx := context.Background()
+
+	p, err := client.CreatePage(ctx, "Time Maps")
+	if err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	if p == nil || p.Name != "time maps" {
+		t.Fatalf("page = %+v, want the stub page", p)
+	}
+
+	b, err := client.AppendBlock(ctx, "Time Maps", "Errands")
+	if err != nil {
+		t.Fatalf("AppendBlock: %v", err)
+	}
+	if b == nil || b.UUID != "b-1" || b.Content != "Errands" {
+		t.Fatalf("block = %+v, want the stub block", b)
+	}
+
+	if err := client.UpdateBlock(ctx, "b-0", "Deep Work"); err != nil {
+		t.Fatalf("UpdateBlock: %v", err)
+	}
+
+	w, err := client.InsertBlock(ctx, "b-1", "Sat 10:00-13:00")
+	if err != nil {
+		t.Fatalf("InsertBlock: %v", err)
+	}
+	if w == nil || w.UUID != "w-1" {
+		t.Fatalf("window = %+v, want the stub block", w)
+	}
+
+	if err := client.SetBlockProperty(ctx, "b-0", "default", true); err != nil {
+		t.Fatalf("SetBlockProperty: %v", err)
+	}
+
+	wantMethods := []string{
+		"logseq.Editor.create_page",
+		"logseq.Editor.append_block_in_page",
+		"logseq.Editor.update_block",
+		"logseq.Editor.insert_block",
+		"logseq.Editor.upsert_block_property",
+	}
+	if len(*calls) != len(wantMethods) {
+		t.Fatalf("calls = %+v, want one of each write method", *calls)
+	}
+	for i, want := range wantMethods {
+		if (*calls)[i].Method != want {
+			t.Fatalf("call %d = %q, want %q", i, (*calls)[i].Method, want)
+		}
+	}
+	if got := (*calls)[0].Args[0]; got != "Time Maps" {
+		t.Fatalf("create_page name = %v, want Time Maps", got)
+	}
+	if got := (*calls)[3].Args[2]; !cmp.Equal(got, map[string]any{"sibling": false}) {
+		t.Fatalf("insert_block options = %v, want last-child", got)
+	}
+	upsert := (*calls)[4].Args
+	if upsert[0] != "b-0" || upsert[1] != "default" || upsert[2] != true {
+		t.Fatalf("upsert args = %v, want [b-0 default true]", upsert)
+	}
+}

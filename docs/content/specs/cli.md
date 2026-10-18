@@ -13,8 +13,8 @@ scheduler: cron (or a manual run) calling `lodo schedule` is the intended deploy
 
 | Command | Side effects | Purpose |
 | --- | --- | --- |
-| `lodo check` | none | Validate the graph and state: TODOs missing `duration::`, unparseable or unknown properties, unknown `time-map::` slugs, `unknown-dependency` / `dependency-cycle`, infeasible Tasks (`blocked by …`, cycles, pin violations), stood-down Blocks, orphaned event IDs. |
-| `lodo forecast` | none | Dry run: compute and print the Schedule that *would* be written, with shortfall reasons including dependency blocks. |
+| `lodo check` | none alone; creates the Time Maps page only on confirmation | Validate the graph and state: TODOs missing `duration::`, unparseable or unknown properties, unknown `time-map::` slugs, `unknown-dependency` / `dependency-cycle`, infeasible Tasks (`blocked by …`, cycles, pin violations), stood-down Blocks, orphaned event IDs. |
+| `lodo forecast` | none alone; creates the Time Maps page only on confirmation | Dry run: compute and print the Schedule that *would* be written, with shortfall reasons including dependency blocks. |
 | `lodo schedule` | calendar + SQLite | The workhorse. Reconciles the calendar, computes, and creates/updates/removes Managed Events. |
 | `lodo refresh` | SQLite only | Pull-only: read the calendar and fold the user's moves and deletes into local state, without recomputing. |
 | `lodo auth google` | credentials | One-time OAuth; stores the refresh token. |
@@ -49,6 +49,20 @@ use of *Schedule* as the noun, so the name is kept rather than replaced with
 | `--google-refresh-token TOKEN` | `auth google` | Store this grant directly without running the browser flow. |
 | `--strict` | `check`, `schedule` | Treat reported problems as a non-zero exit. |
 | `--verbose` | all | Explain placement decisions. |
+| `--yes`, `-y` | `check`, `forecast`, `schedule` | Answer yes to prompts: create a missing Time Maps page without asking. Not persisted. |
+
+### Missing Time Maps page
+
+`check`, `forecast`, and `schedule` need the Time Maps page (`logseq.time_maps_page`,
+default `Time Maps`). When it is missing, Lodo offers to create it with the
+recommended defaults — a `Deep Work` map marked `default:: true`, plus `Errands`
+and `Weekends` windows (see [`time-maps.md`](./time-maps.md)) — which the user
+then edits in Logseq. Anything but an explicit `y`/`yes` declines (including
+end-of-input, so a non-interactive run without `-y` never hangs), and the run
+continues without the page, reporting `missing-time-maps-page` as before.
+This confirmation is the one graph write Lodo ever makes
+(see [ADR 0015](../ADRs/0015-bootstrap-missing-time-maps-on-confirmation.md));
+`check` otherwise writes nowhere.
 
 ## Exit codes
 

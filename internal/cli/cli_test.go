@@ -308,3 +308,108 @@ func TestAuthGoogleHelpNamesTheFlow(t *testing.T) {
 		}
 	}
 }
+
+// stubAppMissingTimeMaps is the graph without the configured page: the stub
+// records the bootstrap writes and serves the created page on later reads,
+// so one run proves the whole offer-create-continue loop.
+func stubAppMissingTimeMaps(t *testing.T, writes *[]string) *httptest.Server {
+	t.Helper()
+	created := false
+	dayTree := []*logseq.Block{
+		{
+			UUID:    "t-task-uuid",
+			Content: "TODO Write the milestone note",
+			Marker:  "TODO",
+			Properties: map[string]any{
+				"duration": "30m",
+			},
+		},
+	}
+	tmTree := []*logseq.Block{
+		{
+			UUID:       "map-default-uuid",
+			Content:    "Deep Work",
+			Properties: map[string]any{"default": true},
+			Children:   []*logseq.Block{{UUID: "w-uuid", Content: "Mon-Fri 09:00-12:00"}},
+		},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		var req struct {
+			Method string `json:"method"`
+			Args   []any  `json:"args"`
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("bad stub request: %v", err)
+		}
+		var out string
+		switch req.Method {
+		case "logseq.Editor.get_all_pages":
+			if created {
+				out = `[{"name":"2026-10-15","uuid":"d-uuid"},{"name":"Time Maps","uuid":"tm-uuid"}]`
+			} else {
+				out = `[{"name":"2026-10-15","uuid":"d-uuid"}]`
+			}
+		case "logseq.Editor.get_page_blocks_tree":
+			if req.Args[0] == "Time Maps" && created {
+				out = marshal(t, tmTree)
+			} else {
+				out = marshal(t, dayTree)
+			}
+		case "logseq.Editor.get_page":
+			if req.Args[0] == "Time Maps" && !created {
+				out = `null`
+			} else {
+				out = `{"name":"` + req.Args[0].(string) + `","uuid":"x-uuid","properties":null}`
+			}
+		case "logseq.Editor.create_page":
+			*writes = append(*writes, "create "+req.Args[0].(string))
+			created = true
+			out = `{"name":"time maps","uuid":"tm-uuid"}`
+		case "logseq.Editor.append_block_in_page":
+			*writes = append(*writes, "append "+req.Args[0].(string))
+			out = `{"uuid":"b-new","content":"x"}`
+		case "logseq.Editor.update_block":
+			*writes = append(*writes, "update")
+			out = `{}`
+		case "logseq.Editor.insert_block":
+			*writes = append(*writes, "insert")
+			out = `{"uuid":"w-new","content":"x"}`
+		case "logseq.Editor.upsert_block_property":
+			*writes = append(*writes, "prop")
+			out = `{}`
+		default:
+			http.Error(w, "unexpected method", http.StatusNotFound)
+			return
+		}
+		_, _ = io.WriteString(w, out)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestCheckYesCreatesMissingTimeMapsPage(t *testing.T) {
+	var writes []string
+	conf, cred := testSetup(t, stubAppMissingTimeMaps(t, &writes))
+
+	code, out, errOut := runCLI(t, conf, cred, "check", "--yes")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errOut)
+	}
+	if len(writes) == 0 || writes[0] != "create Time Maps" {
+		t.Fatalf("writes = %v, want the page created first", writes)
+	}
+	if strings.Contains(out, "missing-time-maps-page") {
+		t.Fatalf("the created page must resolve the issue:\n%s", out)
+	}
+	if !strings.Contains(errOut, "Created Time Maps page") {
+		t.Fatalf("stderr must note the bootstrap: %q", errOut)
+	}
+}
