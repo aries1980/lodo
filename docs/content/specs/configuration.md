@@ -121,6 +121,11 @@ flags always overwrite whatever was set before. `lodo auth google
 --google-refresh-token` with the client pair stores the grant directly
 without running the browser flow.
 
+{{< hint type="warning" title="Secrets on the command line" >}}
+Flags suit one-off runs; they can surface in shell history or `ps`,
+so environment or files remain the default for routine use.
+{{< /hint >}}
+
 ## Overrides
 
 Settings and secrets with a CLI twin may be overridden for a single run (e.g.
