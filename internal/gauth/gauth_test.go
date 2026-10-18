@@ -609,6 +609,42 @@ func TestPersistMergesAndKeeps0600(t *testing.T) {
 	}
 }
 
+func TestPersistCreatesFileFromEnvClient(t *testing.T) {
+	t.Setenv("LODO_LOGSEQ_TOKEN", "env-logseq-token")
+	t.Setenv("LODO_GOOGLE_CLIENT_ID", testClientID)
+	t.Setenv("LODO_GOOGLE_CLIENT_SECRET", testClientSecret)
+	t.Setenv("LODO_GOOGLE_REFRESH_TOKEN", "")
+
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	if err := gauth.Persist(path, gauth.Result{RefreshToken: "1//env-refresh"}); err != nil {
+		t.Fatalf("Persist from env: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Logseq struct {
+			Token string `json:"token"`
+		} `json:"logseq"`
+		Google struct {
+			RefreshToken string `json:"refresh_token"`
+			ClientID     string `json:"client_id"`
+			ClientSecret string `json:"client_secret"`
+		} `json:"google"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("persisted file is not JSON: %v (%s)", err, raw)
+	}
+	if got.Google.RefreshToken != "1//env-refresh" ||
+		got.Google.ClientID != testClientID || got.Google.ClientSecret != testClientSecret {
+		t.Fatalf("google section = %+v, want env pair plus stored refresh", got.Google)
+	}
+	if got.Logseq.Token != "" {
+		t.Fatalf("logseq token = %q, want empty: an env-only token must not be copied into the file", got.Logseq.Token)
+	}
+}
+
 func TestTokenSourceRefreshesTransparently(t *testing.T) {
 	s := &tokenExchanges{}
 	endpoint := s.endpoint(t)

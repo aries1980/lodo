@@ -37,12 +37,13 @@ func runRefresh(opts *options, ov configOverrides) error {
 	if err != nil {
 		return &exitError{code: codeError, err: fmt.Errorf("locate the credentials file: %w", err)}
 	}
-	// Refresh never touches Logseq: ReadCredentials (0600) is enough, and
-	// no logseq.token is demanded.
+	// Refresh never touches Logseq: ReadCredentials (file, environment, then
+	// CLI flags) is enough, and no logseq.token is demanded.
 	creds, err := config.ReadCredentials(credPath)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
+	creds = creds.WithCredentialOverrides(ov.credentialOverrides())
 	cal, err := calendarFull(context.Background(), creds, cfg)
 	if err != nil {
 		return &exitError{code: codeError, err: err}

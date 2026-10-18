@@ -202,3 +202,112 @@ func TestDefaultPathsFallBackToHome(t *testing.T) {
 		t.Fatalf("credentials path = %q, want ~/.local/state/lodo/credentials.json", credPath)
 	}
 }
+
+func clearCredEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("LODO_LOGSEQ_TOKEN", "")
+	t.Setenv("LODO_GOOGLE_CLIENT_ID", "")
+	t.Setenv("LODO_GOOGLE_CLIENT_SECRET", "")
+	t.Setenv("LODO_GOOGLE_REFRESH_TOKEN", "")
+}
+
+func TestReadCredentialsEnvOverlayWinsPerField(t *testing.T) {
+	clearCredEnv(t)
+	path := credTestPath(t)
+	writeCreds(t, path, 0o600, `{"logseq":{"token":"file-token"},"google":{"client_id":"file-id","client_secret":"file-secret","refresh_token":"file-refresh"}}`)
+
+	t.Setenv("LODO_LOGSEQ_TOKEN", " env-token ")
+	t.Setenv("LODO_GOOGLE_CLIENT_ID", "env-id")
+	t.Setenv("LODO_GOOGLE_REFRESH_TOKEN", "env-refresh")
+
+	c, err := config.ReadCredentials(path)
+	if err != nil {
+		t.Fatalf("ReadCredentials: %v", err)
+	}
+	if c.Logseq.Token != "env-token" {
+		t.Fatalf("logseq token = %q, want trimmed env value", c.Logseq.Token)
+	}
+	if c.Google.ClientID != "env-id" {
+		t.Fatalf("client_id = %q, want env", c.Google.ClientID)
+	}
+	if c.Google.ClientSecret != "file-secret" {
+		t.Fatalf("client_secret = %q, want file value kept when env empty", c.Google.ClientSecret)
+	}
+	if c.Google.RefreshToken != "env-refresh" {
+		t.Fatalf("refresh_token = %q, want env", c.Google.RefreshToken)
+	}
+}
+
+func TestReadCredentialsMissingFileWithEnv(t *testing.T) {
+	clearCredEnv(t)
+	missing := filepath.Join(t.TempDir(), "absent.json")
+	t.Setenv("LODO_LOGSEQ_TOKEN", "env-token")
+	t.Setenv("LODO_GOOGLE_CLIENT_ID", "env-id")
+	t.Setenv("LODO_GOOGLE_CLIENT_SECRET", "env-secret")
+
+	c, err := config.ReadCredentials(missing)
+	if err != nil {
+		t.Fatalf("ReadCredentials with env: %v", err)
+	}
+	if c.Logseq.Token != "env-token" {
+		t.Fatalf("logseq token = %q, want env", c.Logseq.Token)
+	}
+	if c.Google == nil || c.Google.ClientID != "env-id" || c.Google.ClientSecret != "env-secret" {
+		t.Fatalf("google = %+v, want env pair", c.Google)
+	}
+
+	loaded, err := config.LoadCredentials(missing)
+	if err != nil {
+		t.Fatalf("LoadCredentials with env: %v", err)
+	}
+	if loaded.Logseq.Token != "env-token" {
+		t.Fatalf("loaded token = %q, want env", loaded.Logseq.Token)
+	}
+}
+
+func TestReadCredentialsMissingFileWithoutEnvStillRefuses(t *testing.T) {
+	clearCredEnv(t)
+	missing := filepath.Join(t.TempDir(), "absent.json")
+	if _, err := config.ReadCredentials(missing); err == nil {
+		t.Fatal("ReadCredentials succeeded with no file and no env")
+	}
+}
+
+func TestWithCredentialOverridesFlagWinsOverEnvAndFile(t *testing.T) {
+	clearCredEnv(t)
+	path := credTestPath(t)
+	writeCreds(t, path, 0o600, `{"logseq":{"token":"file-token"},"google":{"client_id":"file-id","client_secret":"file-secret","refresh_token":"file-refresh"}}`)
+
+	t.Setenv("LODO_LOGSEQ_TOKEN", "env-token")
+	t.Setenv("LODO_GOOGLE_CLIENT_ID", "env-id")
+	t.Setenv("LODO_GOOGLE_CLIENT_SECRET", "env-secret")
+	t.Setenv("LODO_GOOGLE_REFRESH_TOKEN", "env-refresh")
+
+	c, err := config.ReadCredentials(path)
+	if err != nil {
+		t.Fatalf("ReadCredentials: %v", err)
+	}
+	got := c.WithCredentialOverrides(config.CredentialOverrides{
+		LogseqToken:        " flag-token ",
+		GoogleClientID:     "flag-id",
+		GoogleRefreshToken: "flag-refresh",
+	})
+	if got.Logseq.Token != "flag-token" {
+		t.Fatalf("logseq token = %q, want trimmed flag", got.Logseq.Token)
+	}
+	if got.Google.ClientID != "flag-id" {
+		t.Fatalf("client_id = %q, want flag", got.Google.ClientID)
+	}
+	if got.Google.ClientSecret != "env-secret" {
+		t.Fatalf("client_secret = %q, want env kept when flag empty", got.Google.ClientSecret)
+	}
+	if got.Google.RefreshToken != "flag-refresh" {
+		t.Fatalf("refresh_token = %q, want flag", got.Google.RefreshToken)
+	}
+
+	// Empty overrides keep file+env.
+	kept := c.WithCredentialOverrides(config.CredentialOverrides{})
+	if kept.Logseq.Token != "env-token" || kept.Google.ClientID != "env-id" {
+		t.Fatalf("empty overrides changed credentials: %+v", kept)
+	}
+}

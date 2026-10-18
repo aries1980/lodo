@@ -43,6 +43,10 @@ use of *Schedule* as the noun, so the name is kept rather than replaced with
 | `--no-launch-browser` | `auth google` | Headless machines: finish the grant on another device, paste the redirect back. |
 | `--window-days N`, `--timezone TZ`, … | `schedule`, `forecast` | One-run overrides of config. Not persisted. |
 | `--read-calendar ID` | `schedule`, `forecast`, `refresh` | Repeatable: replaces `calendar.read_calendars` for one run when given at least once. Not persisted. |
+| `--logseq-token TOKEN` | `check`, `schedule`, `forecast`, `refresh` | One-run Logseq token (overrides file and `LODO_LOGSEQ_TOKEN`). Not persisted. |
+| `--google-client-id ID`, `--google-client-secret SECRET`, `--google-refresh-token TOKEN` | `check`, `schedule`, `forecast`, `refresh` | One-run Google credentials (override file and `LODO_GOOGLE_*`). Not persisted. |
+| `--google-client-id ID`, `--google-client-secret SECRET` | `auth google` | Client pair for the flow (overrides file and env). |
+| `--google-refresh-token TOKEN` | `auth google` | Store this grant directly without running the browser flow. |
 | `--strict` | `check`, `schedule` | Treat reported problems as a non-zero exit. |
 | `--verbose` | all | Explain placement decisions. |
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/gauth"
@@ -23,23 +24,38 @@ var stdin = func() io.Reader { return os.Stdin }
 // exchanges against — Google's in production, an httptest fake in tests.
 var googleEndpoint = gauth.Endpoint
 
-// runAuthGoogle implements `lodo auth google`: read the credentials file
-// (0600), demand the pasted client pair, run the loopback flow, and store
-// the refresh token through the config package's write seam. Missing
-// pieces exit 1 with the hint; the flow never asks a question of a user
-// who cannot answer it.
-func runAuthGoogle(opts *options, noBrowser bool) error {
+// runAuthGoogle implements `lodo auth google`: read the credentials (file,
+// environment, then CLI flags), demand the client pair, and either store a
+// flag-supplied refresh token directly or run the loopback flow to mint one.
+// Missing pieces exit 1 with the hint; the flow never asks a question of a
+// user who cannot answer it.
+func runAuthGoogle(opts *options, ov configOverrides, noBrowser bool) error {
 	path, err := config.DefaultCredentialsPath()
 	if err != nil {
 		return &exitError{code: codeError, err: fmt.Errorf("locate the credentials file: %w", err)}
 	}
 	creds, err := config.ReadCredentials(path)
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		// A missing file is fine when the flags carry the pair: start from
+		// the environment alone so --google-client-id/secret can provision
+		// a fresh machine without a file yet.
+		if msg := err.Error(); !containsNotFoundMsg(msg) {
+			return &exitError{code: codeError, err: err}
+		}
+		creds = config.CredentialsFromEnv()
 	}
+	creds = creds.WithCredentialOverrides(ov.credentialOverrides())
 	client, err := creds.GoogleSetup()
 	if err != nil {
 		return &exitError{code: codeError, err: err}
+	}
+
+	// A flag-supplied refresh token stores directly: no browser round-trip.
+	if strings.TrimSpace(ov.googleRefreshToken) != "" {
+		if err := gauth.PersistWithClient(path, client, gauth.Result{RefreshToken: strings.TrimSpace(ov.googleRefreshToken)}); err != nil {
+			return &exitError{code: codeError, err: err}
+		}
+		return printStored(opts, path)
 	}
 
 	res, err := gauth.Run(context.Background(), gauth.Inputs{
@@ -52,9 +68,13 @@ func runAuthGoogle(opts *options, noBrowser bool) error {
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if err := gauth.Persist(path, res); err != nil {
+	if err := gauth.PersistWithClient(path, client, res); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
+	return printStored(opts, path)
+}
+
+func printStored(opts *options, path string) error {
 	if opts.json {
 		if err := printJSON(opts.out, struct {
 			Stored string `json:"stored"`
@@ -65,6 +85,13 @@ func runAuthGoogle(opts *options, noBrowser bool) error {
 	}
 	_, _ = fmt.Fprintf(opts.out, "Google authorization stored in %s.\n", path)
 	return nil
+}
+
+// containsNotFoundMsg reports the missing-file refusal so a flag-provisioned
+// pair can start from the environment when no file exists yet. Any other
+// read error (permissions, malformed JSON) still refuses.
+func containsNotFoundMsg(msg string) bool {
+	return strings.Contains(msg, ": not found (default ") || strings.Contains(msg, ": not found")
 }
 
 // raise surfaces the authorization URL before the flow waits behind it. In

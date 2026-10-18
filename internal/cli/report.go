@@ -23,9 +23,9 @@ import (
 )
 
 // loadGraph assembles the read side: config (with resolved overrides),
-// credentials (strict 0600), and the Logseq HTTP API client. The
-// credentials travel too, for the commands that read past the Logseq side
-// of their file (forecast's calendar).
+// credentials (file, environment, then CLI flags), and the Logseq HTTP API
+// client. The credentials travel too, for the commands that read past the
+// Logseq side of their file (forecast's calendar).
 func loadGraph(opts *options, ov configOverrides) (config.Config, logseq.Client, config.Credentials, error) {
 	path := opts.config
 	if path == "" {
@@ -52,9 +52,13 @@ func loadGraph(opts *options, ov configOverrides) (config.Config, logseq.Client,
 	if err != nil {
 		return config.Config{}, nil, config.Credentials{}, fmt.Errorf("locate the credentials file: %w", err)
 	}
-	creds, err := config.LoadCredentials(credPath)
+	creds, err := config.ReadCredentials(credPath)
 	if err != nil {
 		return config.Config{}, nil, config.Credentials{}, err
+	}
+	creds = creds.WithCredentialOverrides(ov.credentialOverrides())
+	if creds.Logseq.Token == "" {
+		return config.Config{}, nil, config.Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or pass --logseq-token", credPath, config.EnvLogseqToken)
 	}
 
 	client, err := logseq.NewClient(cfg.Logseq.APIURL, creds.Logseq.Token, httpClient(cfg))
@@ -87,8 +91,8 @@ func httpClient(cfg config.Config) *http.Client {
 // against real availability — and lists orphaned events; without calendar
 // credentials it falls back to the graph plus stored stood-down (the M3
 // behaviour), so a fresh checkout still checks. It writes nowhere.
-func runCheck(opts *options, strict bool) error {
-	cfg, client, creds, err := loadGraph(opts, configOverrides{})
+func runCheck(opts *options, ov configOverrides, strict bool) error {
+	cfg, client, creds, err := loadGraph(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}

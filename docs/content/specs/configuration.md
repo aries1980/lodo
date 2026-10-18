@@ -85,12 +85,49 @@ calendar:
 Never committed, never synced, never written into the graph. The OAuth flow is
 device/loopback-based and writes the refresh token here on first run.
 
+Every secret is also passable as an environment variable, which wins per field
+over the file. A missing file plus a complete environment runs without a file,
+which is what containers and CI use:
+
+| Environment variable | File field it replaces |
+| --- | --- |
+| `LODO_LOGSEQ_TOKEN` | `logseq.token` |
+| `LODO_GOOGLE_CLIENT_ID` | `google.client_id` |
+| `LODO_GOOGLE_CLIENT_SECRET` | `google.client_secret` |
+| `LODO_GOOGLE_REFRESH_TOKEN` | `google.refresh_token` |
+
+`lodo auth google` accepts the client pair from the environment and still
+stores the granted refresh token in the file; an environment-only Logseq token
+is never copied into the file.
+
+## Precedence
+
+Lowest to highest, per field, for one run. Nothing but the files persists:
+
+1. Files: `config.yaml` and `credentials.json` are the base.
+2. Environment: `LODO_*` variables win per field over `credentials.json`.
+3. CLI flags win over everything before them (file and environment):
+
+   | CLI flag | Replaces |
+   | --- | --- |
+   | `--logseq-token` | `LODO_LOGSEQ_TOKEN` / `logseq.token` |
+   | `--google-client-id` | `LODO_GOOGLE_CLIENT_ID` / `google.client_id` |
+   | `--google-client-secret` | `LODO_GOOGLE_CLIENT_SECRET` / `google.client_secret` |
+   | `--google-refresh-token` | `LODO_GOOGLE_REFRESH_TOKEN` / `google.refresh_token` |
+   | `--window-days`, `--timezone`, `--read-calendar` | `scheduling.*`, `calendar.read_calendars` |
+
+In other words: files first, environment overrides the files, command-line
+flags always overwrite whatever was set before. `lodo auth google
+--google-refresh-token` with the client pair stores the grant directly
+without running the browser flow.
+
 ## Overrides
 
-Any setting may be overridden for a single run by a CLI flag (e.g.
-`--window-days 30`, `--timezone America/New_York`). Overrides are not persisted.
+Settings and secrets with a CLI twin may be overridden for a single run (e.g.
+`--window-days 30`, `--logseq-token …`). Overrides are not persisted.
 The repeatable `--read-calendar` flag replaces the `read_calendars` list for one
-run when given at least once.
+run when given at least once. See Precedence above for how files, environment,
+and flags combine.
 
 ## What is *not* here
 

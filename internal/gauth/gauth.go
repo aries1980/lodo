@@ -106,7 +106,7 @@ func Run(ctx context.Context, in Inputs) (Result, error) {
 	}
 	if in.Client.ClientID == "" || in.Client.ClientSecret == "" {
 		return Result{}, fmt.Errorf(
-			"google auth: client_id and client_secret are required (paste them into credentials.json; see `lodo auth google --help`)")
+			"google auth: client_id and client_secret are required (paste them into credentials.json or set LODO_GOOGLE_CLIENT_ID and LODO_GOOGLE_CLIENT_SECRET; see `lodo auth google --help`)")
 	}
 	if in.NoBrowser && in.Lines == nil {
 		return Result{}, fmt.Errorf("google auth: paste mode needs somewhere to read the pasted redirect from")
@@ -329,9 +329,12 @@ func pasted(line, state string) (code string, usable bool, err error) {
 }
 
 // Persist merges res into the credentials file at path: the google section
-// keeps the client pair that was pasted in and gains the refresh token,
-// while the logseq section passes through. The file's read and write
-// belong to the config package (0600, parent 0700); gauth owns none.
+// keeps the client pair (from the file or LODO_GOOGLE_CLIENT_ID/SECRET)
+// and gains the refresh token, while the file's logseq section passes
+// through. An environment-only Logseq token is never copied into the file.
+// The file's read and write belong to the config package (0600, parent
+// 0700); gauth owns none. A missing file is created, so a client pair
+// supplied purely by environment still ends up stored beside its grant.
 func Persist(path string, res Result) error {
 	if res.RefreshToken == "" {
 		return fmt.Errorf("google auth: no refresh token to persist")
@@ -340,12 +343,46 @@ func Persist(path string, res Result) error {
 	if err != nil {
 		return err
 	}
-	g := &config.GoogleCredentials{RefreshToken: res.RefreshToken}
-	if c.Google != nil {
-		g.ClientID, g.ClientSecret = c.Google.ClientID, c.Google.ClientSecret
+	client, err := c.GoogleSetup()
+	if err != nil {
+		return err
 	}
-	c.Google = g
-	return config.SaveCredentials(path, c)
+	return PersistWithClient(path, client, res)
+}
+
+// PersistWithClient stores res beside an explicitly resolved client pair
+// (file, environment, then CLI flags): the file's logseq section passes
+// through and a missing file is created. Use it when the caller already
+// resolved the pair, e.g. `lodo auth google` with flag overrides or a
+// flag-supplied refresh token that skips the browser flow.
+func PersistWithClient(path string, client config.GoogleCredentials, res Result) error {
+	if res.RefreshToken == "" {
+		return fmt.Errorf("google auth: no refresh token to persist")
+	}
+	if client.ClientID == "" || client.ClientSecret == "" {
+		return fmt.Errorf(
+			"google auth: client_id and client_secret are required (paste them into credentials.json or set %s and %s; see `lodo auth google --help`)", config.EnvGoogleClientID, config.EnvGoogleClientSecret)
+	}
+	fileCreds, err := config.ReadFileCredentials(path)
+	if err != nil {
+		if msg := err.Error(); !containsNotFound(msg) {
+			return err
+		}
+		fileCreds = config.Credentials{}
+	}
+	fileCreds.Google = &config.GoogleCredentials{
+		ClientID:     client.ClientID,
+		ClientSecret: client.ClientSecret,
+		RefreshToken: res.RefreshToken,
+	}
+	return config.SaveCredentials(path, fileCreds)
+}
+
+// containsNotFound reports the missing-file refusal from ReadFileCredentials
+// without importing os into gauth: a missing file is creatable, any other
+// read error (permissions, malformed JSON) still refuses.
+func containsNotFound(msg string) bool {
+	return strings.Contains(msg, ": not found (default ") || strings.Contains(msg, ": not found")
 }
 
 // TokenSource builds the token source the Calendar client refreshes

@@ -1,9 +1,9 @@
 // Package config loads Lodo's configuration and credentials (ADR 0005): the
 // graph holds user intent about work, the config file holds how Lodo runs,
-// and everything secret lives in the state directory.
+// and everything secret lives in the state directory or the environment.
 //
-// The deciding rule for any future setting: secret or machine-bound → file;
-// user intent about work → graph.
+// The deciding rule for any future setting: secret or machine-bound → file
+// (or environment for containers); user intent about work → graph.
 package config
 
 import (
@@ -290,6 +290,139 @@ type GoogleCredentials struct {
 	ClientSecret string `json:"client_secret,omitempty"`
 }
 
+// Environment variables that override credentials.json, one field each.
+// Non-empty values win over the file; empty values leave the file untouched.
+// A missing file plus a complete-enough environment is a valid setup, which
+// is what containers and CI use.
+const (
+	// EnvLogseqToken carries the Logseq HTTP API token.
+	EnvLogseqToken = "LODO_LOGSEQ_TOKEN"
+	// EnvGoogleClientID carries the Google OAuth client id.
+	EnvGoogleClientID = "LODO_GOOGLE_CLIENT_ID"
+	// EnvGoogleClientSecret carries the Google OAuth client secret.
+	EnvGoogleClientSecret = "LODO_GOOGLE_CLIENT_SECRET"
+	// EnvGoogleRefreshToken carries the Google OAuth refresh token that
+	// `lodo auth google` would otherwise store in the file.
+	EnvGoogleRefreshToken = "LODO_GOOGLE_REFRESH_TOKEN"
+)
+
+// CredentialsFromEnv reads the credential environment: each non-empty,
+// trimmed variable becomes its field. A Google section is present when any
+// of its three variables is non-empty.
+func CredentialsFromEnv() Credentials {
+	var c Credentials
+	c.Logseq.Token = strings.TrimSpace(os.Getenv(EnvLogseqToken))
+	if id := strings.TrimSpace(os.Getenv(EnvGoogleClientID)); id != "" {
+		if c.Google == nil {
+			c.Google = &GoogleCredentials{}
+		}
+		c.Google.ClientID = id
+	}
+	if secret := strings.TrimSpace(os.Getenv(EnvGoogleClientSecret)); secret != "" {
+		if c.Google == nil {
+			c.Google = &GoogleCredentials{}
+		}
+		c.Google.ClientSecret = secret
+	}
+	if refresh := strings.TrimSpace(os.Getenv(EnvGoogleRefreshToken)); refresh != "" {
+		if c.Google == nil {
+			c.Google = &GoogleCredentials{}
+		}
+		c.Google.RefreshToken = refresh
+	}
+	return c
+}
+
+// isEmpty reports whether neither the file nor the environment supplied a
+// secret: no Logseq token and no Google field at all.
+func (c Credentials) isEmpty() bool {
+	if c.Logseq.Token != "" {
+		return false
+	}
+	if c.Google == nil {
+		return true
+	}
+	return c.Google.ClientID == "" && c.Google.ClientSecret == "" && c.Google.RefreshToken == ""
+}
+
+// withEnv overlays the environment onto c: non-empty variables win per
+// field, empty ones keep the file's value. The receiver is never mutated.
+func (c Credentials) withEnv() Credentials {
+	env := CredentialsFromEnv()
+	if env.Logseq.Token != "" {
+		c.Logseq.Token = env.Logseq.Token
+	}
+	if env.Google != nil {
+		if c.Google == nil {
+			c.Google = &GoogleCredentials{}
+		} else {
+			cp := *c.Google
+			c.Google = &cp
+		}
+		if env.Google.ClientID != "" {
+			c.Google.ClientID = env.Google.ClientID
+		}
+		if env.Google.ClientSecret != "" {
+			c.Google.ClientSecret = env.Google.ClientSecret
+		}
+		if env.Google.RefreshToken != "" {
+			c.Google.RefreshToken = env.Google.RefreshToken
+		}
+	}
+	return c
+}
+
+// CredentialOverrides are one-run CLI overrides for secrets
+// (configuration.md Precedence): non-empty flags win per field over the
+// environment and the file; overrides are never persisted.
+type CredentialOverrides struct {
+	// LogseqToken overrides logseq.token; "" keeps the file/environment value.
+	LogseqToken string
+	// GoogleClientID overrides google.client_id; "" keeps the file/environment value.
+	GoogleClientID string
+	// GoogleClientSecret overrides google.client_secret; "" keeps the file/environment value.
+	GoogleClientSecret string
+	// GoogleRefreshToken overrides google.refresh_token; "" keeps the file/environment value.
+	GoogleRefreshToken string
+}
+
+// WithCredentialOverrides resolves credentials plus CredentialOverrides into
+// the effective credentials. It is a pure function: neither argument is
+// mutated and nothing is written down.
+func (c Credentials) WithCredentialOverrides(o CredentialOverrides) Credentials {
+	if v := strings.TrimSpace(o.LogseqToken); v != "" {
+		c.Logseq.Token = v
+	}
+	if v := strings.TrimSpace(o.GoogleClientID); v != "" {
+		if c.Google == nil {
+			c.Google = &GoogleCredentials{}
+		} else {
+			cp := *c.Google
+			c.Google = &cp
+		}
+		c.Google.ClientID = v
+	}
+	if v := strings.TrimSpace(o.GoogleClientSecret); v != "" {
+		if c.Google == nil {
+			c.Google = &GoogleCredentials{}
+		} else {
+			cp := *c.Google
+			c.Google = &cp
+		}
+		c.Google.ClientSecret = v
+	}
+	if v := strings.TrimSpace(o.GoogleRefreshToken); v != "" {
+		if c.Google == nil {
+			c.Google = &GoogleCredentials{}
+		} else {
+			cp := *c.Google
+			c.Google = &cp
+		}
+		c.Google.RefreshToken = v
+	}
+	return c
+}
+
 // GoogleSetup returns the google section as `lodo auth google` needs it:
 // the client pair, still without demanding a refresh token. Missing
 // entries are refusals with the fix, never prompts.
@@ -297,12 +430,12 @@ func (c Credentials) GoogleSetup() (GoogleCredentials, error) {
 	var zero GoogleCredentials
 	if c.Google == nil {
 		return zero, fmt.Errorf(
-			"google credentials: missing (create an OAuth client with redirect URI http://127.0.0.1/ and paste {\"google\":{\"client_id\":\"…\",\"client_secret\":\"…\"}} into %s)", DefaultCredentials)
+			"google credentials: missing (create an OAuth client with redirect URI http://127.0.0.1/ and paste {\"google\":{\"client_id\":\"…\",\"client_secret\":\"…\"}} into %s, or set %s and %s)", DefaultCredentials, EnvGoogleClientID, EnvGoogleClientSecret)
 	}
 	g := *c.Google
 	if g.ClientID == "" || g.ClientSecret == "" {
 		return zero, fmt.Errorf(
-			"google credentials: client_id and client_secret are required; paste them into %s from the OAuth client with redirect URI http://127.0.0.1/", DefaultCredentials)
+			"google credentials: client_id and client_secret are required; paste them into %s from the OAuth client with redirect URI http://127.0.0.1/, or set %s and %s", DefaultCredentials, EnvGoogleClientID, EnvGoogleClientSecret)
 	}
 	return g, nil
 }
@@ -317,17 +450,16 @@ func (c Credentials) GoogleAuth() (GoogleCredentials, error) {
 	}
 	if g.RefreshToken == "" {
 		return GoogleCredentials{}, fmt.Errorf(
-			"google credentials: refresh_token is empty; run `lodo auth google` once to store it in %s", DefaultCredentials)
+			"google credentials: refresh_token is empty; run `lodo auth google` once to store it in %s, or set %s", DefaultCredentials, EnvGoogleRefreshToken)
 	}
 	return g, nil
 }
 
-// ReadCredentials reads credentials.json at path. The file must be 0600: a
-// credentials file readable by group or others is a refusal, not a warning.
-// Nothing else is demanded here: which section is required is the caller's
-// call — the loop commands need a Logseq token, `auth google` needs the
-// Google client pair, and both live in the same file.
-func ReadCredentials(path string) (Credentials, error) {
+// ReadFileCredentials reads credentials.json at path without consulting
+// the environment: the 0600 file exactly as written. Persist uses it so an
+// environment-only Logseq token is never copied into the file as a side
+// effect of storing the Google refresh token.
+func ReadFileCredentials(path string) (Credentials, error) {
 	info, err := os.Stat(path)
 	switch {
 	case os.IsNotExist(err):
@@ -350,16 +482,41 @@ func ReadCredentials(path string) (Credentials, error) {
 	return c, nil
 }
 
+// ReadCredentials reads credentials.json at path and overlays the
+// credential environment (LODO_LOGSEQ_TOKEN, LODO_GOOGLE_CLIENT_ID,
+// LODO_GOOGLE_CLIENT_SECRET, LODO_GOOGLE_REFRESH_TOKEN): non-empty
+// variables win per field. The file must be 0600 when present: a
+// credentials file readable by group or others is a refusal, not a warning.
+// A missing file plus a non-empty environment is valid, so containers can
+// run without a file at all. Nothing else is demanded here: which section
+// is required is the caller's call — the loop commands need a Logseq token,
+// `auth google` needs the Google client pair, and both live in the same
+// file or environment.
+func ReadCredentials(path string) (Credentials, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if env := CredentialsFromEnv(); !env.isEmpty() {
+			return env, nil
+		}
+		return Credentials{}, fmt.Errorf("credentials file %s: not found (default %s)", path, DefaultCredentials)
+	}
+	c, err := ReadFileCredentials(path)
+	if err != nil {
+		return Credentials{}, err
+	}
+	return c.withEnv(), nil
+}
+
 // LoadCredentials reads credentials.json at path for the loop commands: the
-// 0600 file plus a non-empty Logseq API token. The google section travels
-// along as it is written; the Calendar side validates its own completeness.
+// 0600 file (or LODO_LOGSEQ_TOKEN) plus a non-empty Logseq API token. The
+// google section travels along as it is written; the Calendar side validates
+// its own completeness.
 func LoadCredentials(path string) (Credentials, error) {
 	c, err := ReadCredentials(path)
 	if err != nil {
 		return Credentials{}, err
 	}
 	if c.Logseq.Token == "" {
-		return Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations)", path)
+		return Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations) or set %s", path, EnvLogseqToken)
 	}
 	return c, nil
 }

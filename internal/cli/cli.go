@@ -6,6 +6,8 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aries1980/lodo/internal/config"
 )
 
 const (
@@ -79,17 +81,21 @@ func newRootCmd() *cobra.Command {
 }
 
 func newCheckCmd(opts *options) *cobra.Command {
-	var strict bool
+	var (
+		strict    bool
+		overrides configOverrides
+	)
 
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Validate the graph and local state; no side effects",
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
-			return runCheck(opts, strict)
+			return runCheck(opts, overrides, strict)
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, "treat reported problems as a non-zero exit")
+	addCredentialOverrideFlags(cmd, &overrides)
 
 	return cmd
 }
@@ -106,6 +112,7 @@ func newForecastCmd(opts *options) *cobra.Command {
 		},
 	}
 	addSchedulingOverrideFlags(cmd, &overrides)
+	addCredentialOverrideFlags(cmd, &overrides)
 
 	return cmd
 }
@@ -128,6 +135,7 @@ func newScheduleCmd(opts *options) *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "same as forecast")
 	cmd.Flags().BoolVar(&strict, "strict", false, "treat reported problems as a non-zero exit")
 	addSchedulingOverrideFlags(cmd, &overrides)
+	addCredentialOverrideFlags(cmd, &overrides)
 
 	return cmd
 }
@@ -144,12 +152,16 @@ func newRefreshCmd(opts *options) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringArrayVar(&overrides.readCalendars, "read-calendar", nil, "shared calendar to read for busy time; repeatable, replaces config read_calendars for one run")
+	addCredentialOverrideFlags(cmd, &overrides)
 
 	return cmd
 }
 
 func newAuthCmd(opts *options) *cobra.Command {
-	var noBrowser bool
+	var (
+		noBrowser bool
+		overrides configOverrides
+	)
 
 	auth := &cobra.Command{
 		Use:   "auth",
@@ -162,10 +174,15 @@ func newAuthCmd(opts *options) *cobra.Command {
 
 Before running, create an OAuth client in the Google Cloud console (a
 "Desktop app" is the dependable type; its redirect URI is http://127.0.0.1/)
-and paste client_id and client_secret into credentials.json beside the
-Logseq token, if that is there yet:
+and supply client_id and client_secret via flags, environment
+(LODO_GOOGLE_CLIENT_ID and LODO_GOOGLE_CLIENT_SECRET), or credentials.json
+beside the Logseq token:
 
   {"google": {"client_id": "…", "client_secret": "…"}}
+
+Pass --google-refresh-token with the pair to store the grant without
+running the browser flow (or set LODO_GOOGLE_REFRESH_TOKEN to skip the file
+at runtime entirely).
 
 The flow binds a loopback listener, raises the authorization URL
 (calendar.events scope, offline access and a re-consent, so the grant is a
@@ -190,11 +207,14 @@ Run the command again after a revocation. Missing client credentials exit
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
-			return runAuthGoogle(opts, noBrowser)
+			return runAuthGoogle(opts, overrides, noBrowser)
 		},
 	}
 	cmd.Flags().BoolVar(&noBrowser, "no-launch-browser", false,
 		"headless machines: finish the grant on another device and paste the redirect back here")
+	cmd.Flags().StringVar(&overrides.googleClientID, "google-client-id", "", "Google OAuth client_id for one run (overrides file and env)")
+	cmd.Flags().StringVar(&overrides.googleClientSecret, "google-client-secret", "", "Google OAuth client_secret for one run (overrides file and env)")
+	cmd.Flags().StringVar(&overrides.googleRefreshToken, "google-refresh-token", "", "store this refresh token directly without running the browser flow")
 	auth.AddCommand(cmd)
 
 	return auth
@@ -204,6 +224,28 @@ type configOverrides struct {
 	windowDays    int
 	timezone      string
 	readCalendars []string
+
+	logseqToken        string
+	googleClientID     string
+	googleClientSecret string
+	googleRefreshToken string
+}
+
+// credentialOverrides maps the CLI flag values onto config.CredentialOverrides.
+func (o configOverrides) credentialOverrides() config.CredentialOverrides {
+	return config.CredentialOverrides{
+		LogseqToken:        o.logseqToken,
+		GoogleClientID:     o.googleClientID,
+		GoogleClientSecret: o.googleClientSecret,
+		GoogleRefreshToken: o.googleRefreshToken,
+	}
+}
+
+func addCredentialOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {
+	cmd.Flags().StringVar(&overrides.logseqToken, "logseq-token", "", "Logseq API token for one run (overrides file and env)")
+	cmd.Flags().StringVar(&overrides.googleClientID, "google-client-id", "", "Google OAuth client_id for one run (overrides file and env)")
+	cmd.Flags().StringVar(&overrides.googleClientSecret, "google-client-secret", "", "Google OAuth client_secret for one run (overrides file and env)")
+	cmd.Flags().StringVar(&overrides.googleRefreshToken, "google-refresh-token", "", "Google refresh token for one run (overrides file and env)")
 }
 
 func addSchedulingOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {
