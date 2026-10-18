@@ -267,3 +267,60 @@ func TestNewClientRejectsBadURL(t *testing.T) {
 		}
 	}
 }
+
+func TestTLSUnknownAuthorityHintsAtInsecure(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "[]")
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := logseq.NewClient(srv.URL+"/api", token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Pages(context.Background())
+	if err == nil {
+		t.Fatal("Pages succeeded against a self-signed TLS server with verification on")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "logseq api") {
+		t.Fatalf("error = %q, want the logseq api prefix", msg)
+	}
+	for _, want := range []string{"logseq.api_url", "logseq.insecure"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error = %q, want hint containing %q", msg, want)
+		}
+	}
+}
+
+func TestInsecureTransportSkipsVerify(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `[{"name":"Time Maps","uuid":"tm"}]`)
+	}))
+	t.Cleanup(srv.Close)
+
+	// Same shape as the insecure config path: a default transport clone
+	// that skips verification, without the test server's RootCAs.
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Skip("DefaultTransport is not *http.Transport")
+	}
+	cloned := base.Clone()
+	if cloned.TLSClientConfig == nil {
+		t.Fatal("cloned transport has no TLS config")
+	}
+	cloned.TLSClientConfig.InsecureSkipVerify = true
+	insecure := &http.Client{Timeout: logseq.DefaultTimeout, Transport: cloned}
+
+	client, err := logseq.NewClient(srv.URL+"/api", token, insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := client.Pages(context.Background())
+	if err != nil {
+		t.Fatalf("Pages with skipped verification: %v", err)
+	}
+	if len(pages) != 1 || pages[0].Name != "Time Maps" {
+		t.Fatalf("pages = %+v, want the one stub page", pages)
+	}
+}

@@ -3,6 +3,8 @@ package logseq
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,7 +72,11 @@ func (c *apiClient) call(ctx context.Context, method string, args []any, out any
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("logseq api: %s: %w", method, errorCause(err))
+		cause := errorCause(err)
+		if tlsHint(cause) != "" {
+			return fmt.Errorf("logseq api: %s: %w (%s)", method, cause, tlsHint(cause))
+		}
+		return fmt.Errorf("logseq api: %s: %w", method, cause)
 	}
 	defer func() { _ = resp.Body.Close() }() // a response body's close error is never actionable
 
@@ -108,6 +114,29 @@ func errorCause(err error) error {
 		return uErr.Err
 	}
 	return err
+}
+
+// tlsHint names the fix when the handshake failed on trust: the stock app
+// serves plain HTTP, so an https api_url against a self-signed or
+// private-CA endpoint fails here with x509 unknown authority. The hint
+// points at the scheme first, then the two ways to trust the endpoint.
+func tlsHint(err error) string {
+	var unknown x509.UnknownAuthorityError
+	if errors.As(err, &unknown) {
+		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
+			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
+	}
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &invalid) {
+		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
+			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
+	}
+	var verify *tls.CertificateVerificationError
+	if errors.As(err, &verify) {
+		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
+			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
+	}
+	return ""
 }
 
 // snippet renders a short body prefix for error messages.

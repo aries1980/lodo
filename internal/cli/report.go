@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -80,9 +81,15 @@ func httpClient(cfg config.Config) *http.Client {
 	if !ok {
 		return nil
 	}
-	tls := transport.Clone()
-	tls.TLSClientConfig.InsecureSkipVerify = true
-	return &http.Client{Timeout: logseq.DefaultTimeout, Transport: tls}
+	cloned := transport.Clone()
+	if cloned.TLSClientConfig == nil {
+		cloned.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	} else {
+		tlsCfg := cloned.TLSClientConfig.Clone()
+		tlsCfg.InsecureSkipVerify = true
+		cloned.TLSClientConfig = tlsCfg
+	}
+	return &http.Client{Timeout: logseq.DefaultTimeout, Transport: cloned}
 }
 
 // runCheck implements lodo check: the graph report plus the state section
