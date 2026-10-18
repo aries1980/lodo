@@ -116,6 +116,7 @@ sequenceDiagram
     participant WC as Write calendar
     participant RC as Read calendars
     participant DB as SQLite
+    L->>LS: create Time Maps page if missing (recommended defaults, only on confirmation)
     L->>LS: read Tasks + properties + Time Maps page
     L->>WC: list Managed + External events in window
     L->>RC: list busy time in window

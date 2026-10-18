@@ -11,7 +11,7 @@ weight: 30
 The core loop: **read Tasks from Logseq → decide when → write Blocks to Google Calendar → reconcile on refresh.**
 
 - **Single-user, self-hosted, local-first.** No accounts, no multi-tenancy, no server. A CLI you invoke; cron calling `lodo schedule` is the intended deployment.
-- **Logseq as the source of truth for intent**, reached over the HTTP API, **read-only**. File-based graph today; the DB graph after the planned upgrade.
+- **Logseq as the source of truth for intent**, reached over the HTTP API, **read-only except one prompted bootstrap**: when the Time Maps page is missing, Lodo offers to create it with recommended defaults on explicit confirmation. File-based graph today; the DB graph after the planned upgrade.
 - **Tasks** = `TODO`/`DOING` blocks with an explicit `duration::`. Duration is the gate.
 - **Plan** = optional `plan-start::`/`plan-end::` date bounds; absent bounds mean flexible ("as soon as possible").
 - **Pin** via Logseq's native `scheduled::`; **Deadline** via native `deadline::`; **Priority** via native `priority::` (A/B/C).

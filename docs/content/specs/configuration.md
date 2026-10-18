@@ -136,6 +136,6 @@ and flags combine.
 
 ## What is *not* here
 
-- **Time Maps** — authored in the graph, on the `Time Maps` page ([ADR 0003](../ADRs/0003-time-maps-in-graph-format.md)).
+- **Time Maps** — authored in the graph, on the `Time Maps` page ([ADR 0003](../ADRs/0003-time-maps-in-graph-format.md)). If the page is missing, `check`/`forecast`/`schedule` offer to create it with recommended defaults on confirmation ([CLI](./cli.md#missing-time-maps-page)); the configured `logseq.time_maps_page` names the page in both cases.
 - **The default Time Map** — marked on the map's own block in the graph (`default:: true`),
   because it is a property of a Time Map, not of Lodo.

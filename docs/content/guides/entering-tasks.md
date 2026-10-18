@@ -4,8 +4,11 @@ weight: 10
 ---
 
 How to enter a Task in Logseq (file-graph) so Lodo schedules it, including
-`depends::` chains and nesting. Logseq is read-only for Lodo: you author intent
-in the graph, Lodo projects Blocks onto the calendar.
+`depends::` chains and nesting. Logseq holds intent and Lodo only reads it —
+you author in the graph, Lodo projects Blocks onto the calendar — with one
+exception: if the Time Maps page is missing, Lodo offers to create it with
+recommended defaults on your confirmation (see
+[Missing Time Maps page](../specs/cli.md#missing-time-maps-page)).
 
 Spec references: [`tasks.md`](../specs/tasks.md) (what a Task is),
 [`scheduling.md`](../specs/scheduling.md) (ordering and placement),

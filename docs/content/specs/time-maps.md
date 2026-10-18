@@ -13,7 +13,12 @@ do a particular category of work. It answers *which hours of the week*, independ
 ## Authoring
 
 Time Maps are authored in the Logseq graph, on a page named **`Time Maps`** (see
-[ADR 0003](../ADRs/0003-time-maps-in-graph-format.md)).
+[ADR 0003](../ADRs/0003-time-maps-in-graph-format.md)). If that page is missing,
+`lodo check`, `lodo forecast`, and `lodo schedule` offer to create it with the
+recommended defaults below (a `Deep Work` map marked `default:: true`, plus
+`Errands` and `Weekends`), on explicit confirmation or `-y`/`--yes` — see
+[the CLI's Missing Time Maps page](./cli.md#missing-time-maps-page). The
+defaults are a starting point; edit the page in Logseq to suit your week.
 
 ```markdown
 - Deep Work
