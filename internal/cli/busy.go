@@ -67,15 +67,15 @@ func busySourcesLine(r calendar.BusyReport) string {
 // printBusyText prints the busy sources line plus one warning line per
 // skipped calendar or lodo-on-read event. No output when no calendar was
 // consulted.
-func printBusyText(w io.Writer, r calendar.BusyReport) {
+func printBusyText(w io.Writer, r calendar.BusyReport, st styler) {
 	if r.WriteCalendar == "" {
 		return
 	}
 	if line := busySourcesLine(r); line != "" {
-		_, _ = fmt.Fprintln(w, line)
+		_, _ = fmt.Fprintln(w, st.dim(line))
 	}
 	for _, warn := range r.Warnings {
-		_, _ = fmt.Fprintf(w, "warning: %s\n", warn)
+		_, _ = fmt.Fprintln(w, st.warning("warning: "+warn))
 	}
 }
 
@@ -103,7 +103,7 @@ func conflictsView(conflicts []run.Conflict) []conflictJSON {
 // time, naming each Block. Refresh changes nothing in response. Tasks may be
 // nil (refresh never resolves the graph), in which case Blocks are named by
 // their Task ID.
-func printConflictsText(w io.Writer, tasks []model.Task, conflicts []run.Conflict) {
+func printConflictsText(w io.Writer, tasks []model.Task, conflicts []run.Conflict, st styler) {
 	byText := run.TextMap(tasks)
 	for _, c := range conflicts {
 		label := c.EventID
@@ -114,6 +114,15 @@ func printConflictsText(w io.Writer, tasks []model.Task, conflicts []run.Conflic
 			}
 			label = fmt.Sprintf("%s block %d (%s)", name, c.BlockIndex, c.EventID)
 		}
-		_, _ = fmt.Fprintf(w, "warning: Managed Block %s now overlaps shared busy time (no moves, no stand-downs; re-placement happens only in schedule)\n", label)
+		_, _ = fmt.Fprintln(w, st.warning("warning: Managed Block "+label+" now overlaps shared busy time (no moves, no stand-downs; re-placement happens only in schedule)"))
+	}
+}
+
+// logBusyWarnings mirrors busy warnings as JSON WARN records for CI/cron.
+func logBusyWarnings(opts *options, command string, r calendar.BusyReport) {
+	for _, warn := range r.Warnings {
+		logRunWarn(opts, command, "calendar.warning", warn, map[string]any{
+			"write_calendar": r.WriteCalendar,
+		})
 	}
 }

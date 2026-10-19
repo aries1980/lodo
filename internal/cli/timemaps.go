@@ -47,7 +47,7 @@ func defaultTimeMaps() []timeMapSeed {
 // explicit y/yes — including EOF — declines, and the run continues without
 // the page. Prompts and notes go to errW, so --json stdout stays
 // machine-readable.
-func ensureTimeMapsPage(ctx context.Context, client logseq.Client, page string, yes bool, errW io.Writer) (bool, error) {
+func ensureTimeMapsPage(ctx context.Context, client logseq.Client, page string, yes bool, errW io.Writer, st styler) (bool, error) {
 	found, err := client.Page(ctx, page)
 	if err != nil {
 		return false, err
@@ -55,26 +55,24 @@ func ensureTimeMapsPage(ctx context.Context, client logseq.Client, page string, 
 	if found != nil {
 		return false, nil
 	}
-	if !yes && !confirmCreateTimeMaps(page, errW) {
+	if !yes && !confirmCreateTimeMaps(page, errW, st) {
 		return false, nil
 	}
 	if err := createTimeMapsPage(ctx, client, page); err != nil {
 		return false, err
 	}
-	_, _ = fmt.Fprintf(errW,
-		"Created Time Maps page %q with the recommended defaults; edit it in Logseq to suit your week.\n",
-		page)
+	_, _ = fmt.Fprintln(errW,
+		st.success(fmt.Sprintf("Created Time Maps page %q with the recommended defaults; edit it in Logseq to suit your week.", page)))
 	return true, nil
 }
 
 // confirmCreateTimeMaps asks whether the missing page may be created. Only
 // an explicit y/yes counts; the empty default, anything else, and EOF all
 // decline.
-func confirmCreateTimeMaps(page string, errW io.Writer) bool {
-	_, _ = fmt.Fprintf(errW,
-		"Time Maps page %q is missing: Tasks with no time-map:: have no fallback hours.\n"+
-			"Create it with the recommended defaults (Deep Work as the default map, plus Errands and Weekends)? You can edit it afterwards in Logseq. [y/N] ",
-		page)
+func confirmCreateTimeMaps(page string, errW io.Writer, st styler) bool {
+	_, _ = fmt.Fprint(errW,
+		st.bold(fmt.Sprintf("Time Maps page %q is missing: Tasks with no time-map:: have no fallback hours.\n", page))+
+			"Create it with the recommended defaults (Deep Work as the default map, plus Errands and Weekends)? You can edit it afterwards in Logseq. [y/N] ")
 	line, err := bufio.NewReader(stdin()).ReadString('\n')
 	if err != nil && len(line) == 0 {
 		return false

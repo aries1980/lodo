@@ -30,6 +30,7 @@ var googleEndpoint = gauth.Endpoint
 // Missing pieces exit 1 with the hint; the flow never asks a question of a
 // user who cannot answer it.
 func runAuthGoogle(opts *options, ov configOverrides, noBrowser bool) error {
+	start := logRunStart(opts, "auth")
 	path, err := config.DefaultCredentialsPath()
 	if err != nil {
 		return &exitError{code: codeError, err: fmt.Errorf("locate the credentials file: %w", err)}
@@ -55,7 +56,11 @@ func runAuthGoogle(opts *options, ov configOverrides, noBrowser bool) error {
 		if err := gauth.PersistWithClient(path, client, gauth.Result{RefreshToken: strings.TrimSpace(ov.googleRefreshToken)}); err != nil {
 			return &exitError{code: codeError, err: err}
 		}
-		return printStored(opts, path)
+		if err := printStored(opts, path); err != nil {
+			return err
+		}
+		logRunFinish(opts, "auth", start, map[string]any{"stored": path})
+		return nil
 	}
 
 	res, err := gauth.Run(context.Background(), gauth.Inputs{
@@ -71,10 +76,15 @@ func runAuthGoogle(opts *options, ov configOverrides, noBrowser bool) error {
 	if err := gauth.PersistWithClient(path, client, res); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	return printStored(opts, path)
+	if err := printStored(opts, path); err != nil {
+		return err
+	}
+	logRunFinish(opts, "auth", start, map[string]any{"stored": path})
+	return nil
 }
 
 func printStored(opts *options, path string) error {
+	st := newStyler(opts.out, opts.disableColors)
 	if opts.json {
 		if err := printJSON(opts.out, struct {
 			Stored string `json:"stored"`
@@ -83,7 +93,7 @@ func printStored(opts *options, path string) error {
 		}
 		return nil
 	}
-	_, _ = fmt.Fprintf(opts.out, "Google authorization stored in %s.\n", path)
+	_, _ = fmt.Fprintln(opts.out, st.success(fmt.Sprintf("Google authorization stored in %s.", path)))
 	return nil
 }
 

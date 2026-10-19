@@ -39,7 +39,9 @@ use of *Schedule* as the noun, so the name is kept rather than replaced with
 | Flag | Applies to | Effect |
 | --- | --- | --- |
 | `--dry-run` | `schedule` | Same as `forecast`. |
-| `--json` | all | Machine-readable output. |
+| `--json` | all | Machine-readable result on stdout. |
+| `--log-format auto\|text\|json` | all | Diagnostic log format on stderr: `text` (default, `auto` is `text`), `json` is JSONL for CI/cron. Also `LODO_LOG_FORMAT`. |
+| `--disable-colors` | all | Disable colors in human-readable output. Also off with `NO_COLOR`, `TERM=dumb`, or non-TTY. |
 | `--no-launch-browser` | `auth google` | Headless machines: finish the grant on another device, paste the redirect back. |
 | `--window-days N`, `--timezone TZ`, … | `schedule`, `forecast` | One-run overrides of config. Not persisted. |
 | `--read-calendar ID` | `schedule`, `forecast`, `refresh` | Repeatable: replaces `calendar.read_calendars` for one run when given at least once. Not persisted. |
@@ -71,3 +73,31 @@ This confirmation is the one graph write Lodo ever makes
   unless `--strict` is given.
 - `1` — operational error (Logseq unreachable, calendar auth failed, bad config).
 - `2` — validation failures under `--strict`.
+
+## Output modes
+
+Two audiences, two streams. Result payloads go to stdout; diagnostics go
+to stderr, so `--json` stdout stays pipeable.
+
+- Humans (default): colored text on stdout — bold day headers, green
+  placed/synced, yellow shortfalls/warnings, red orphans/errors, dim
+  busy lines and event IDs — with tab-aligned block times and a
+  `Summary:` footer per command. Colors are off with `--disable-colors`,
+  `NO_COLOR`, `TERM=dumb`, or a non-TTY. Errors print as
+  `error: <what> — <fix>` in red.
+- CI/cron (`--log-format=json` or `LODO_LOG_FORMAT=json`): stderr is
+  JSONL, one object per line, with `timestamp` (RFC3339Nano UTC), `level`,
+  `message`, plus `service: lodo`, `command`, `event`
+  (`run.start`, `run.finish`, `calendar.warning`, `run.error`), and
+  counts (`blocks`, `shortfalls`, `writes`, `orphaned`, `duration_ms`,
+  `exit_code`). No tokens are logged. Pair with `--json` for a
+  machine-readable result on stdout:
+
+```sh
+lodo --log-format=json --json schedule 1>result.json 2>run.log.jsonl
+```
+
+Datadog parses the JSONL natively via a JSON pipeline (`timestamp` as
+the date, `level` as status); Loki parses it with `| json` and
+`timestamp` as the detected time field. `--verbose` maps to `DEBUG`
+records; without it the log is `INFO`/`WARN`/`ERROR` only.

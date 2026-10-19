@@ -15,6 +15,8 @@ import (
 // runRefresh implements lodo refresh: pull-only, reconcile plus store
 // commit. It never resolves the graph and never writes the calendar.
 func runRefresh(opts *options, ov configOverrides) error {
+	start := logRunStart(opts, "refresh")
+	style := newStyler(opts.out, opts.disableColors)
 	cfgPath := opts.config
 	if cfgPath == "" {
 		def, err := config.DefaultConfigPath()
@@ -71,9 +73,26 @@ func runRefresh(opts *options, ov configOverrides) error {
 		if err := printJSON(opts.out, view); err != nil {
 			return &exitError{code: codeError, err: err}
 		}
+		logBusyWarnings(opts, "refresh", outcome.Busy)
+		logRunFinish(opts, "refresh", start, map[string]any{
+			"adopted":   len(outcome.Adopted),
+			"captured":  len(outcome.Captured),
+			"conflicts": len(outcome.Conflicts),
+		})
 		return nil
 	}
-	renderRefreshText(opts.out, outcome, opts.verbose)
+	renderRefreshText(opts.out, outcome, opts.verbose, style)
+	logBusyWarnings(opts, "refresh", outcome.Busy)
+	for _, c := range outcome.Conflicts {
+		logRunWarn(opts, "refresh", "refresh.conflict", "managed block overlaps shared busy time", map[string]any{
+			"event_id": c.EventID,
+		})
+	}
+	logRunFinish(opts, "refresh", start, map[string]any{
+		"adopted":   len(outcome.Adopted),
+		"captured":  len(outcome.Captured),
+		"conflicts": len(outcome.Conflicts),
+	})
 	return nil
 }
 
@@ -129,16 +148,18 @@ func refreshCaptured(outcome run.RefreshOutcome) []dispositionJSON {
 
 func renderRefreshText(w interface {
 	Write([]byte) (int, error)
-}, outcome run.RefreshOutcome, verbose bool) {
-	printBusyText(w, outcome.Busy)
-	printConflictsText(w, nil, outcome.Conflicts)
+}, outcome run.RefreshOutcome, verbose bool, st styler) {
+	printBusyText(w, outcome.Busy, st)
+	printConflictsText(w, nil, outcome.Conflicts, st)
 	if len(outcome.Adopted) == 0 && len(outcome.Captured) == 0 && len(outcome.Conflicts) == 0 {
-		_, _ = fmt.Fprintln(w, "Refresh: local state already matches the calendar.")
+		_, _ = fmt.Fprintln(w, st.success("Refresh: local state already matches the calendar."))
 		return
 	}
 	_, _ = fmt.Fprintf(w, "Refresh: %d binding(s) adopted, %d disposition(s) captured.\n",
 		len(outcome.Adopted), len(outcome.Captured))
 	if !verbose {
+		_, _ = fmt.Fprintln(w, st.success(fmt.Sprintf("Summary: %d adopted, %d captured, %d conflict(s)",
+			len(outcome.Adopted), len(outcome.Captured), len(outcome.Conflicts))))
 		return
 	}
 	adopted := append([]store.Binding{}, outcome.Adopted...)
@@ -154,4 +175,6 @@ func renderRefreshText(w interface {
 	for _, d := range outcome.Captured {
 		_, _ = fmt.Fprintf(w, "  %s block %d: %s\n", d.TaskID, d.BlockIndex, d.Kind)
 	}
+	_, _ = fmt.Fprintln(w, st.success(fmt.Sprintf("Summary: %d adopted, %d captured, %d conflict(s)",
+		len(outcome.Adopted), len(outcome.Captured), len(outcome.Conflicts))))
 }

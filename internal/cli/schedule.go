@@ -20,11 +20,13 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 	if dryRun {
 		return runForecast(opts, ov, verbose, yes)
 	}
+	start := logRunStart(opts, "schedule")
+	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	cal, err := calendarFull(context.Background(), creds, cfg)
@@ -60,8 +62,20 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 			return &exitError{code: codeError, err: err}
 		}
 	} else {
-		renderScheduleText(opts.out, cfg, outcome, now, verbose)
+		renderScheduleText(opts.out, cfg, outcome, now, verbose, style)
 	}
+	logBusyWarnings(opts, "schedule", outcome.Busy)
+	for _, o := range outcome.Orphans {
+		logRunWarn(opts, "schedule", "schedule.orphan", "orphaned managed event removed", map[string]any{
+			"event_id": o.EventID,
+		})
+	}
+	logRunFinish(opts, "schedule", start, map[string]any{
+		"blocks":     len(outcome.Schedule.Blocks),
+		"shortfalls": len(outcome.Schedule.Report.Tasks),
+		"writes":     len(outcome.Writes),
+		"orphaned":   len(outcome.Orphans),
+	})
 
 	if strict && scheduleProblems(outcome) > 0 {
 		return &exitError{code: codeValidation, err: fmt.Errorf(
@@ -180,47 +194,47 @@ func scheduleDispositions(outcome run.ScheduleOutcome) []dispositionJSON {
 
 func renderScheduleText(w interface {
 	Write([]byte) (int, error)
-}, cfg config.Config, outcome run.ScheduleOutcome, now time.Time, verbose bool) {
+}, cfg config.Config, outcome run.ScheduleOutcome, now time.Time, verbose bool, st styler) {
 	// Reuse the forecast day-grouping by converting to an Outcome view.
 	// Schedule has no managed hole: reconciliation accounted for it.
 	inner := run.Outcome{
 		Tasks: outcome.Tasks, Issues: outcome.Issues, Schedule: outcome.Schedule,
 		Busy: outcome.Busy,
 	}
-	renderForecastText(w, cfg, inner, now, verbose)
+	renderForecastText(w, cfg, inner, now, verbose, st)
 
 	if len(outcome.Writes) == 0 {
-		_, _ = fmt.Fprintln(w, "\nCalendar: already in sync (no writes).")
+		_, _ = fmt.Fprintln(w, st.success("\nCalendar: already in sync (no writes)."))
 	} else {
-		_, _ = fmt.Fprintf(w, "\nCalendar writes (%d):\n", len(outcome.Writes))
+		_, _ = fmt.Fprintln(w, st.header(fmt.Sprintf("\nCalendar writes (%d):", len(outcome.Writes))))
 		for _, wr := range outcome.Writes {
 			switch wr.Op {
 			case "insert":
-				_, _ = fmt.Fprintf(w, "  + %s  %s block %d (%s)\n",
-					wr.EventID, taskLabel(inner, wr.TaskID), wr.BlockIndex, wr.Summary)
+				_, _ = fmt.Fprintln(w, st.success(fmt.Sprintf("  + %s  %s block %d (%s)",
+					wr.EventID, taskLabel(inner, wr.TaskID), wr.BlockIndex, wr.Summary)))
 			case "patch":
-				_, _ = fmt.Fprintf(w, "  ~ %s  %s block %d → %s\n",
+				_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf("  ~ %s  %s block %d → %s",
 					wr.EventID, taskLabel(inner, wr.TaskID), wr.BlockIndex,
-					wr.Start.Format("Mon 15:04"))
+					wr.Start.Format("Mon 15:04"))))
 			case "delete":
-				_, _ = fmt.Fprintf(w, "  - %s\n", wr.EventID)
+				_, _ = fmt.Fprintln(w, st.danger(fmt.Sprintf("  - %s", wr.EventID)))
 			}
 		}
 	}
 	if len(outcome.Orphans) > 0 {
-		_, _ = fmt.Fprintf(w, "\nOrphaned (%d Managed event(s) with no home in the plan, removed):\n", len(outcome.Orphans))
+		_, _ = fmt.Fprintln(w, st.danger(fmt.Sprintf("\nOrphaned (%d Managed event(s) with no home in the plan, removed):", len(outcome.Orphans))))
 		byText := textByTasks(outcome.Tasks)
 		for _, o := range outcome.Orphans {
 			label := orphanLabel(byText, o)
-			_, _ = fmt.Fprintf(w, "  %s — %s (block %d)\n", o.EventID, label, o.Block)
+			_, _ = fmt.Fprintln(w, st.danger(fmt.Sprintf("  %s — %s (block %d)", o.EventID, label, o.Block)))
 		}
 	}
 	if verbose {
 		r := outcome.Reconciled
-		_, _ = fmt.Fprintf(w, "\nReconciled: %d binding(s) upserted, %d deleted, %d disposition(s) recorded.\n",
-			len(r.BindingUpserts), len(r.BindingDeletes), len(r.DispositionUpserts))
+		_, _ = fmt.Fprintln(w, "\n"+st.dim(fmt.Sprintf("Reconciled: %d binding(s) upserted, %d deleted, %d disposition(s) recorded.",
+			len(r.BindingUpserts), len(r.BindingDeletes), len(r.DispositionUpserts))))
 		if len(outcome.Dispositions) > 0 {
-			_, _ = fmt.Fprintln(w, "Dispositions in force:")
+			_, _ = fmt.Fprintln(w, st.bold("Dispositions in force:"))
 			ordered := append([]model.Disposition{}, outcome.Dispositions...)
 			slices.SortFunc(ordered, func(a, b model.Disposition) int {
 				if a.TaskID != b.TaskID {
@@ -233,5 +247,12 @@ func renderScheduleText(w interface {
 					taskLabel(inner, d.TaskID), d.BlockIndex, d.Kind)
 			}
 		}
+	}
+	summary := fmt.Sprintf("Summary: %d block(s), %d write(s), %d shortfall(s), %d orphaned",
+		len(outcome.Schedule.Blocks), len(outcome.Writes), len(outcome.Schedule.Report.Tasks), len(outcome.Orphans))
+	if len(outcome.Schedule.Report.Tasks) > 0 || len(outcome.Orphans) > 0 {
+		_, _ = fmt.Fprintln(w, st.warning(summary))
+	} else {
+		_, _ = fmt.Fprintln(w, st.success(summary))
 	}
 }

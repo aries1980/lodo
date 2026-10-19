@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
@@ -135,11 +136,13 @@ func errWriter(opts *options) io.Writer {
 // behaviour), so a fresh checkout still checks. It writes nowhere, except
 // for a missing Time Maps page the user confirms (or pre-answers with -y).
 func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
+	start := logRunStart(opts, "check")
+	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	st, err := openStore()
@@ -178,8 +181,15 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 			return &exitError{code: codeError, err: err}
 		}
 	} else {
-		renderCheckText(opts.out, outcome, opts.verbose)
+		renderCheckText(opts.out, outcome, opts.verbose, style)
 	}
+	logBusyWarnings(opts, "check", outcome.Busy)
+	logRunFinish(opts, "check", start, map[string]any{
+		"graph_issues": len(outcome.Issues),
+		"shortfalls":   len(outcome.Schedule.Report.Tasks),
+		"stood_down":   len(outcome.StoodDown),
+		"orphaned":     len(outcome.Orphans),
+	})
 
 	// --strict: validation failures exit 2 across both sections (cli.md).
 	if strict {
@@ -198,6 +208,8 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 // happens here — with no observed events, every binding would look deleted.
 // Orphaned needs the calendar, so it stays empty.
 func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store) error {
+	start := logRunStart(opts, "check")
+	style := newStyler(opts.out, opts.disableColors)
 	now := time.Now()
 	location, err := cfg.Scheduling.Location()
 	if err != nil {
@@ -250,8 +262,14 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 			return &exitError{code: codeError, err: err}
 		}
 	} else {
-		renderCheckText(opts.out, outcome, opts.verbose)
+		renderCheckText(opts.out, outcome, opts.verbose, style)
 	}
+	logRunFinish(opts, "check", start, map[string]any{
+		"graph_issues": len(outcome.Issues),
+		"shortfalls":   len(outcome.Schedule.Report.Tasks),
+		"stood_down":   len(outcome.StoodDown),
+		"calendar":     "none",
+	})
 	if strict {
 		n := len(outcome.Issues) + len(outcome.Schedule.Report.Tasks) + len(outcome.StoodDown)
 		if n > 0 {
@@ -270,11 +288,13 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 // never prints against a silently free calendar. The one write it may make
 // is a missing Time Maps page the user confirms (or pre-answers with -y).
 func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
+	start := logRunStart(opts, "forecast")
+	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 
@@ -303,8 +323,19 @@ func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 			return &exitError{code: codeError, err: err}
 		}
 	} else {
-		renderForecastText(opts.out, cfg, outcome, now, verbose)
+		renderForecastText(opts.out, cfg, outcome, now, verbose, style)
 	}
+	logBusyWarnings(opts, "forecast", outcome.Busy)
+	if len(outcome.Managed) > 0 {
+		logRunWarn(opts, "forecast", "forecast.managed_hole", "managed events left out of busy mask", map[string]any{
+			"managed": len(outcome.Managed),
+		})
+	}
+	logRunFinish(opts, "forecast", start, map[string]any{
+		"blocks":     len(outcome.Schedule.Blocks),
+		"shortfalls": len(outcome.Schedule.Report.Tasks),
+		"managed":    len(outcome.Managed),
+	})
 	return nil
 }
 
@@ -449,11 +480,11 @@ func graphLabel(tasks []model.Task, id string) string {
 	return text
 }
 
-func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
+func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool, st styler) {
 	if len(outcome.Issues) == 0 {
-		_, _ = fmt.Fprintln(w, "Graph: no issues reported.")
+		_, _ = fmt.Fprintln(w, st.success("Graph: no issues reported."))
 	} else {
-		_, _ = fmt.Fprintf(w, "Graph: %d issues\n", len(outcome.Issues))
+		_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf("Graph: %d issues", len(outcome.Issues))))
 		for _, issue := range outcome.Issues {
 			_, _ = fmt.Fprintf(w, "  [%s] %s: %s\n", issue.Kind, issue.Context, issue.Detail)
 		}
@@ -461,23 +492,23 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
 
 	short := outcome.Schedule.Report.Tasks
 	if len(short) == 0 {
-		_, _ = fmt.Fprintln(w, "Plan (real busy time): everything placeable is placed.")
+		_, _ = fmt.Fprintln(w, st.success("Plan (real busy time): everything placeable is placed."))
 	} else {
-		_, _ = fmt.Fprintf(w, "Plan (real busy time): %d Task(s) could not be fully placed.\n", len(short))
+		_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf("Plan (real busy time): %d Task(s) could not be fully placed.", len(short))))
 		for _, r := range short {
 			line := fmt.Sprintf("  %s: %d of %d slots placed — %s",
 				checkTaskLabel(outcome, r.TaskID), r.Placed, r.Required, r.Reason)
 			if len(r.BlockedBy) > 0 {
 				line += fmt.Sprintf(" (blocked by %s)", strings.Join(blockedLabels(outcome, r.BlockedBy), ", "))
 			}
-			_, _ = fmt.Fprintln(w, line)
+			_, _ = fmt.Fprintln(w, st.warning(line))
 		}
 	}
 
 	if len(outcome.StoodDown) == 0 {
-		_, _ = fmt.Fprintln(w, "Stood-down: none.")
+		_, _ = fmt.Fprintln(w, st.dim("Stood-down: none."))
 	} else {
-		_, _ = fmt.Fprintf(w, "Stood-down: %d Block(s) the user deleted, not recreated until inputs change:\n", len(outcome.StoodDown))
+		_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf("Stood-down: %d Block(s) the user deleted, not recreated until inputs change:", len(outcome.StoodDown))))
 		for _, d := range outcome.StoodDown {
 			_, _ = fmt.Fprintf(w, "  %s block %d (%d slots)\n",
 				checkTaskLabel(outcome, d.TaskID), d.BlockIndex, d.Slots)
@@ -485,18 +516,18 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
 	}
 
 	if len(outcome.Orphans) == 0 {
-		_, _ = fmt.Fprintln(w, "Orphaned: none.")
+		_, _ = fmt.Fprintln(w, st.dim("Orphaned: none."))
 	} else {
-		_, _ = fmt.Fprintf(w, "Orphaned: %d Managed event(s) with no home in the plan:\n", len(outcome.Orphans))
+		_, _ = fmt.Fprintln(w, st.danger(fmt.Sprintf("Orphaned: %d Managed event(s) with no home in the plan:", len(outcome.Orphans))))
 		byText := textByTasks(outcome.Tasks)
 		for _, o := range outcome.Orphans {
 			label := orphanLabel(byText, o)
-			_, _ = fmt.Fprintf(w, "  %s — %s (block %d)\n", o.EventID, label, o.Block)
+			_, _ = fmt.Fprintln(w, st.danger(fmt.Sprintf("  %s — %s (block %d)", o.EventID, label, o.Block)))
 		}
 	}
 
 	if verbose {
-		_, _ = fmt.Fprintln(w, "Explanations:")
+		_, _ = fmt.Fprintln(w, st.bold("Explanations:"))
 		for _, e := range outcome.Schedule.Explanations {
 			_, _ = fmt.Fprintf(w, "  %s block %d at %s (%d slots), %s\n",
 				checkTaskLabel(outcome, e.TaskID), e.BlockIndex,
@@ -504,10 +535,22 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool) {
 		}
 	}
 
-	printBusyText(w, outcome.Busy)
+	printBusyText(w, outcome.Busy, st)
+
+	// Summary footer: one scannable line for humans and cron mail.
+	n := len(outcome.Issues) + len(short) + len(outcome.StoodDown) + len(outcome.Orphans)
+	summary := fmt.Sprintf("Summary: %d graph issue(s), %d infeasible, %d stood-down, %d orphaned",
+		len(outcome.Issues), len(short), len(outcome.StoodDown), len(outcome.Orphans))
+	if n == 0 {
+		_, _ = fmt.Fprintln(w, st.success(summary))
+	} else if len(outcome.Orphans) > 0 {
+		_, _ = fmt.Fprintln(w, st.danger(summary))
+	} else {
+		_, _ = fmt.Fprintln(w, st.warning(summary))
+	}
 }
 
-func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now time.Time, verbose bool) {
+func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now time.Time, verbose bool, st styler) {
 	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
 	if err != nil {
 		granularity = 15 * time.Minute // unreachable after config validation
@@ -515,22 +558,22 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 
 	loc := schedulingLocation(cfg)
 	start := now.In(loc)
-	_, _ = fmt.Fprintf(w,
-		"Schedule that would be written to calendar %q — %s through %s, %s granularity, %s:\n",
+	_, _ = fmt.Fprintln(w, st.header(fmt.Sprintf(
+		"Schedule that would be written to calendar %q — %s through %s, %s granularity, %s:",
 		cfg.Calendar.ID,
 		start.Format("Mon 02 Jan 2006"),
 		start.AddDate(0, 0, cfg.Scheduling.WindowDays-1).Format("Mon 02 Jan 2006"),
 		durationMinutes(granularity, 1),
 		loc,
-	)
-	printBusyText(w, outcome.Busy)
+	)))
+	printBusyText(w, outcome.Busy, st)
 
 	// The known forecast hole, said plainly: Lodo's own events are not in
 	// the busy mask there, and schedule's reconciliation is what folds them
 	// back in.
 	if n := len(outcome.Managed); n > 0 {
-		_, _ = fmt.Fprintf(w,
-			"\nNote: %d Managed event(s) on the calendar are not counted as busy yet — they are\nthe ones Lodo itself created; the schedule command's reconciliation will account for them:\n", n)
+		_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf(
+			"\nNote: %d Managed event(s) on the calendar are not counted as busy yet — they are\nthe ones Lodo itself created; the schedule command's reconciliation will account for them:", n)))
 		for _, e := range outcome.Managed {
 			summary := e.Summary
 			if summary == "" {
@@ -580,36 +623,44 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 	})
 
 	for _, row := range dayRows {
-		_, _ = fmt.Fprintf(w, "\n%s  %s\n", row.when.Format("Mon"), row.day.String())
+		_, _ = fmt.Fprintln(w, st.header(fmt.Sprintf("\n%s  %s", row.when.Format("Mon"), row.day.String())))
+		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, b := range row.blocks {
 			kind := ""
 			if b.Kind == model.BlockPin {
 				kind = " (pin)"
 			}
-			_, _ = fmt.Fprintf(w, "  %s-%s  %s  %s%s\n",
+			task := taskLabel(outcome, b.TaskID) + kind
+			if b.Kind == model.BlockPin {
+				task = st.warning(task)
+			} else {
+				// Last column: color is safe for tabwriter alignment.
+				task = st.success(task)
+			}
+			_, _ = fmt.Fprintf(tw, "  %s-%s\t%s\t%s\n",
 				b.Start.In(loc).Format("15:04"),
 				b.End.In(loc).Format("15:04"),
 				durationMinutes(granularity, b.Slots),
-				taskLabel(outcome, b.TaskID),
-				kind,
+				task,
 			)
 		}
+		_ = tw.Flush()
 	}
 
 	if short := outcome.Schedule.Report.Tasks; len(short) > 0 {
-		_, _ = fmt.Fprintf(w, "\nShortfall:\n")
+		_, _ = fmt.Fprintln(w, st.warning("\nShortfall:"))
 		for _, r := range short {
 			line := fmt.Sprintf("  %s: %d of %d slots placed — %s",
 				taskLabel(outcome, r.TaskID), r.Placed, r.Required, r.Reason)
 			if len(r.BlockedBy) > 0 {
 				line += fmt.Sprintf(" (blocked by %s)", strings.Join(forecastBlockedLabels(outcome, r.BlockedBy), ", "))
 			}
-			_, _ = fmt.Fprintln(w, line)
+			_, _ = fmt.Fprintln(w, st.warning(line))
 		}
 	}
 
 	if verbose {
-		_, _ = fmt.Fprintf(w, "\nExplanations:\n")
+		_, _ = fmt.Fprintln(w, st.bold("\nExplanations:"))
 		for _, e := range outcome.Schedule.Explanations {
 			line := fmt.Sprintf("  %s block %d at %s (%d slots), %s",
 				taskLabel(outcome, e.TaskID),
@@ -622,8 +673,17 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 				line += fmt.Sprintf(" — from the free run starting %s (%d slots)",
 					e.RunStart.In(loc).Format("Mon 15:04"), e.RunSlots)
 			}
-			_, _ = fmt.Fprintln(w, line)
+			_, _ = fmt.Fprintln(w, st.dim(line))
 		}
+	}
+
+	// Summary footer for humans and cron mail.
+	summary := fmt.Sprintf("Summary: %d block(s), %d shortfall(s), %d managed left out",
+		len(outcome.Schedule.Blocks), len(outcome.Schedule.Report.Tasks), len(outcome.Managed))
+	if len(outcome.Schedule.Report.Tasks) > 0 {
+		_, _ = fmt.Fprintln(w, st.warning(summary))
+	} else {
+		_, _ = fmt.Fprintln(w, st.success(summary))
 	}
 }
 

@@ -28,9 +28,11 @@ func (e *exitError) Error() string { return e.err.Error() }
 func (e *exitError) Unwrap() error { return e.err }
 
 type options struct {
-	json    bool
-	verbose bool
-	config  string
+	json          bool
+	verbose       bool
+	config        string
+	logFormat     string
+	disableColors bool
 
 	// out receives command output; Run wires in the process stdout.
 	out io.Writer
@@ -47,7 +49,30 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	root.SetErr(stderr)
 
 	if err := root.Execute(); err != nil {
-		_, _ = fmt.Fprintln(stderr, "lodo:", err)
+		opts := executedOpts
+		verbose := opts != nil && opts.verbose
+		format := ""
+		disableColors := false
+		if opts != nil {
+			format = opts.logFormat
+			disableColors = opts.disableColors
+		}
+		if resolveLogFormat(format) == "json" {
+			cmd, _, _ := root.Find(args)
+			name := ""
+			if cmd != nil && cmd.Name() != "" && cmd.Name() != "lodo" {
+				name = cmd.Name()
+			}
+			code := codeError
+			var ee *exitError
+			if errors.As(err, &ee) {
+				code = ee.code
+			}
+			logRunError(stderr, verbose, name, err.Error(), code, nil)
+		} else {
+			st := newStyler(stderr, disableColors)
+			_, _ = fmt.Fprintln(stderr, st.danger("lodo:")+" "+err.Error())
+		}
 
 		var ee *exitError
 		if errors.As(err, &ee) {
@@ -60,8 +85,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return codeOK
 }
 
+// executedOpts is the options of the current Run; set in newRootCmd so
+// Run can style/log errors after Execute fails.
+var executedOpts *options
+
 func newRootCmd() *cobra.Command {
 	opts := &options{}
+	executedOpts = opts
 
 	root := &cobra.Command{
 		Use:           "lodo",
@@ -72,6 +102,8 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolVar(&opts.json, "json", false, "machine-readable output")
 	root.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, "explain placement decisions")
 	root.PersistentFlags().StringVar(&opts.config, "config", "", "config file (default: $XDG_CONFIG_HOME/lodo/config.yaml)")
+	root.PersistentFlags().StringVar(&opts.logFormat, "log-format", logFormatDefault(), "diagnostic log format: auto|text|json (auto is text; json is JSONL on stderr for CI/cron)")
+	root.PersistentFlags().BoolVar(&opts.disableColors, "disable-colors", false, "disable colors in human-readable output (also NO_COLOR, TERM=dumb, non-TTY)")
 
 	root.AddCommand(
 		newCheckCmd(opts),
@@ -163,6 +195,7 @@ func newRefreshCmd(opts *options) *cobra.Command {
 		Short: "Fold calendar edits into local state without recomputing",
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
+			opts.errOut = c.ErrOrStderr()
 			return runRefresh(opts, overrides)
 		},
 	}
@@ -222,6 +255,7 @@ Run the command again after a revocation. Missing client credentials exit
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
+			opts.errOut = c.ErrOrStderr()
 			return runAuthGoogle(opts, overrides, noBrowser)
 		},
 	}
