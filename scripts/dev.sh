@@ -67,6 +67,17 @@ go_run() {
 		-w /app "$@"
 }
 
+lint_run() {
+	# The lint image ships an older Go than the toolchain in go.mod asks for.
+	# GOTOOLCHAIN=local keeps it from downloading a whole toolchain to lint.
+	podrun \
+		-v "$ROOT:/app" -v /tmp:/tmp \
+		-e GOCACHE=/tmp/lodo-go-cache \
+		-e GOMODCACHE=/tmp/lodo-go-mod-cache \
+		-e GOTOOLCHAIN=local \
+		-w /app "$@"
+}
+
 hugo_run() {
 	# Hugo reads .GitInfo/.Lastmod (enableGitInfo in docs/hugo.toml), so the
 	# git dir must be visible inside the container even though only docs/ is
@@ -132,7 +143,7 @@ fmt)
 	go_run "$GO_IMAGE" gofmt -l -w ./cmd ./internal
 	;;
 lint)
-	go_run "$LINT_IMAGE" golangci-lint run --modules-download-mode=mod --timeout=5m
+	lint_run "$LINT_IMAGE" golangci-lint run --modules-download-mode=mod --timeout=5m
 	;;
 tidy)
 	go_run "$GO_IMAGE" go mod tidy
