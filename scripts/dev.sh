@@ -12,8 +12,8 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.27.2}
-LINT_IMAGE=${LINT_IMAGE:-docker.io/golangci/golangci-lint:v2.14.0-alpine}
+GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.27.3}
+LINT_IMAGE=${LINT_IMAGE:-docker.io/golangci/golangci-lint:v2.15.0-alpine}
 HUGO_IMAGE=${HUGO_IMAGE:-ghcr.io/gohugoio/hugo:v0.168.0} # keep the tag in sync with .github/workflows/hugo.yml
 
 # Pinned docs theme, fetched into docs/themes/ (gitignored) on demand.
