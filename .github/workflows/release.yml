@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    # Release tags look like 0.1.1 - no "v" prefix.
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (must already exist on the remote)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The tag being released; the pushed tag on a push, the requested tag on a
+  # manual run.
+  VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-go@v7
+        with:
+          # The Go version lives in go.mod - one place to bump.
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Signing the attestations with Sigstore needs an OIDC token, and the
+      # attestations themselves are stored against the repository.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build and package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # The SQLite driver is pure Go, so the binaries cross-compile.
+          CGO_ENABLED: '0'
+        run: |
+          set -eu
+          mkdir -p dist stage
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          go build -trimpath -ldflags '-s -w' -o "dist/lodo${ext}" ./cmd/lodo
+          name="lodo_${VERSION}_${GOOS}_${GOARCH}"
+          cp "dist/lodo${ext}" LICENSE README.md stage/
+          tar -czf "dist/${name}.tar.gz" -C stage .
+          rm -rf stage "dist/lodo${ext}"
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          format: spdx-json
+          output-file: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
+          upload-artifact: false
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          sbom-path: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lodo-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating the release and uploading its assets.
+      contents: write
+      # Keyless signing through Sigstore.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: lodo-*
+          merge-multiple: true
+          path: release
+      - name: Checksums
+        run: |
+          set -eu
+          cd release
+          sha256sum lodo_*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - uses: sigstore/cosign-installer@v4
+      - name: Sign artifacts and checksums
+        run: |
+          set -eu
+          for f in release/lodo_*.tar.gz; do
+            cosign sign-blob --yes --bundle "${f}.sigstore.json" "$f"
+          done
+          cosign sign-blob --yes --bundle release/SHA256SUMS.sigstore.json release/SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" release/* --clobber
+          else
+            args=(--verify-tag --title "lodo $VERSION" --generate-notes)
+            case "$VERSION" in
+              *-*) args+=(--prerelease) ;;
+              *) args+=(--latest) ;;
+            esac
+            gh release create "$VERSION" release/* "${args[@]}"
+          fi

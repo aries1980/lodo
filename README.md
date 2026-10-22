@@ -47,6 +47,44 @@ The containers run as your own user (rootless podman remaps the UID with
 written by the tools — build output, module caches under `/tmp`, the fetched docs theme —
 are owned by you, not root.
 
+## Releases
+
+A tag of the form `0.1.1` — no `v` prefix — triggers
+[`.github/workflows/release.yml`](.github/workflows/release.yml). It cross-compiles the CLI for
+Linux, macOS and Windows on both amd64 and arm64, and publishes them as a GitHub Release. The
+Go version comes from `go.mod`, so there is no second place to pin it.
+
+| Asset | What it is |
+| --- | --- |
+| `lodo_<version>_<os>_<arch>.tar.gz` | The binary, plus `LICENSE` and `README.md` |
+| `lodo_<version>_<os>_<arch>.spdx.json` | SPDX SBOM of the matching archive |
+| `SHA256SUMS` | SHA-256 of every archive |
+| `*.sigstore.json` | Keyless Sigstore signature bundle for the archive or the checksums |
+
+Windows archives are gzipped tarballs like the others: Windows 10 and later ship `tar`, so
+`tar -xzf lodo_<version>_windows_amd64.tar.gz` is all it takes.
+
+### Verifying a download
+
+```sh
+# 1. the archive matches the published checksums
+sha256sum -c SHA256SUMS
+
+# 2. the checksums were signed by this repository's release workflow
+cosign verify-blob \
+  --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp 'https://github\.com/aries1980/lodo/\.github/workflows/release\.yml@refs/tags/.*' \
+  --certificate-oidc-issuer 'https://token\.actions\.githubusercontent\.com' \
+  SHA256SUMS
+
+# 3. the archive was built from this commit, and its SBOM matches
+gh attestation verify lodo_<version>_linux_amd64.tar.gz --repo aries1980/lodo
+```
+
+The first two steps need `sha256sum` and `cosign` only; the third needs the GitHub CLI. Every
+archive also carries its own signature bundle, verifiable with the same `cosign verify-blob`
+command against that archive's `.sigstore.json`.
+
 ## Documentation
 
 The documentation is a self-contained Hugo site under [`docs/`](docs/): content in
