@@ -7,6 +7,7 @@ All notable changes to Lodo, generated from the commit history by
 
 ### Maintenance
 
+- Generate the changelog and release notes from the commit history ([e73f10c](https://github.com/aries1980/lodo/commit/e73f10c54b0796df1899875132c71594081d1f50))
 - Pin the Go toolchain in go.mod ([4cae433](https://github.com/aries1980/lodo/commit/4cae4336a1222fddc09808b5e29b234d33b68359))
 - Release workflow for signed multi-arch binaries on tags ([f852769](https://github.com/aries1980/lodo/commit/f852769c222a5a73c36668eadbbf835343330108))
 
