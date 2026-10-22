@@ -14,6 +14,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.27.3}
 LINT_IMAGE=${LINT_IMAGE:-docker.io/golangci/golangci-lint:v2.15.0-alpine}
+CLIFF_IMAGE=${CLIFF_IMAGE:-docker.io/orhunp/git-cliff:2.14.2} # keep the tag in sync with .github/workflows/release.yml
 HUGO_IMAGE=${HUGO_IMAGE:-ghcr.io/gohugoio/hugo:v0.168.0} # keep the tag in sync with .github/workflows/hugo.yml
 
 # Pinned docs theme, fetched into docs/themes/ (gitignored) on demand.
@@ -38,6 +39,9 @@ Go:
   fmt     format ./cmd and ./internal with gofmt
   lint    run golangci-lint
   tidy    run go mod tidy
+
+Changelog:
+  changelog  regenerate CHANGELOG.md from the commit history
 
 Docs:
   docs        serve the site on http://localhost:1313/lodo/
@@ -96,6 +100,14 @@ hugo_run() {
 	fi
 }
 
+cliff_run() {
+	# git-cliff reads the repository through the mounted .git directory, so the
+	# whole work tree has to be visible in the container.
+	podrun \
+		-v "$ROOT:/app" \
+		-w /app "$CLIFF_IMAGE" "$@"
+}
+
 download() {
 	if command -v curl >/dev/null 2>&1; then
 		curl -fsSL -o "$2" "$1"
@@ -147,6 +159,9 @@ lint)
 	;;
 tidy)
 	go_run "$GO_IMAGE" go mod tidy
+	;;
+changelog)
+	cliff_run --output CHANGELOG.md
 	;;
 docs-theme)
 	docs_theme

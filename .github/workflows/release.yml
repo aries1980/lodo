@@ -122,11 +122,37 @@ jobs:
       # Keyless signing through Sigstore.
       id-token: write
     steps:
+      # Checked out on main, not on the tag: the changelog is committed back to
+      # main. git-cliff needs the whole history and every tag.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
           pattern: lodo-*
           merge-multiple: true
           path: release
+      - name: Changelog
+        run: |
+          set -eu
+          # The release notes: only the commits between the previous tag and this one.
+          prev=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            range="${prev}..${VERSION}"
+          else
+            range="$(git rev-list --max-parents=0 "${VERSION}")..${VERSION}"
+          fi
+          cliff() {
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE:/app" \
+              -w /app \
+              docker.io/orhunp/git-cliff:2.14.2 \
+              "$@"
+          }
+          cliff "$range" --strip header --output notes.md
+          cliff --output CHANGELOG.md
+          cp CHANGELOG.md release/CHANGELOG.md
       - name: Checksums
         run: |
           set -eu
@@ -149,10 +175,23 @@ jobs:
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" release/* --clobber
           else
-            args=(--verify-tag --title "lodo $VERSION" --generate-notes)
+            args=(--verify-tag --title "lodo $VERSION" --notes-file notes.md)
             case "$VERSION" in
               *-*) args+=(--prerelease) ;;
               *) args+=(--latest) ;;
             esac
             gh release create "$VERSION" release/* "${args[@]}"
           fi
+      - name: Commit the changelog
+        run: |
+          set -eu
+          if [ -z "$(git status --porcelain -- CHANGELOG.md)" ]; then
+            echo "CHANGELOG.md is already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit --no-gpg-sign -m "chore(changelog): update CHANGELOG.md for $VERSION"
+          git pull --rebase origin main
+          git push origin HEAD:main

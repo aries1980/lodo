@@ -1,0 +1,56 @@
+# Changelog format, rendered by git-cliff from the commit history.
+# See https://git-cliff.org/docs/configuration
+#
+# The groups are prefixed with an HTML comment so that they sort in a fixed
+# order; the template strips the comment back off before printing.
+#
+# There is deliberately no [remote.github] section: setting one makes git-cliff
+# call the GitHub API on every run and panic if that call fails. Lodo has no
+# pull requests, so the remote metadata would be empty anyway.
+
+[changelog]
+# Rendered once at the top of CHANGELOG.md. The release notes strip it.
+header = """
+# Changelog
+
+All notable changes to Lodo, generated from the commit history by
+[git-cliff](https://git-cliff.org).
+
+"""
+# Rendered for each release.
+body = """
+{% macro remote_url() -%}
+  https://github.com/aries1980/lodo
+{%- endmacro -%}
+{% if version %}## {{ version }} - {{ timestamp | date(format="%Y-%m-%d") }}{% else %}## Unreleased{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+
+{% for commit in commits %}- {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}]({{ self::remote_url() }}/commit/{{ commit.id }}))
+{% endfor %}{% endfor %}{% if version and previous.version %}
+[Full changelog]({{ self::remote_url() }}/compare/{{ previous.version }}...{{ version }})
+{% endif %}
+
+"""
+footer = ""
+trim = true
+
+[git]
+# Parse commits according to the conventional commits specification.
+conventional_commits = true
+# Ignore commits that do not follow it.
+filter_unconventional = true
+# Ignore commits that match no parser below.
+filter_commits = true
+# Newest first inside each group.
+sort_commits = "newest"
+# Release tags look like 0.1.1 - no "v" prefix.
+tag_pattern = "[0-9]+\\.[0-9]+\\.[0-9]+"
+commit_parsers = [
+  { message = "^feat(\\(|:)", group = "<!-- 0 -->Features" },
+  { message = "^fix(\\(|:)", group = "<!-- 1 -->Bug fixes" },
+  { message = "^docs(\\(|:)", group = "<!-- 2 -->Documentation" },
+  { message = "^(build|ci)(\\(|:)", group = "<!-- 3 -->Maintenance" },
+  # Chore commits are housekeeping - the CI changelog commit is one of them.
+  { message = "^chore(\\(|:)", skip = true },
+]

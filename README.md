@@ -40,6 +40,7 @@ entry point:
 ./scripts/dev.sh fmt     # gofmt ./cmd ./internal
 ./scripts/dev.sh lint    # golangci-lint
 ./scripts/dev.sh tidy    # go mod tidy
+./scripts/dev.sh changelog # regenerate CHANGELOG.md from the commit history
 ```
 
 The containers run as your own user (rootless podman remaps the UID with
@@ -54,15 +55,41 @@ A tag of the form `0.1.1` — no `v` prefix — triggers
 Linux, macOS and Windows on both amd64 and arm64, and publishes them as a GitHub Release. The
 Go version comes from `go.mod`, so there is no second place to pin it.
 
+```sh
+git tag 0.1.1
+git push origin 0.1.1
+```
+
 | Asset | What it is |
 | --- | --- |
 | `lodo_<version>_<os>_<arch>.tar.gz` | The binary, plus `LICENSE` and `README.md` |
 | `lodo_<version>_<os>_<arch>.spdx.json` | SPDX SBOM of the matching archive |
 | `SHA256SUMS` | SHA-256 of every archive |
 | `*.sigstore.json` | Keyless Sigstore signature bundle for the archive or the checksums |
+| `CHANGELOG.md` | The full changelog, regenerated from the history at release time |
 
 Windows archives are gzipped tarballs like the others: Windows 10 and later ship `tar`, so
 `tar -xzf lodo_<version>_windows_amd64.tar.gz` is all it takes.
+
+### The changelog
+
+[`CHANGELOG.md`](CHANGELOG.md) is generated from the commit history by
+[git-cliff](https://git-cliff.org), using the rules in [`cliff.toml`](cliff.toml). There is no
+changelog file to maintain by hand: the conventional-commit subject of every commit is the
+entry, grouped by type.
+
+| Prefix | Group |
+| --- | --- |
+| `feat` | Features |
+| `fix` | Bug fixes |
+| `docs` | Documentation |
+| `build`, `ci` | Maintenance |
+| `chore` | omitted |
+
+The release body of a GitHub Release is the same rendering, limited to the commits between the
+previous tag and the one being released. The workflow commits the regenerated
+`CHANGELOG.md` back to `main`; run [`./scripts/dev.sh changelog`](#development) to regenerate it
+locally instead.
 
 ### Verifying a download
 
