@@ -23,17 +23,11 @@ type alloc struct {
 // seq is a candidate placement: its Blocks in start order.
 type seq []alloc
 
-// choosePlacement picks the arrangement of at most required slots that the
-// ADR 0010 comparator rates highest. Every run must be long enough to host a
-// Block of floor slots; Blocks are at most one per run, starting at the run's
-// first slot.
-func choosePlacement(runs []placementRun, required, floor int) []alloc {
-	allocs, _ := choosePlacementTrace(runs, required, floor)
-	return allocs
-}
-
-// choosePlacementTrace is choosePlacement plus the comparator decision, so
-// explain reflects the actual ADR 0010 logic without drift.
+// choosePlacementTrace picks the arrangement of at most required slots that
+// the ADR 0010 comparator rates highest, plus the comparator decision, so
+// explain reflects the actual logic without drift. Every run must be long
+// enough to host a Block of floor slots; Blocks are at most one per run,
+// starting at the run's first slot.
 func choosePlacementTrace(runs []placementRun, required, floor int) ([]alloc, ComparatorDecision) {
 	dec := ComparatorDecision{Candidates: len(runs), FeasibleRuns: len(runs)}
 	if required < floor || len(runs) == 0 {

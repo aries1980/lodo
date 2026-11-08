@@ -89,7 +89,7 @@ func newRootCmd(opts *options) *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().BoolVar(&opts.json, "json", false, "machine-readable output")
-	root.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, "explain placement decisions")
+	root.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, "show placement reasoning (full detail: lodo explain <task-id>)")
 	root.PersistentFlags().StringVar(&opts.config, "config", "", "config file (default: $XDG_CONFIG_HOME/lodo/config.yaml)")
 	root.PersistentFlags().StringVar(&opts.logFormat, "log-format", logFormatDefault(), "diagnostic log format: auto|text|json (auto is text; json is JSONL on stderr for CI/cron)")
 	root.PersistentFlags().BoolVar(&opts.disableColors, "disable-colors", false, "disable colors in human-readable output (also NO_COLOR, TERM=dumb, non-TTY)")

@@ -60,6 +60,39 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 		}
 		return orderBefore(a.task, b.task)
 	}
+	// origIndegree remembers which tasks had ordering-edge dependencies so
+	// explain can report dependency-forced positions truthfully.
+	origIndegree := make(map[string]int, len(indegree))
+	for id, n := range indegree {
+		origIndegree[id] = n
+	}
+	// orderingDeps lists the ordering-edge dependency IDs for detail strings.
+	orderingDeps := func(plan *taskPlan) []string {
+		var out []string
+		seen := map[string]bool{}
+		for _, dep := range plan.task.Depends {
+			depPlan, ok := lookup.lookup(dep)
+			if !ok {
+				continue
+			}
+			if depPlan.task.Pin != nil || depPlan.task.Container {
+				continue
+			}
+			if depPlan.required() == 0 {
+				continue
+			}
+			if depPlan.task.ID == plan.task.ID {
+				out = append(out, depPlan.task.ID)
+				continue
+			}
+			if !seen[depPlan.task.ID] {
+				seen[depPlan.task.ID] = true
+				out = append(out, depPlan.task.ID)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
 	var avail []*taskPlan
 	for _, plan := range candidates {
 		if _, blocked := blockedUnknown[plan.task.ID]; blocked {
@@ -72,8 +105,26 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 	sortAvailablePlans(avail, lessPlan)
 	for len(avail) > 0 {
 		plan := avail[0]
+		peers := append([]*taskPlan(nil), avail...)
 		avail = avail[1:]
 		order = append(order, plan)
+		// Record the actual tie-break that put plan first among ready peers.
+		if origIndegree[plan.task.ID] > 0 {
+			deps := orderingDeps(plan)
+			plan.decision.Ordering.TieBreak = "dependency"
+			if len(deps) == 0 {
+				plan.decision.Ordering.TieBreakDetail = "dependency-ordered: unblocked after dependencies placed"
+			} else {
+				plan.decision.Ordering.TieBreakDetail = "dependency-ordered after " + strings.Join(deps, ", ") + "; topological order overrides tie-breaks"
+			}
+		} else if len(peers) > 1 {
+			key, detail := tieBreakBetween(plan.task, peers[1].task)
+			plan.decision.Ordering.TieBreak = key
+			plan.decision.Ordering.TieBreakDetail = detail
+		} else {
+			plan.decision.Ordering.TieBreak = "only-ready"
+			plan.decision.Ordering.TieBreakDetail = "only ready task; no peer tie-break"
+		}
 		for _, depID := range dependents[plan.task.ID] {
 			indegree[depID]--
 			if indegree[depID] == 0 {
@@ -104,6 +155,15 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 		remaining = append(remaining, plan)
 	}
 	cycleSet = cycleMembers(remaining, lookup)
+	for i, plan := range order {
+		plan.decision.Ordering.Position = i + 1
+		plan.decision.Ordering.Total = len(order)
+	}
+	for _, plan := range candidates {
+		if plan.decision.Ordering.Total == 0 {
+			plan.decision.Ordering.Total = len(order)
+		}
+	}
 	return order, cycleSet
 }
 
@@ -195,4 +255,66 @@ func compareTasks(a, b model.Task) int {
 		return strings.Compare(a.Graph, b.Graph)
 	}
 	return strings.Compare(a.ID, b.ID)
+}
+
+// tieBreakBetween names the first ordering key that distinguishes a (the
+// winner) from b (the runner-up), mirroring lessPlan/timeBoundLess/
+// compareTasks exactly so explain cannot drift from placement.
+func tieBreakBetween(a, b model.Task) (key, detail string) {
+	aBound := a.PlanStart != nil || a.PlanEnd != nil
+	bBound := b.PlanStart != nil || b.PlanEnd != nil
+	if aBound != bBound {
+		if aBound {
+			return "time-bound-first", "time-bound " + a.ID + " before flexible " + b.ID + "; every time-bound task is considered before any flexible task"
+		}
+		return "time-bound-first", "flexible " + a.ID + " after time-bound " + b.ID + " (should not win; defensive)"
+	}
+	if aBound && bBound {
+		switch {
+		case a.PlanEnd == nil && b.PlanEnd != nil:
+			return "plan-end", "plan-end: " + a.ID + " has no plan-end, " + b.ID + " due " + b.PlanEnd.String()
+		case a.PlanEnd != nil && b.PlanEnd == nil:
+			return "plan-end", "plan-end: " + a.ID + " due " + a.PlanEnd.String() + " before " + b.ID + " with no plan-end"
+		case a.PlanEnd != nil && b.PlanEnd != nil && *a.PlanEnd != *b.PlanEnd:
+			return "plan-end", "plan-end " + a.PlanEnd.String() + " vs " + b.PlanEnd.String()
+		}
+	}
+	if a.GraphOrder != b.GraphOrder {
+		return "graph-order", "graph-order: deterministic cross-graph order"
+	}
+	if ra, rb := a.Priority.Rank(), b.Priority.Rank(); ra != rb {
+		return "priority", "priority " + string(a.Priority) + " (rank " + itoa(ra) + ") vs " + string(b.Priority) + " (rank " + itoa(rb) + ")"
+	}
+	if a.OutlineOrder != b.OutlineOrder {
+		return "outline-order", "outline-order " + itoa(a.OutlineOrder) + " vs " + itoa(b.OutlineOrder) + " (depth-first, top-to-bottom Logseq order; moving a block re-prioritises it)"
+	}
+	if a.Graph != b.Graph {
+		return "graph", "graph " + a.Graph + " vs " + b.Graph
+	}
+	if a.ID != b.ID {
+		return "id", "id " + a.ID + " vs " + b.ID
+	}
+	return "equal", "identical ordering keys"
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }

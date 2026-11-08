@@ -46,6 +46,21 @@ func buildDecisions(in decisionsInput) []TaskDecision {
 		if in.scope.horizonEnd.Year != 0 && plan.decision.Window.HorizonEnd == "" {
 			plan.decision.Window.HorizonEnd = in.scope.horizonEnd.String()
 		}
+		if plan.decision.Ordering.Total == 0 {
+			plan.decision.Ordering.Total = len(in.order)
+		}
+
+		disps := append([]model.Disposition(nil), plan.pinnedDisps...)
+		disps = append(disps, plan.stoodDownDisps...)
+		slices.SortFunc(disps, func(a, b model.Disposition) int {
+			if a.BlockIndex != b.BlockIndex {
+				return a.BlockIndex - b.BlockIndex
+			}
+			return strings.Compare(string(a.Kind), string(b.Kind))
+		})
+		if len(disps) > 0 {
+			plan.decision.Dispositions = disps
+		}
 
 		for _, blk := range blocksByTask[plan.task.ID] {
 			block := BlockDecision{Index: blk.Index, Kind: blk.Kind, Start: blk.Start, End: blk.End, Slots: blk.Slots}
@@ -103,11 +118,21 @@ func markEligibility(plan *taskPlan, inOrder map[string]bool, cycleSet map[strin
 	if plan.task.Pin != nil {
 		plan.decision.Eligibility = Eligibility{Pin: true, RequiredSlots: plan.n, PinnedSlots: plan.n, FlexibleSlots: 0, Considered: true}
 		plan.decision.Ordering.Kind = "pin"
+		if plan.decision.Ordering.TieBreak == "" {
+			plan.decision.Ordering.TieBreak = "pin-first"
+			plan.decision.Ordering.TieBreakDetail = "pins are placed first at their exact time; everything else schedules around them"
+		}
 	} else if plan.task.Container {
 		plan.decision.Eligibility = Eligibility{Container: true, RequiredSlots: 0, FlexibleSlots: 0, Considered: false, SkipReason: "container: never scheduled"}
+		plan.decision.Ordering.Kind = "container"
+		plan.decision.Ordering.TieBreak = "never-scheduled"
+		plan.decision.Ordering.TieBreakDetail = "containers never enter consideration order; only their leaves are scheduled"
 	} else if ids, ok := blockedUnknown[plan.task.ID]; ok {
 		plan.decision.Eligibility.Considered = false
 		plan.decision.Eligibility.SkipReason = "blocked by unknown dependency"
+		plan.decision.Ordering.Kind = "blocked"
+		plan.decision.Ordering.TieBreak = "blocked"
+		plan.decision.Ordering.TieBreakDetail = "unknown dependency: depends:: references no task"
 		plan.decision.Dependency.Blocked = true
 		plan.decision.Dependency.BlockReason = string(ReasonUnknownDependency)
 		ids = append([]string(nil), ids...)
@@ -116,11 +141,21 @@ func markEligibility(plan *taskPlan, inOrder map[string]bool, cycleSet map[strin
 	} else if cycleSet[plan.task.ID] {
 		plan.decision.Eligibility.Considered = false
 		plan.decision.Eligibility.SkipReason = "dependency cycle"
+		plan.decision.Ordering.Kind = "cycle-blocked"
+		plan.decision.Ordering.TieBreak = "dependency-cycle"
+		plan.decision.Ordering.TieBreakDetail = "dependency cycle: tasks in the cycle are left unscheduled"
 		plan.decision.Dependency.Blocked = true
 		plan.decision.Dependency.BlockReason = string(ReasonDependencyCycle)
 		plan.decision.Dependency.CycleMember = true
 	} else if !inOrder[plan.task.ID] && plan.task.Pin == nil && !plan.task.Container && plan.required() > 0 {
 		plan.decision.Eligibility.Considered = false
+		if plan.decision.Ordering.Kind == "" {
+			plan.decision.Ordering.Kind = "blocked"
+		}
+		if plan.decision.Ordering.TieBreak == "" {
+			plan.decision.Ordering.TieBreak = "dependency"
+			plan.decision.Ordering.TieBreakDetail = "blocked by unplaced dependency; downstream of a cycle or blocked task"
+		}
 		if !plan.decision.Dependency.Blocked {
 			plan.decision.Dependency.Blocked = true
 			plan.decision.Dependency.BlockReason = string(ReasonBlockedByDependency)
@@ -130,6 +165,17 @@ func markEligibility(plan *taskPlan, inOrder map[string]bool, cycleSet map[strin
 		}
 	} else if plan.required() == 0 && plan.task.Pin == nil && !plan.task.Container {
 		plan.decision.Eligibility.Considered = false
+		if plan.decision.Ordering.Kind == "" {
+			if plan.task.PlanStart != nil || plan.task.PlanEnd != nil {
+				plan.decision.Ordering.Kind = "time-bound"
+			} else {
+				plan.decision.Ordering.Kind = "flexible"
+			}
+		}
+		if plan.decision.Ordering.TieBreak == "" {
+			plan.decision.Ordering.TieBreak = "satisfied"
+			plan.decision.Ordering.TieBreakDetail = "fully satisfied by pinned/stood-down dispositions; no flexible hours remain"
+		}
 		if plan.decision.Eligibility.SkipReason == "" {
 			plan.decision.Eligibility.SkipReason = "fully satisfied by pinned/stood-down dispositions"
 		}

@@ -4,8 +4,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/model"
 )
+
+func gridFor(in Input) *grid.Grid {
+	return grid.Build(in.Now, in.Location, in.Granularity, in.WindowDays)
+}
 
 func TestDecisionsReflectActualPlacement(t *testing.T) {
 	// Placed flexible task: has time-map/tier passes and comparator decision.
@@ -132,5 +137,140 @@ func TestDecisionsTierLaterGreenBeatsEarlierYellow(t *testing.T) {
 	}
 	if greenPlaced != 8 {
 		t.Fatalf("expected 8 slots placed in green, got %d; passes=%+v", greenPlaced, d.TimeMaps.Passes)
+	}
+}
+
+func TestDecisionsTieBreakOutlineOrder(t *testing.T) {
+	a := localTask("a", duration(30))
+	a.OutlineOrder = 1
+	b := localTask("b", duration(30))
+	b.OutlineOrder = 2
+	in := newInput(a, b)
+	in.TimeMaps = []model.TimeMap{deepMap(on(time.Monday, 9, 0, 12, 0))}
+	s, err := Plan(in)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	byID := map[string]TaskDecision{}
+	for _, d := range s.Decisions {
+		byID[d.TaskID] = d
+	}
+	da, db := byID["a"], byID["b"]
+	if da.Ordering.Position != 1 || db.Ordering.Position != 2 || da.Ordering.Total != 2 {
+		t.Fatalf("positions: a=%+v b=%+v", da.Ordering, db.Ordering)
+	}
+	if da.Ordering.TieBreak != "outline-order" {
+		t.Fatalf("a tie-break=%q detail=%q, want outline-order", da.Ordering.TieBreak, da.Ordering.TieBreakDetail)
+	}
+	if da.Ordering.TieBreakDetail == "" || db.Ordering.TieBreak == "" {
+		t.Fatalf("tie-break detail missing: a=%+v b=%+v", da.Ordering, db.Ordering)
+	}
+	if db.Ordering.TieBreak != "only-ready" {
+		t.Fatalf("b tie-break=%q, want only-ready (sole ready peer after a)", db.Ordering.TieBreak)
+	}
+}
+
+func TestDecisionsTieBreakDependency(t *testing.T) {
+	a := localTask("a", duration(30))
+	b := depTask("b", duration(30), "a")
+	in := newInput(a, b)
+	in.TimeMaps = []model.TimeMap{deepMap(on(time.Monday, 9, 0, 12, 0))}
+	s, err := Plan(in)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	for _, d := range s.Decisions {
+		if d.TaskID == "b" {
+			if d.Ordering.TieBreak != "dependency" {
+				t.Fatalf("b tie-break=%q detail=%q, want dependency", d.Ordering.TieBreak, d.Ordering.TieBreakDetail)
+			}
+			if d.Ordering.Position != 2 || d.Ordering.Total != 2 {
+				t.Fatalf("b position=%+v", d.Ordering)
+			}
+		}
+	}
+}
+
+func TestDecisionsRejectionBreakdownSums(t *testing.T) {
+	task := localTask("t1", duration(60))
+	in := newInput(task)
+	in.TimeMaps = []model.TimeMap{deepMap(on(time.Monday, 9, 0, 11, 0))}
+	g := gridFor(in)
+	in.Busy = g.Overlapping(at(9, 9, 30), at(9, 10, 0))
+	s, err := Plan(in)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	d := s.Decisions[0]
+	if len(d.TimeMaps.Passes) == 0 {
+		t.Fatalf("no passes: %+v", d.TimeMaps)
+	}
+	for _, p := range d.TimeMaps.Passes {
+		if p.RejectedBusy != p.RejectedExternal+p.RejectedPin+p.RejectedPinned+p.RejectedPlaced {
+			t.Fatalf("busy breakdown must sum: %+v", p)
+		}
+		if p.RejectedOutOfWindow != p.RejectedBeforeBound+p.RejectedOutsidePlan {
+			t.Fatalf("window breakdown must sum: %+v", p)
+		}
+	}
+	foundExternal := false
+	for _, p := range d.TimeMaps.Passes {
+		if p.RejectedExternal > 0 {
+			foundExternal = true
+		}
+	}
+	if !foundExternal {
+		t.Fatalf("expected external rejection from busy mask: %+v", d.TimeMaps.Passes)
+	}
+	if d.Placement == nil || d.Placement.RequiredSlots != 4 {
+		t.Fatalf("placement required slots: %+v", d.Placement)
+	}
+}
+
+func TestDecisionsPinBreakdown(t *testing.T) {
+	pinned := localTask("pinned", duration(30))
+	pinned.Pin = &[]time.Time{at(9, 9, 30)}[0]
+	other := localTask("other", duration(60))
+	in := newInput(pinned, other)
+	in.TimeMaps = []model.TimeMap{deepMap(on(time.Monday, 9, 0, 11, 0))}
+	s, err := Plan(in)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var dOther *TaskDecision
+	for i := range s.Decisions {
+		if s.Decisions[i].TaskID == "other" {
+			dOther = &s.Decisions[i]
+		}
+	}
+	if dOther == nil {
+		t.Fatalf("missing other decision")
+	}
+	foundPin := false
+	for _, p := range dOther.TimeMaps.Passes {
+		if p.RejectedPin > 0 {
+			foundPin = true
+		}
+	}
+	if !foundPin {
+		t.Fatalf("expected pin rejection in passes: %+v", dOther.TimeMaps.Passes)
+	}
+}
+
+func TestDecisionsDispositionsExposed(t *testing.T) {
+	task := localTask("t1", duration(120))
+	in := newInput(task)
+	in.TimeMaps = []model.TimeMap{deepMap(on(time.Monday, 9, 0, 11, 0))}
+	in.Dispositions = []model.Disposition{{
+		TaskID: "t1", BlockIndex: 1, Kind: model.DispositionPinned,
+		Start: at(9, 9, 30), End: at(9, 10, 0),
+	}}
+	s, err := Plan(in)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	d := s.Decisions[0]
+	if len(d.Dispositions) != 1 || d.Dispositions[0].Kind != model.DispositionPinned {
+		t.Fatalf("dispositions: %+v", d.Dispositions)
 	}
 }

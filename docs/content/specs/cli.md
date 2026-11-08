@@ -52,7 +52,7 @@ use of *Schedule* as the noun, so the name is kept rather than replaced with
 | `--google-client-id ID`, `--google-client-secret SECRET` | `auth google` | Client pair for the flow (overrides file and env). |
 | `--google-refresh-token TOKEN` | `auth google` | Store this grant directly without running the browser flow. |
 | `--strict` | `check`, `schedule` | Treat reported problems as a non-zero exit. |
-| `--verbose` | all | Explain placement decisions. |
+| `--verbose` | all | Show placement reasoning: `check`/`forecast`/`schedule` add per-task decision summaries (consideration order, tie-break, outcome); `explain` is always full detail and `--verbose` adds the whole consideration order. Full per-task detail lives in `lodo explain <task-id>`. |
 | `--yes`, `-y` | `check`, `forecast`, `schedule`, `explain` | Answer yes to prompts: create a missing Time Maps page without asking. Not persisted. |
 
 ### Missing Time Maps page
@@ -104,6 +104,10 @@ the date, `level` as status); Loki parses it with `| json` and
 records; without it the log is `INFO`/`WARN`/`ERROR` only.
 
 `lodo explain --json` emits a stable, versioned schema with a root
-`schema_version` (starting at `1`) and the per-task decision produced by the
+`schema_version` (currently `2`) and the per-task decision produced by the
 actual resolve, reconcile, and planner logic. The schema evolves in an
-additive-compatible way.
+additive-compatible way: v2 adds `ordering` (including the actual
+`tie_break`/`tie_break_detail` and consideration `position`/`total`),
+per-task `dispositions`, `consideration_order_before`, `spillover`, and
+rejection breakdowns (`rejected_external/pin/pinned/placed_earlier`,
+`rejected_before_bound/outside_plan`) alongside the v1 fields.

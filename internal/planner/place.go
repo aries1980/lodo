@@ -16,6 +16,15 @@ type builder struct {
 	blocks []model.Block
 	expls  []Explanation
 
+	// Masks for explain breakdowns (all over the same grid): external
+	// calendar busy at run start, pins, user-moved (pinned) blocks, and the
+	// union of those three at the start of flexible placement. Placed-early
+	// pressure is busy minus baseBusy.
+	external   grid.Mask
+	pinMask    grid.Mask
+	pinnedMask grid.Mask
+	baseBusy   grid.Mask
+
 	traceNow        time.Time
 	traceToday      model.CivilDate
 	traceHorizonEnd model.CivilDate
@@ -87,7 +96,7 @@ func (b *builder) placeWithBound(plan *taskPlan, maps map[string]model.TimeMap, 
 	if b.traceHorizonEnd.Year != 0 {
 		plan.decision.Window.HorizonEnd = b.traceHorizonEnd.String()
 	}
-	plan.decision.Placement = &Placement{Floor: floor}
+	plan.decision.Placement = &Placement{Floor: floor, RequiredSlots: plan.n}
 
 	left := plan.required()
 	next := 0
@@ -100,7 +109,11 @@ func (b *builder) placeWithBound(plan *taskPlan, maps map[string]model.TimeMap, 
 		BestTier:      string(tierByRank(best)),
 		NoUpwardSpill: len(plan.task.TimeMaps) > 0 && len(primary) > 0 && fallback != nil,
 	}
-	state := &tierState{left: &left, next: &next, trace: &trace, window: window, floor: floor}
+	state := &tierState{
+		left: &left, next: &next, trace: &trace, window: window,
+		inside: insideMask(b.g, from, to), notBefore: b.g.NotBefore(bound),
+		floor: floor,
+	}
 
 	for _, tier := range []model.Tier{model.TierGreen, model.TierYellow, model.TierRed} {
 		if left == 0 {
@@ -117,11 +130,17 @@ func (b *builder) placeWithBound(plan *taskPlan, maps map[string]model.TimeMap, 
 
 // tierState carries the mutable placement cursor across tier passes.
 type tierState struct {
-	left   *int
-	next   *int
-	trace  *TimeMaps
-	window grid.Mask
-	floor  int
+	left      *int
+	next      *int
+	trace     *TimeMaps
+	window    grid.Mask
+	inside    grid.Mask
+	notBefore grid.Mask
+	floor     int
+}
+
+func insideMask(g *grid.Grid, from, to time.Time) grid.Mask {
+	return g.Inside(from, to)
 }
 
 // placeTier runs one tier pass: filter eligible runs, choose placement,
@@ -132,15 +151,12 @@ func (b *builder) placeTier(plan *taskPlan, state *tierState, mask grid.Mask, ti
 	}
 	before := *state.left
 	tierInWindow := mask.And(state.window)
-	free := tierInWindow.AndNot(b.busy)
+	// Snapshot busy before this pass emits, so placed-early pressure is the
+	// delta from earlier tasks (displacement), not this pass's own blocks.
+	busyBefore := b.busy.Clone()
+	free := tierInWindow.AndNot(busyBefore)
 	runs, belowFloorRuns, belowFloorSlots := eligibleRuns(b.g, free, state.floor)
 	allocs, comparator := choosePlacementTrace(runs, *state.left, state.floor)
-	// Fill run starts for allocations (placement package doesn't have grid).
-	for i, allocation := range allocs {
-		if allocation.run >= 0 && allocation.run < len(runs) {
-			comparator.Allocations[i].RunStart = b.g.Start(runs[allocation.run].run.Start)
-		}
-	}
 	for _, allocation := range allocs {
 		for plan.reserved[*state.next] {
 			*state.next++
@@ -159,6 +175,15 @@ func (b *builder) placeTier(plan *taskPlan, state *tierState, mask grid.Mask, ti
 		*state.left -= allocation.slots
 		*state.next++
 	}
+	// Exclusive busy breakdown: pin wins over pinned, pinned over placed,
+	// placed over external, so each rejected slot has one reason.
+	pinSlots := tierInWindow.And(b.pinMask)
+	pinnedSlots := tierInWindow.And(b.pinnedMask).AndNot(pinSlots)
+	placedSoFar := busyBefore.AndNot(b.baseBusy)
+	placedSlots := tierInWindow.And(placedSoFar).AndNot(pinSlots).AndNot(pinnedSlots)
+	externalSlots := tierInWindow.And(b.external).AndNot(pinSlots).AndNot(pinnedSlots).AndNot(tierInWindow.And(placedSoFar))
+	beforeBound := mask.AndNot(state.notBefore)
+	outsidePlan := mask.And(state.notBefore).AndNot(state.inside)
 	pass := TierPass{
 		Tier:                string(tier),
 		Primary:             isPrimary,
@@ -172,9 +197,15 @@ func (b *builder) placeTier(plan *taskPlan, state *tierState, mask grid.Mask, ti
 		FreeSlots:           free.Count(),
 		RunsConsidered:      len(runs),
 		RunsBelowFloor:      belowFloorRuns,
-		RejectedBusy:        tierInWindow.And(b.busy).Count(),
+		RejectedBusy:        tierInWindow.And(busyBefore).Count(),
 		RejectedOutOfWindow: mask.AndNot(state.window).Count(),
 		RejectedBelowFloor:  belowFloorSlots,
+		RejectedExternal:    externalSlots.Count(),
+		RejectedPin:         pinSlots.Count(),
+		RejectedPinned:      pinnedSlots.Count(),
+		RejectedPlaced:      placedSlots.Count(),
+		RejectedBeforeBound: beforeBound.Count(),
+		RejectedOutsidePlan: outsidePlan.Count(),
 	}
 	if len(allocs) > 0 || len(runs) > 0 {
 		comparator.Allocations = comparator.Allocations[:0]

@@ -75,6 +75,8 @@ func markBeyondHorizon(plan *taskPlan, scope *placementScope) bool {
 	plan.decision.Eligibility.Considered = false
 	plan.decision.Eligibility.BeyondHorizon = true
 	plan.decision.Eligibility.SkipReason = "beyond scheduling horizon: not due yet"
+	plan.decision.Ordering.TieBreak = "beyond-horizon"
+	plan.decision.Ordering.TieBreakDetail = "not due yet: plan-start is on or after the horizon end; left unplaced silently until it enters the window"
 	plan.decision.Window.Overdue = false
 	if scope.horizonEnd.Year != 0 {
 		plan.decision.Window.HorizonEnd = scope.horizonEnd.String()

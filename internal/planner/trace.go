@@ -24,6 +24,9 @@ type TaskDecision struct {
 	// Final blocks and outcome.
 	Blocks  []BlockDecision `json:"blocks,omitempty"`
 	Outcome Outcome         `json:"outcome"`
+	// Dispositions are the effective pinned/stood-down rows the planner saw
+	// for this task (user moves/deletes folded back via reconciliation).
+	Dispositions []model.Disposition `json:"dispositions,omitempty"`
 }
 
 // Eligibility explains why the Task entered (or did not enter) flexible placement.
@@ -41,14 +44,20 @@ type Eligibility struct {
 
 // Ordering records task-order context and tie-breaks that affected consideration.
 type Ordering struct {
-	Kind         string `json:"kind,omitempty"` // pin, time-bound, flexible, topo/cycle-blocked
+	Kind         string `json:"kind,omitempty"` // pin, time-bound, flexible, blocked, cycle-blocked, container, satisfied
 	GraphOrder   int    `json:"graph_order,omitempty"`
 	Priority     string `json:"priority,omitempty"`
 	PriorityRank int    `json:"priority_rank,omitempty"`
 	OutlineOrder int    `json:"outline_order"`
 	PlanEnd      string `json:"plan_end,omitempty"`
+	// Position is the 1-based index in consideration order; 0 means the task
+	// never became ready (blocked, cycle, beyond horizon, container, pin).
+	// Total is the number of tasks in consideration order this run.
+	Position int `json:"position,omitempty"`
+	Total    int `json:"total,omitempty"`
 	// TieBreak names the key that decided this Task's position among unrelated
-	// peers when relevant (plan-end, priority, outline-order, graph, id).
+	// peers when relevant (time-bound-first, plan-end, graph-order, priority,
+	// outline-order, graph, id, dependency, only-ready, blocked, ...).
 	TieBreak       string `json:"tie_break,omitempty"`
 	TieBreakDetail string `json:"tie_break_detail,omitempty"`
 }
@@ -87,21 +96,34 @@ type TimeMaps struct {
 
 // TierPass summarizes one tier pass of the actual placement search.
 type TierPass struct {
-	Tier                string              `json:"tier"`
-	Primary             bool                `json:"primary"`
-	FallbackAllowed     bool                `json:"fallback_allowed"`
-	SlotsBefore         int                 `json:"slots_before"`
-	SlotsPlaced         int                 `json:"slots_placed"`
-	SlotsAfter          int                 `json:"slots_after"`
-	Floor               int                 `json:"floor"`
-	EligibleTierSlots   int                 `json:"eligible_tier_slots"`
-	WindowSlots         int                 `json:"window_slots"`
-	FreeSlots           int                 `json:"free_slots"`
-	RunsConsidered      int                 `json:"runs_considered"`
-	RunsBelowFloor      int                 `json:"runs_below_floor"`
-	RejectedBusy        int                 `json:"rejected_busy,omitempty"`
-	RejectedOutOfWindow int                 `json:"rejected_out_of_window,omitempty"`
-	RejectedBelowFloor  int                 `json:"rejected_below_floor_slots,omitempty"`
+	Tier                string `json:"tier"`
+	Primary             bool   `json:"primary"`
+	FallbackAllowed     bool   `json:"fallback_allowed"`
+	SlotsBefore         int    `json:"slots_before"`
+	SlotsPlaced         int    `json:"slots_placed"`
+	SlotsAfter          int    `json:"slots_after"`
+	Floor               int    `json:"floor"`
+	EligibleTierSlots   int    `json:"eligible_tier_slots"`
+	WindowSlots         int    `json:"window_slots"`
+	FreeSlots           int    `json:"free_slots"`
+	RunsConsidered      int    `json:"runs_considered"`
+	RunsBelowFloor      int    `json:"runs_below_floor"`
+	RejectedBusy        int    `json:"rejected_busy,omitempty"`
+	RejectedOutOfWindow int    `json:"rejected_out_of_window,omitempty"`
+	RejectedBelowFloor  int    `json:"rejected_below_floor_slots,omitempty"`
+	// Breakdown of RejectedBusy into exclusive buckets (a slot blocked by
+	// both a pin and external busy counts as pin): external calendar busy,
+	// pins, user-moved (pinned) blocks, and blocks placed for earlier tasks
+	// in consideration order (displacement pressure).
+	RejectedExternal int `json:"rejected_external,omitempty"`
+	RejectedPin      int `json:"rejected_pin,omitempty"`
+	RejectedPinned   int `json:"rejected_pinned,omitempty"`
+	RejectedPlaced   int `json:"rejected_placed_earlier,omitempty"`
+	// Breakdown of RejectedOutOfWindow: before the dependency/now bound
+	// (past or waiting on dependencies) vs outside the plan window
+	// (plan-start/plan-end/horizon clip).
+	RejectedBeforeBound int                 `json:"rejected_before_bound,omitempty"`
+	RejectedOutsidePlan int                 `json:"rejected_outside_plan,omitempty"`
 	Comparator          *ComparatorDecision `json:"comparator,omitempty"`
 }
 
@@ -125,6 +147,9 @@ type Allocation struct {
 // Placement summarizes the flexible placement search for a Task.
 type Placement struct {
 	Floor int `json:"floor"`
+	// RequiredSlots is the whole duration in granularity units
+	// (ceil(duration/granularity)); the rounding source for granularity.
+	RequiredSlots int `json:"required_slots,omitempty"`
 }
 
 // BlockDecision records one final block for explain output.

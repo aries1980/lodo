@@ -10,19 +10,23 @@ import (
 
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/planner"
-	"github.com/aries1980/lodo/internal/reconcile"
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/run"
 )
 
-const explainSchemaVersion = 1
+// explainSchemaVersion is the stable --json schema version. v2 adds ordering,
+// dispositions, consideration predecessors and rejection breakdowns; all
+// additive over v1 (v1 readers ignore unknown fields).
+const explainSchemaVersion = 2
 
 type explainReport struct {
 	SchemaVersion int                          `json:"schema_version"`
 	Context       explainContext               `json:"context"`
 	Task          explainTask                  `json:"task"`
 	Eligibility   planner.Eligibility          `json:"eligibility"`
+	Ordering      planner.Ordering             `json:"ordering"`
 	Properties    []resolve.PropertyProvenance `json:"effective_properties,omitempty"`
 	Dependency    planner.Dependency           `json:"dependency_gate"`
 	Window        planner.Window               `json:"plan_window"`
@@ -30,9 +34,18 @@ type explainReport struct {
 	Placement     *planner.Placement           `json:"placement,omitempty"`
 	Blocks        []planner.BlockDecision      `json:"final_blocks,omitempty"`
 	Outcome       planner.Outcome              `json:"outcome"`
+	Dispositions  []model.Disposition          `json:"dispositions,omitempty"`
+	Predecessors  []string                     `json:"consideration_order_before,omitempty"`
+	Spillover     *explainSpillover            `json:"spillover,omitempty"`
 	Issues        []resolve.Issue              `json:"graph_issues,omitempty"`
 	Report        *shortfallJSON               `json:"report,omitempty"`
 	Busy          *busyJSON                    `json:"busy_sources,omitempty"`
+}
+
+type explainSpillover struct {
+	PrimaryPlaced  int    `json:"primary_placed"`
+	FallbackPlaced int    `json:"fallback_placed"`
+	Summary        string `json:"summary"`
 }
 
 type explainContext struct {
@@ -64,11 +77,19 @@ type explainTask struct {
 	OutlineOrder int             `json:"outline_order"`
 }
 
+// runExplain is read-only except for the one allowed graph write: creating a
+// missing Time Maps page only on confirmation (ADR 0015), like check/forecast.
+// It uses the same reconcile + planner logic as check/schedule (calendar busy
+// time and stored dispositions when available; degrades like check without
+// calendar), so the explanation reflects actual decisions, not an approximation.
 func runExplain(opts *options, ov configOverrides, query string, yes bool) error {
 	start := logRunStart(opts, "explain")
 	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "explain")); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
@@ -85,7 +106,7 @@ func runExplain(opts *options, ov configOverrides, query string, yes bool) error
 	var outcome run.CheckOutcome
 	if err != nil {
 		if strings.Contains(err.Error(), "google credentials") {
-			outcome, err = checkOutcomeWithoutCalendar(cfg, sources, st, now)
+			outcome, err = buildCheckOutcomeWithoutCalendar(cfg, sources, st, now)
 			if err != nil {
 				return &exitError{code: codeError, err: err}
 			}
@@ -140,6 +161,8 @@ func runExplain(opts *options, ov configOverrides, query string, yes bool) error
 	if gran == 0 {
 		gran = 15 * time.Minute
 	}
+	predecessors := explainPredecessors(outcome.Schedule.Decisions, decision.Ordering.Position)
+	spill := explainSpilloverFor(*decision)
 
 	if opts.json {
 		var rep *shortfallJSON
@@ -163,17 +186,21 @@ func runExplain(opts *options, ov configOverrides, query string, yes bool) error
 				Order: task.Order, Container: task.Container, ParentID: task.ParentID,
 				GraphOrder: task.GraphOrder, OutlineOrder: task.OutlineOrder,
 			},
-			Eligibility: decision.Eligibility,
-			Properties:  prov.Properties,
-			Dependency:  decision.Dependency,
-			Window:      decision.Window,
-			TimeMaps:    decision.TimeMaps,
-			Placement:   decision.Placement,
-			Blocks:      decision.Blocks,
-			Outcome:     decision.Outcome,
-			Issues:      issues,
-			Report:      rep,
-			Busy:        &busy,
+			Eligibility:  decision.Eligibility,
+			Ordering:     decision.Ordering,
+			Properties:   prov.Properties,
+			Dependency:   decision.Dependency,
+			Window:       decision.Window,
+			TimeMaps:     decision.TimeMaps,
+			Placement:    decision.Placement,
+			Blocks:       decision.Blocks,
+			Outcome:      decision.Outcome,
+			Dispositions: decision.Dispositions,
+			Predecessors: predecessors,
+			Spillover:    spill,
+			Issues:       issues,
+			Report:       rep,
+			Busy:         &busy,
 		}
 		if task.PlanStart != nil {
 			view.Task.PlanStart = task.PlanStart.String()
@@ -185,50 +212,63 @@ func runExplain(opts *options, ov configOverrides, query string, yes bool) error
 			return &exitError{code: codeError, err: err}
 		}
 	} else {
-		renderExplainText(opts.out, cfg, outcome, *task, *decision, prov, report, issues, now, style)
+		renderExplainText(opts.out, cfg, outcome, *task, *decision, prov, report, issues, predecessors, spill, gran, now, opts.verbose, style)
 	}
 	logBusyWarnings(opts, "explain", outcome.Busy)
 	logRunFinish(opts, "explain", start, map[string]any{"task": task.ID, "reason": decision.Outcome.Reason})
 	return nil
 }
 
-func checkOutcomeWithoutCalendar(cfg config.Config, sources []run.Source, st run.Store, now time.Time) (run.CheckOutcome, error) {
-	location, err := cfg.Scheduling.Location()
-	if err != nil {
-		return run.CheckOutcome{}, err
+func explainPredecessors(decisions []planner.TaskDecision, pos int) []string {
+	if pos <= 1 {
+		return nil
 	}
-	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
-	if err != nil {
-		return run.CheckOutcome{}, err
+	type pair struct {
+		pos int
+		id  string
 	}
-	result, err := run.ReadSources(context.Background(), sources, cfg.Logseq.PrimaryTimeMapsPage(), location)
-	if err != nil {
-		return run.CheckOutcome{}, err
-	}
-	_, _, storedDisps, err := st.All()
-	if err != nil {
-		return run.CheckOutcome{}, err
-	}
-	effective := reconcile.Effective(result.Tasks, storedDisps)
-	schedule, err := planner.Plan(planner.Input{
-		Tasks: result.Tasks, TimeMaps: result.TimeMaps,
-		Busy: nil, Dispositions: effective, Now: now,
-		Granularity: granularity, WindowDays: cfg.Scheduling.WindowDays, Location: location,
-	})
-	if err != nil {
-		return run.CheckOutcome{}, err
-	}
-	var stood []model.Disposition
-	for _, d := range effective {
-		if d.Kind == model.DispositionStoodDown {
-			stood = append(stood, d)
+	var pairs []pair
+	for _, d := range decisions {
+		if d.Ordering.Position > 0 && d.Ordering.Position < pos {
+			pairs = append(pairs, pair{pos: d.Ordering.Position, id: d.TaskID})
 		}
 	}
-	return run.CheckOutcome{
-		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
-		Dispositions: effective, AllDispositions: storedDisps,
-		Orphans: nil, StoodDown: stood, Provenance: result.Provenance,
-	}, nil
+	slices.SortFunc(pairs, func(a, b pair) int { return a.pos - b.pos })
+	out := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		out = append(out, p.id)
+	}
+	return out
+}
+
+func explainSpilloverFor(d planner.TaskDecision) *explainSpillover {
+	if len(d.TimeMaps.Passes) == 0 {
+		return nil
+	}
+	primary, fallback := 0, 0
+	for _, p := range d.TimeMaps.Passes {
+		if p.Primary {
+			primary += p.SlotsPlaced
+		} else {
+			fallback += p.SlotsPlaced
+		}
+	}
+	if primary+fallback == 0 {
+		return nil
+	}
+	var summary string
+	switch {
+	case fallback == 0:
+		summary = fmt.Sprintf("placed %d slots in primary maps; no spillover needed", primary)
+	case primary == 0:
+		summary = fmt.Sprintf("placed %d slots in fallback (default) maps; primary maps had no usable time", fallback)
+	default:
+		summary = fmt.Sprintf("placed %d slots in primary maps, spilled %d slots into fallback (default) maps", primary, fallback)
+	}
+	if d.TimeMaps.NoUpwardSpill {
+		summary += "; never spilled into a better tier than the project map's best"
+	}
+	return &explainSpillover{PrimaryPlaced: primary, FallbackPlaced: fallback, Summary: summary}
 }
 
 func findTask(tasks []model.Task, query string) (*model.Task, []model.Task, error) {
@@ -333,7 +373,7 @@ func issuesForTask(issues []resolve.Issue, id string) []resolve.Issue {
 	return out
 }
 
-func renderExplainText(w io.Writer, cfg config.Config, outcome run.CheckOutcome, task model.Task, d planner.TaskDecision, prov resolve.TaskProvenance, report *planner.TaskReport, issues []resolve.Issue, now time.Time, st styler) {
+func renderExplainText(w io.Writer, cfg config.Config, outcome run.CheckOutcome, task model.Task, d planner.TaskDecision, prov resolve.TaskProvenance, report *planner.TaskReport, issues []resolve.Issue, predecessors []string, spill *explainSpillover, gran time.Duration, now time.Time, verbose bool, st styler) {
 	loc := schedulingLocation(cfg)
 	_, _ = fmt.Fprintln(w, st.header("Explain: "+graphLabel(outcome.Tasks, task.ID)))
 	_, _ = fmt.Fprintf(w, "  id: %s\n", task.ID)
@@ -341,9 +381,12 @@ func renderExplainText(w io.Writer, cfg config.Config, outcome run.CheckOutcome,
 		_, _ = fmt.Fprintf(w, "  graph: %s\n", task.Graph)
 	}
 	_, _ = fmt.Fprintf(w, "  marker: %s  duration: %s  container: %v\n", task.Marker, task.Duration, task.Container)
+	required := norm.Units(task.Duration, gran)
 	_, _ = fmt.Fprintln(w, st.bold("\nEligibility:"))
 	_, _ = fmt.Fprintf(w, "  considered: %v  required: %d  stood_down: %d  pinned: %d  flexible: %d\n",
 		d.Eligibility.Considered, d.Eligibility.RequiredSlots, d.Eligibility.StoodDownSlots, d.Eligibility.PinnedSlots, d.Eligibility.FlexibleSlots)
+	_, _ = fmt.Fprintf(w, "  granularity: %s → %d slots (ceil duration/granularity); floor %d slots per block%s\n",
+		gran, required, placementFloor(d), floorNote(d))
 	if d.Eligibility.SkipReason != "" {
 		_, _ = fmt.Fprintf(w, "  skip: %s\n", d.Eligibility.SkipReason)
 	}
@@ -367,10 +410,26 @@ func renderExplainText(w io.Writer, cfg config.Config, outcome run.CheckOutcome,
 		_, _ = fmt.Fprintf(w, "  %s = %q  [%s%s]\n", p.Property, p.Value, src, inh)
 	}
 
+	renderDispositionsText(w, d, loc, st)
+
 	_, _ = fmt.Fprintln(w, st.bold("\nOrdering / tie-breaks (actual task ordering):"))
 	_, _ = fmt.Fprintf(w, "  kind: %s  priority: %s (rank %d)  outline_order: %d  graph_order: %d  plan_end: %s\n",
 		d.Ordering.Kind, d.Ordering.Priority, d.Ordering.PriorityRank, d.Ordering.OutlineOrder, d.Ordering.GraphOrder, d.Ordering.PlanEnd)
-	_, _ = fmt.Fprintln(w, "  tie-break order: dependencies first (topo), then time-bound before flexible; time-bound by plan-end, priority, outline order (depth-first, top-to-bottom), graph, id; flexible by priority, outline order, graph, id. Outline order is the final positional tie-break among equals.")
+	if d.Ordering.Position > 0 {
+		_, _ = fmt.Fprintf(w, "  consideration: #%d of %d\n", d.Ordering.Position, d.Ordering.Total)
+	} else {
+		_, _ = fmt.Fprintf(w, "  consideration: unconsidered (total %d in order)\n", d.Ordering.Total)
+	}
+	if d.Ordering.TieBreak != "" {
+		_, _ = fmt.Fprintf(w, "  tie-break: %s\n", d.Ordering.TieBreak)
+	}
+	if d.Ordering.TieBreakDetail != "" {
+		_, _ = fmt.Fprintf(w, "  tie-break detail: %s\n", d.Ordering.TieBreakDetail)
+	}
+	_, _ = fmt.Fprintln(w, "  order: dependencies first (topological), then time-bound before flexible; time-bound by plan-end, then graph-order, priority, outline-order, graph, id; flexible by graph-order, priority, outline-order, graph, id. Outline-order is the final positional tie-break among equals: moving a block re-prioritises it.")
+	if len(predecessors) > 0 {
+		_, _ = fmt.Fprintf(w, "  earlier in order (%d): %s\n  (earlier tasks win contested slots; the schedule is computed from scratch, so staying put is emergent, not remembered)\n", len(predecessors), strings.Join(predecessorLabels(outcome, predecessors), ", "))
+	}
 
 	_, _ = fmt.Fprintln(w, st.bold("\nDependency gate:"))
 	_, _ = fmt.Fprintf(w, "  depends: %v\n", d.Dependency.Depends)
@@ -406,14 +465,17 @@ func renderExplainText(w io.Writer, cfg config.Config, outcome run.CheckOutcome,
 		if !p.Primary {
 			role = "fallback"
 		}
-		_, _ = fmt.Fprintf(w, "  pass tier=%s %s: before=%d placed=%d after=%d floor=%d eligible_tier=%d in_window=%d free=%d runs=%d below_floor_runs=%d rejected_busy=%d rejected_out_of_window=%d rejected_below_floor_slots=%d\n",
-			p.Tier, role, p.SlotsBefore, p.SlotsPlaced, p.SlotsAfter, p.Floor, p.EligibleTierSlots, p.WindowSlots, p.FreeSlots, p.RunsConsidered, p.RunsBelowFloor, p.RejectedBusy, p.RejectedOutOfWindow, p.RejectedBelowFloor)
+		_, _ = fmt.Fprintf(w, "  pass tier=%s %s: before=%d placed=%d after=%d floor=%d eligible_tier=%d in_window=%d free=%d runs=%d below_floor_runs=%d rejected_busy=%d (external=%d pin=%d pinned=%d placed-earlier=%d) rejected_out_of_window=%d (before-bound=%d outside-plan=%d) rejected_below_floor_slots=%d\n",
+			p.Tier, role, p.SlotsBefore, p.SlotsPlaced, p.SlotsAfter, p.Floor, p.EligibleTierSlots, p.WindowSlots, p.FreeSlots, p.RunsConsidered, p.RunsBelowFloor, p.RejectedBusy, p.RejectedExternal, p.RejectedPin, p.RejectedPinned, p.RejectedPlaced, p.RejectedOutOfWindow, p.RejectedBeforeBound, p.RejectedOutsidePlan, p.RejectedBelowFloor)
 		if p.Comparator != nil {
 			_, _ = fmt.Fprintf(w, "    comparator (ADR 0010): completeness=%d chosen_blocks=%d keys=%v\n", p.Comparator.Completeness, p.Comparator.ChosenBlocks, p.Comparator.DecisionKeys)
 			for _, a := range p.Comparator.Allocations {
 				_, _ = fmt.Fprintf(w, "      alloc: %s slots=%d run_slots=%d\n", a.RunStart.In(loc).Format("Mon 15:04"), a.Slots, a.RunSlots)
 			}
 		}
+	}
+	if spill != nil {
+		_, _ = fmt.Fprintf(w, "  spillover: %s\n", spill.Summary)
 	}
 
 	_, _ = fmt.Fprintln(w, st.bold("\nFinal blocks / shortfall:"))
@@ -450,5 +512,93 @@ func renderExplainText(w io.Writer, cfg config.Config, outcome run.CheckOutcome,
 	if outcome.Busy.WriteCalendar == "" && len(outcome.Busy.Sources) == 0 {
 		_, _ = fmt.Fprintln(w, st.dim("\nNote: no calendar context (degraded fallback) — busy time/reconcile not applied; placement may differ from `lodo check`/`schedule` with calendar access."))
 	}
+	if verbose {
+		renderConsiderationOrder(w, outcome, d.TaskID, st)
+	}
 	printBusyText(w, outcome.Busy, st)
+}
+
+func placementFloor(d planner.TaskDecision) int {
+	if d.Placement != nil {
+		return d.Placement.Floor
+	}
+	if len(d.TimeMaps.Passes) > 0 {
+		return d.TimeMaps.Passes[0].Floor
+	}
+	return 2
+}
+
+func floorNote(d planner.TaskDecision) string {
+	if d.Placement != nil && d.Placement.RequiredSlots == 1 {
+		return " (single-slot task: floor 1)"
+	}
+	return ""
+}
+
+func renderDispositionsText(w io.Writer, d planner.TaskDecision, loc *time.Location, st styler) {
+	_, _ = fmt.Fprintln(w, st.bold("\nDispositions (reconciled user moves/deletes):"))
+	if len(d.Dispositions) == 0 {
+		_, _ = fmt.Fprintln(w, "  (none: no pinned or stood-down blocks; moves would appear here as pinned and deletes as stood-down)")
+		return
+	}
+	for _, disp := range d.Dispositions {
+		switch disp.Kind {
+		case model.DispositionPinned:
+			_, _ = fmt.Fprintf(w, "  pinned block %d: %s-%s (user move honoured exactly, never snapped)\n",
+				disp.BlockIndex, disp.Start.In(loc).Format("Mon 15:04"), disp.End.In(loc).Format("15:04"))
+		case model.DispositionStoodDown:
+			_, _ = fmt.Fprintf(w, "  stood-down block %d: %d slots (user delete; not recreated until inputs change)\n",
+				disp.BlockIndex, disp.Slots)
+		default:
+			_, _ = fmt.Fprintf(w, "  %s block %d\n", disp.Kind, disp.BlockIndex)
+		}
+	}
+}
+
+func predecessorLabels(outcome run.CheckOutcome, ids []string) []string {
+	byText := textByTasks(outcome.Tasks)
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		text := byText[id]
+		if text == "" {
+			text = id
+		} else {
+			text = id + " " + text
+		}
+		out = append(out, text)
+	}
+	return out
+}
+
+func renderConsiderationOrder(w io.Writer, outcome run.CheckOutcome, currentID string, st styler) {
+	decisions := append([]planner.TaskDecision(nil), outcome.Schedule.Decisions...)
+	slices.SortFunc(decisions, func(a, b planner.TaskDecision) int {
+		ao, bo := a.Ordering.Position, b.Ordering.Position
+		if ao == 0 && bo == 0 {
+			return strings.Compare(a.TaskID, b.TaskID)
+		}
+		if ao == 0 {
+			return 1
+		}
+		if bo == 0 {
+			return -1
+		}
+		if ao != bo {
+			return ao - bo
+		}
+		return strings.Compare(a.TaskID, b.TaskID)
+	})
+	_, _ = fmt.Fprintln(w, st.bold("\nConsideration order (--verbose):"))
+	for _, d := range decisions {
+		marker := " "
+		if d.TaskID == currentID {
+			marker = ">"
+		}
+		pos := "unconsidered"
+		if d.Ordering.Position > 0 {
+			pos = fmt.Sprintf("#%d/%d", d.Ordering.Position, d.Ordering.Total)
+		}
+		_, _ = fmt.Fprintf(w, "  %s %s %s (%s, tie-break %s): placed=%d shortfall=%d reason=%q\n",
+			marker, pos, graphLabel(outcome.Tasks, d.TaskID), d.Ordering.Kind, d.Ordering.TieBreak, d.Outcome.Placed, d.Outcome.Shortfall, d.Outcome.Reason)
+	}
 }

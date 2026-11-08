@@ -169,7 +169,9 @@ func Plan(in Input) (Schedule, error) {
 		return Schedule{}, err
 	}
 
-	planBuilder := &builder{g: g, busy: busy}
+	planBuilder := &builder{g: g, busy: busy, external: busy.Clone()}
+	planBuilder.pinMask = grid.NewMask(g.Len())
+	planBuilder.pinnedMask = grid.NewMask(g.Len())
 
 	// Pins are immovable and exact, so they shape the timeline before any
 	// search begins. They are emitted at their authored time, never snapped.
@@ -177,7 +179,10 @@ func Plan(in Input) (Schedule, error) {
 	// reported after placement.
 	pins := collectPins(plans)
 	emitPins(pins, planBuilder)
+	planBuilder.pinMask = planBuilder.busy.AndNot(planBuilder.external)
 	emitPinned(plans, planBuilder, in.Granularity)
+	planBuilder.pinnedMask = planBuilder.busy.AndNot(planBuilder.external).AndNot(planBuilder.pinMask)
+	planBuilder.baseBusy = planBuilder.busy.Clone()
 
 	// Order the search: topological over dependencies first (deps before
 	// dependents, even across time-bound/flexible), existing comparator as

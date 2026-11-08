@@ -73,7 +73,7 @@ func loadSources(opts *options, ov configOverrides) (config.Config, []run.Source
 		if err != nil {
 			return config.Config{}, nil, config.Credentials{}, err
 		}
-		sources := []run.Source{{Client: client}}
+		sources := []run.Source{{Client: client, APIURL: cfg.Logseq.APIURL}}
 		return cfg, sources, creds, nil
 	}
 
@@ -92,6 +92,7 @@ func loadSources(opts *options, ov configOverrides) (config.Config, []run.Source
 			Order:          i,
 			Client:         client,
 			DefaultTimeMap: cfg.Logseq.GraphDefault(g.Name),
+			APIURL:         g.APIURL,
 		})
 	}
 	return cfg, sources, creds, nil
@@ -142,6 +143,9 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "check")); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
@@ -205,29 +209,27 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 	return nil
 }
 
-// runCheckWithoutCalendar is the no-credentials fallback: the graph plus
-// stored stood-down, planned with no busy time. No in-memory reconcile
-// happens here — with no observed events, every binding would look deleted.
-// Orphaned needs the calendar, so it stays empty.
-func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store) error {
-	start := logRunStart(opts, "check")
-	style := newStyler(opts.out, opts.disableColors)
-	now := time.Now()
+// buildCheckOutcomeWithoutCalendar is the shared no-credentials fallback:
+// the graph plus stored dispositions, planned with no busy time. No in-memory
+// reconcile happens here — with no observed events, every binding would look
+// deleted. Orphaned needs the calendar, so it stays empty. Used by check and
+// explain so the degraded path cannot drift.
+func buildCheckOutcomeWithoutCalendar(cfg config.Config, sources []run.Source, st run.Store, now time.Time) (run.CheckOutcome, error) {
 	location, err := cfg.Scheduling.Location()
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return run.CheckOutcome{}, err
 	}
 	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return run.CheckOutcome{}, err
 	}
 	result, err := run.ReadSources(context.Background(), sources, cfg.Logseq.PrimaryTimeMapsPage(), location)
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return run.CheckOutcome{}, err
 	}
 	_, _, storedDisps, err := st.All()
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return run.CheckOutcome{}, err
 	}
 	effective := reconcile.Effective(result.Tasks, storedDisps)
 	schedule, err := planner.Plan(planner.Input{
@@ -236,7 +238,7 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 		Granularity: granularity, WindowDays: cfg.Scheduling.WindowDays, Location: location,
 	})
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return run.CheckOutcome{}, err
 	}
 	var stood []model.Disposition
 	for _, d := range effective {
@@ -244,10 +246,24 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 			stood = append(stood, d)
 		}
 	}
-	outcome := run.CheckOutcome{
+	return run.CheckOutcome{
 		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
 		Dispositions: effective, AllDispositions: storedDisps,
 		Orphans: nil, StoodDown: stood, Provenance: result.Provenance,
+	}, nil
+}
+
+// runCheckWithoutCalendar is the no-credentials fallback: the graph plus
+// stored stood-down, planned with no busy time. No in-memory reconcile
+// happens here — with no observed events, every binding would look deleted.
+// Orphaned needs the calendar, so it stays empty.
+func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store) error {
+	start := logRunStart(opts, "check")
+	style := newStyler(opts.out, opts.disableColors)
+	now := time.Now()
+	outcome, err := buildCheckOutcomeWithoutCalendar(cfg, sources, st, now)
+	if err != nil {
+		return &exitError{code: codeError, err: err}
 	}
 	_ = grid.Build // keep grid import referenced when busy is nil
 	if opts.json {
@@ -294,6 +310,9 @@ func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
+		return &exitError{code: codeError, err: err}
+	}
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "forecast")); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
@@ -535,6 +554,10 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool, st sty
 				checkTaskLabel(outcome, e.TaskID), e.BlockIndex,
 				e.Start.Format("Mon 15:04"), e.Slots, e.Kind)
 		}
+		renderDecisionSummaries(w, outcome.Schedule.Decisions, func(id string) string {
+			return checkTaskLabel(outcome, id)
+		}, st)
+		_, _ = fmt.Fprintln(w, st.dim("For full reasoning use `lodo explain <task-id>` (same planner logic, per-task detail)."))
 	}
 
 	printBusyText(w, outcome.Busy, st)
@@ -677,6 +700,10 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 			}
 			_, _ = fmt.Fprintln(w, st.dim(line))
 		}
+		renderDecisionSummaries(w, outcome.Schedule.Decisions, func(id string) string {
+			return taskLabel(outcome, id)
+		}, st)
+		_, _ = fmt.Fprintln(w, st.dim("For full reasoning use `lodo explain <task-id>` (same planner logic, per-task detail)."))
 	}
 
 	// Summary footer for humans and cron mail.
@@ -692,6 +719,62 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 // taskLabel prefers the Task's text, falling back to its id.
 func taskLabel(outcome run.Outcome, id string) string {
 	return graphLabel(outcome.Tasks, id)
+}
+
+// renderDecisionSummaries prints one line per task decision in consideration
+// order (then id), so --verbose shows structured reasoning, not just blocks.
+// It consumes planner.TaskDecision produced by the actual Plan run (no drift).
+func renderDecisionSummaries(w io.Writer, decisions []planner.TaskDecision, label func(string) string, st styler) {
+	if len(decisions) == 0 {
+		return
+	}
+	ordered := append([]planner.TaskDecision(nil), decisions...)
+	slices.SortFunc(ordered, func(a, b planner.TaskDecision) int {
+		ao, bo := a.Ordering.Position, b.Ordering.Position
+		if ao == 0 && bo == 0 {
+			return strings.Compare(a.TaskID, b.TaskID)
+		}
+		if ao == 0 {
+			return 1
+		}
+		if bo == 0 {
+			return -1
+		}
+		if ao != bo {
+			return ao - bo
+		}
+		return strings.Compare(a.TaskID, b.TaskID)
+	})
+	_, _ = fmt.Fprintln(w, st.bold("Decisions (consideration order):"))
+	for _, d := range ordered {
+		pos := ""
+		if d.Ordering.Position > 0 {
+			pos = fmt.Sprintf("#%d/%d ", d.Ordering.Position, d.Ordering.Total)
+		} else {
+			pos = "unconsidered "
+		}
+		kind := d.Ordering.Kind
+		if kind == "" {
+			kind = "flexible"
+		}
+		tie := d.Ordering.TieBreak
+		if tie == "" {
+			tie = "—"
+		}
+		line := fmt.Sprintf("  %s%s (%s, tie-break %s): required=%d placed=%d stood_down=%d shortfall=%d",
+			pos, label(d.TaskID), kind, tie,
+			d.Outcome.Required, d.Outcome.Placed, d.Outcome.StoodDown, d.Outcome.Shortfall)
+		if d.Outcome.Reason != "" {
+			line += " — " + d.Outcome.Reason
+		}
+		if len(d.Outcome.BlockedBy) > 0 {
+			line += " (blocked by " + strings.Join(d.Outcome.BlockedBy, ", ") + ")"
+		}
+		_, _ = fmt.Fprintln(w, st.dim(line))
+		if d.Ordering.TieBreakDetail != "" {
+			_, _ = fmt.Fprintf(w, "    tie-break: %s\n", d.Ordering.TieBreakDetail)
+		}
+	}
 }
 
 // forecastBlockedLabels prefers Task text for blocker IDs.
