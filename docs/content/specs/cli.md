@@ -17,6 +17,7 @@ scheduler: cron (or a manual run) calling `lodo schedule` is the intended deploy
 | `lodo forecast` | none alone; creates the Time Maps page only on confirmation | Dry run: compute and print the Schedule that *would* be written, with shortfall reasons including dependency blocks. |
 | `lodo schedule` | calendar + SQLite | The workhorse. Reconciles the calendar, computes, and creates/updates/removes Managed Events. |
 | `lodo refresh` | SQLite only | Pull-only: read the calendar and fold the user's moves and deletes into local state, without recomputing. |
+| `lodo explain <task-id\|uuid\|query>` | none alone; creates the Time Maps page only on confirmation | Read-only: explain why a Task was placed, moved, left short, or blocked. Uses the same reconcile + planner logic as `check`/`schedule` (calendar busy time and stored dispositions when available; degrades like `check` without calendar). Shows eligibility, effective/inherited properties, dependency gate, plan/window, Time Maps/tiers, rejection/comparator reasons (ADR 0010/0014), and final blocks or shortfall. |
 | `lodo auth google` | credentials | One-time OAuth; stores the refresh token. |
 
 ### `lodo schedule` reconciles first
@@ -52,7 +53,7 @@ use of *Schedule* as the noun, so the name is kept rather than replaced with
 | `--google-refresh-token TOKEN` | `auth google` | Store this grant directly without running the browser flow. |
 | `--strict` | `check`, `schedule` | Treat reported problems as a non-zero exit. |
 | `--verbose` | all | Explain placement decisions. |
-| `--yes`, `-y` | `check`, `forecast`, `schedule` | Answer yes to prompts: create a missing Time Maps page without asking. Not persisted. |
+| `--yes`, `-y` | `check`, `forecast`, `schedule`, `explain` | Answer yes to prompts: create a missing Time Maps page without asking. Not persisted. |
 
 ### Missing Time Maps page
 
@@ -101,3 +102,8 @@ Datadog parses the JSONL natively via a JSON pipeline (`timestamp` as
 the date, `level` as status); Loki parses it with `| json` and
 `timestamp` as the detected time field. `--verbose` maps to `DEBUG`
 records; without it the log is `INFO`/`WARN`/`ERROR` only.
+
+`lodo explain --json` emits a stable, versioned schema with a root
+`schema_version` (starting at `1`) and the per-task decision produced by the
+actual resolve, reconcile, and planner logic. The schema evolves in an
+additive-compatible way.

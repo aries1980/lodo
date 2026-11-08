@@ -58,7 +58,8 @@ type Outcome struct {
 	Managed []calendar.Event
 	// Busy carries the write calendar plus per-read-calendar status for the
 	// busy sources line and warnings.
-	Busy calendar.BusyReport
+	Busy       calendar.BusyReport
+	Provenance map[string]resolve.TaskProvenance
 }
 
 // Graph reads the graph fresh, resolves it, projects the calendar's busy
@@ -104,7 +105,7 @@ func Graph(ctx context.Context, client logseq.Client, busy BusySource, cfg confi
 		return Outcome{}, err
 	}
 
-	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed, Busy: busyReport}, nil
+	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed, Busy: busyReport, Provenance: result.Provenance}, nil
 }
 
 // Read walks the read strategy from logseq-integration.md: enumerate pages,
@@ -205,6 +206,7 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 	var allTasks []model.Task
 	var allIssues []resolve.Issue
 	var maps []model.TimeMap
+	provenance := map[string]resolve.TaskProvenance{}
 	first := true
 	for _, s := range sources {
 		res, err := readOne(ctx, s.Client, timeMapsPage, loc, s.Name, s.Order, s.DefaultTimeMap)
@@ -212,6 +214,9 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 			return resolve.Result{}, fmt.Errorf("graph %s: %w", s.Name, err)
 		}
 		allTasks = append(allTasks, res.Tasks...)
+		for id, p := range res.Provenance {
+			provenance[id] = p
+		}
 		if first {
 			maps = res.TimeMaps
 			allIssues = append(allIssues, res.Issues...)
@@ -231,7 +236,7 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 	if err := validateTaskIDs(allTasks); err != nil {
 		return resolve.Result{}, err
 	}
-	return resolve.Result{Tasks: allTasks, TimeMaps: maps, Issues: allIssues}, nil
+	return resolve.Result{Tasks: allTasks, TimeMaps: maps, Issues: allIssues, Provenance: provenance}, nil
 }
 
 // readOne is Read plus graph identity.
@@ -316,7 +321,7 @@ func GraphSources(ctx context.Context, sources []Source, busy BusySource, cfg co
 		return Outcome{}, err
 	}
 
-	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed, Busy: busyReport}, nil
+	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed, Busy: busyReport, Provenance: result.Provenance}, nil
 }
 
 // hasCandidate reports whether any block in the tree is marked TODO or

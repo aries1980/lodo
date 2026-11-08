@@ -8,27 +8,33 @@ import (
 // Task is a schedulable unit of work, resolved from a Logseq block. A block is
 // a Task iff it is TODO/DOING and carries an explicit duration.
 type Task struct {
+	// Identity across runs.
 	ID string // Logseq block UUID; the Task's identity across runs
 	// Graph is the source graph slug (work, family); empty in single-graph mode.
 	Graph string
 	// GraphOrder is the graph config index for deterministic cross-graph
 	// ordering; 0 in single-graph mode. Not user intent, never snapshotted.
-	GraphOrder   int
-	Text         string
-	Marker       Marker
-	Duration     time.Duration
-	TimeMaps     []string // Time Map slugs; empty means the default map
-	Priority     Priority
-	Deadline     *CivilDate
-	PlanStart    *CivilDate
-	PlanEnd      *CivilDate
-	Pin          *time.Time // from scheduled::
-	OutlineOrder int        // depth-first, top-to-bottom Logseq order
+	GraphOrder int
+	// Display.
+	Text   string
+	Marker Marker
+	// Scheduling inputs.
+	Duration time.Duration
+	TimeMaps []string // Time Map slugs; empty means the default map
+	Priority Priority
+	Deadline *CivilDate
+	// Planning window and pin.
+	PlanStart *CivilDate
+	PlanEnd   *CivilDate
+	Pin       *time.Time // from scheduled::
+	// Outline position.
+	OutlineOrder int // depth-first, top-to-bottom Logseq order
 	// Depends holds the effective finish-to-start predecessors: explicit
 	// depends:: refs plus implicit sequential-chain edges, expanded so a
 	// container expands to its leaf Tasks. Sorted, deduplicated; unknown IDs
 	// stay so the planner can block and report them.
 	Depends []string
+	// Hierarchy.
 	// Order is the sequential/parallel flag for this Task's children
 	// (inherited down until overridden; empty means parallel).
 	Order OrderMode

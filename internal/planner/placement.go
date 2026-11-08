@@ -28,13 +28,22 @@ type seq []alloc
 // Block of floor slots; Blocks are at most one per run, starting at the run's
 // first slot.
 func choosePlacement(runs []placementRun, required, floor int) []alloc {
+	allocs, _ := choosePlacementTrace(runs, required, floor)
+	return allocs
+}
+
+// choosePlacementTrace is choosePlacement plus the comparator decision, so
+// explain reflects the actual ADR 0010 logic without drift.
+func choosePlacementTrace(runs []placementRun, required, floor int) ([]alloc, ComparatorDecision) {
+	dec := ComparatorDecision{Candidates: len(runs), FeasibleRuns: len(runs)}
 	if required < floor || len(runs) == 0 {
-		return nil
+		return nil, dec
 	}
 
 	placed := maxPlaceable(runs, required, floor)
+	dec.Completeness = placed
 	if placed == 0 {
-		return nil
+		return nil, dec
 	}
 
 	best := bestSuffixes(runs, placed, floor)
@@ -57,7 +66,33 @@ func choosePlacement(runs []placementRun, required, floor int) []alloc {
 			}
 		}
 	}
-	return winner
+	dec.ChosenBlocks = len(winner)
+	dec.DecisionKeys = comparatorKeys(runs, winner)
+	for _, a := range winner {
+		dec.Allocations = append(dec.Allocations, Allocation{
+			RunSlots: runs[a.run].run.Slots,
+			Slots:    a.slots,
+		})
+	}
+	return winner, dec
+}
+
+// comparatorKeys reports which ADR 0010 keys characterize the chosen placement.
+func comparatorKeys(runs []placementRun, winner seq) []string {
+	if len(winner) == 0 {
+		return nil
+	}
+	keys := []string{"completeness (max placed hours)"}
+	if len(winner) == 1 {
+		keys = append(keys, "contiguity (single block when feasible)")
+	} else {
+		keys = append(keys, "block count (fewer blocks)")
+		keys = append(keys, "block starts (earlier)")
+		keys = append(keys, "block sizes (largest-first)")
+	}
+	// Front-loading/start-day is reflected in run order and first allocation day.
+	keys = append(keys, "front-loading/start day (earliest feasible)")
+	return keys
 }
 
 // maxPlaceable returns the most slots that can legally be placed, which is how

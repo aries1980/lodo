@@ -9,6 +9,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
@@ -223,7 +224,7 @@ func TestGoldenForecast(t *testing.T) {
 			{TaskID: "t-errands", BlockIndex: 0, Kind: model.BlockFlexible, Start: at(14, 10, 0), Slots: 8, RunStart: at(14, 10, 0), RunSlots: 12},
 		},
 	}
-	if diff := cmp.Diff(want, outcome.Schedule); diff != "" {
+	if diff := cmp.Diff(want, outcome.Schedule, cmpopts.IgnoreFields(planner.Schedule{}, "Decisions")); diff != "" {
 		t.Fatalf("Schedule mismatch (-want +got):\n%s", diff)
 	}
 
@@ -305,7 +306,7 @@ func TestBusyShapesForecastAndKeepsManagedAside(t *testing.T) {
 			{TaskID: "t-audit", BlockIndex: 0, Kind: model.BlockFlexible, Start: at(9, 11, 0), Slots: 2, RunStart: at(9, 11, 0), RunSlots: 4},
 		},
 	}
-	if diff := cmp.Diff(want, outcome.Schedule); diff != "" {
+	if diff := cmp.Diff(want, outcome.Schedule, cmpopts.IgnoreFields(planner.Schedule{}, "Decisions")); diff != "" {
 		t.Fatalf("Schedule mismatch (-want +got):\n%s", diff)
 	}
 	if len(outcome.Managed) != 1 || outcome.Managed[0].ID != "m-1" {

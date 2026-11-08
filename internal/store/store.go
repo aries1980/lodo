@@ -177,7 +177,6 @@ func (s *Store) LastRun() (RunRecord, error) {
 }
 
 // All loads every row: bindings, task snapshots and dispositions.
-// Dispositions convert dumbly to []model.Disposition (M2 shape).
 func (s *Store) All() (bindings []Binding, snapshots map[string]model.Snapshot, dispositions []model.Disposition, err error) {
 	bindings, err = s.ListBindings()
 	if err != nil {
