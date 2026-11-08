@@ -237,6 +237,24 @@ func TestUnreachableApp(t *testing.T) {
 	if !strings.Contains(err.Error(), "logseq api") {
 		t.Fatalf("error = %q, want the logseq api prefix", err.Error())
 	}
+	if err := client.Ping(context.Background()); err == nil {
+		t.Fatal("Ping succeeded against a dead app")
+	} else if !strings.Contains(err.Error(), "logseq api") {
+		t.Fatalf("Ping error = %q, want the logseq api prefix", err.Error())
+	}
+}
+
+func TestPing(t *testing.T) {
+	client, calls := newStubApp(t, func(_ stubCall) (string, int) {
+		return `[{"name":"Time Maps","uuid":"tm"}]`, http.StatusOK
+	})
+
+	if err := client.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+	if len(*calls) != 1 || (*calls)[0].Method != "logseq.Editor.get_all_pages" {
+		t.Fatalf("calls = %+v, want one get_all_pages probe", *calls)
+	}
 }
 
 func TestAccessTokenRequired(t *testing.T) {

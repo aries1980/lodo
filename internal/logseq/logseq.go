@@ -58,6 +58,11 @@ type Block struct {
 // recommended defaults through the same adapter. Lodo never edits the
 // user's Tasks, Blocks, or properties.
 type Client interface {
+	// Ping probes whether the app answers at all. It is the fail-early
+	// gate the CLI runs before calendar/store I/O: a refused or hung
+	// endpoint fails here with an actionable hint instead of surfacing
+	// mid-read as a bare transport error.
+	Ping(ctx context.Context) error
 	// Pages lists every page in the graph.
 	Pages(ctx context.Context) ([]*Page, error)
 	// Page returns one page's properties, or nil when the page does not

@@ -65,6 +65,8 @@ func (c *stubClient) Pages(context.Context) ([]*logseq.Page, error) {
 	return out, nil
 }
 
+func (c *stubClient) Ping(context.Context) error { return nil }
+
 func (c *stubClient) Page(_ context.Context, name string) (*logseq.Page, error) {
 	c.pageCalls = append(c.pageCalls, name)
 	if info, ok := c.props[name]; ok {

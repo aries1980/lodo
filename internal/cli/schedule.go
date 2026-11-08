@@ -26,6 +26,9 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "schedule")); err != nil {
+		return &exitError{code: codeError, err: err}
+	}
 	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}

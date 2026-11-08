@@ -149,6 +149,19 @@ func snippet(data []byte) string {
 	return strings.TrimSpace(s)
 }
 
+// Ping probes whether the app answers at all by calling
+// editor_get_all_pages and discarding the payload. It reuses the read
+// path the resolvers already depend on, so no new API surface is assumed
+// (App.getCurrentGraph is read-only but version-skewed); decoding into a
+// raw message keeps the probe cheap however large the graph is.
+func (c *apiClient) Ping(ctx context.Context) error {
+	var raw json.RawMessage
+	if err := c.call(ctx, "logseq.Editor.get_all_pages", []any{}, &raw); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Pages lists every page by calling editor_get_all_pages. The response rows
 // carry name plus metadata; decoding keeps only what the adapter returns.
 func (c *apiClient) Pages(ctx context.Context) ([]*Page, error) {

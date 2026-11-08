@@ -38,6 +38,8 @@ func (c *memClient) Pages(context.Context) ([]*logseq.Page, error) {
 	return out, nil
 }
 
+func (c *memClient) Ping(context.Context) error { return nil }
+
 func (c *memClient) Page(_ context.Context, name string) (*logseq.Page, error) {
 	if p, ok := c.pages[name]; ok {
 		return &logseq.Page{Name: p.Name}, nil

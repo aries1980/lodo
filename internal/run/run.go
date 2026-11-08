@@ -38,12 +38,14 @@ type BusySource interface {
 // Source is one Logseq graph to read: its client plus identity.
 // Name is the graph slug (empty in single-graph mode), Order the config
 // index for deterministic cross-graph ordering, DefaultTimeMap the
-// graph-level fallback Time Map slug.
+// graph-level fallback Time Map slug. APIURL is the endpoint the client
+// dials; it is carried for diagnostics so an unreachable graph names itself.
 type Source struct {
 	Name           string
 	Order          int
 	Client         logseq.Client
 	DefaultTimeMap string
+	APIURL         string
 }
 
 // Outcome is one forecast's read side: the Tasks that were seen, the graph
