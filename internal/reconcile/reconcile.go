@@ -1,10 +1,11 @@
-// Package reconcile folds the observed calendar into state (calendar.md's
-// table): moved Managed events become Pinned Blocks, deleted ones stand
-// their Block down, and lodo=true events with no local row are adopted.
+// Package reconcile folds the observed calendar into local state (calendar.md's
+// table): moved Managed events become Pinned Blocks, deleted ones stand their
+// Block down, and lodo=true events with no local row are adopted.
 //
-// Removing dispositions is never this package's job: dispositions persist
-// until the Task's inputs change, which the caller detects via snapshot
-// mismatch before planning (the planner only sees effective dispositions).
+// It supports recovery across ADR 0007's calendar-first/write-before-store gap.
+// Removing dispositions is never this package's job: dispositions persist until
+// the Task's inputs change, which the caller detects via snapshot mismatch
+// before planning (the planner only sees effective dispositions).
 package reconcile
 
 import (

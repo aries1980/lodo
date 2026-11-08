@@ -347,7 +347,11 @@ func Schedule(ctx context.Context, lc logseq.Client, cal Calendar, st Store, cfg
 	return ScheduleSources(ctx, sources, cal, st, cfg, now)
 }
 
-// ScheduleSources is Schedule over multiple graphs.
+// ScheduleSources reconciles observed Managed events (in memory), resolves the
+// graph(s), plans with effective dispositions, diffs/writes the calendar, then
+// commits the store and run audit. Calendar writes happen before store commit
+// (ADR 0007). The resolved graph is read each run; snapshots are refreshed only
+// by schedule commits.
 func ScheduleSources(ctx context.Context, sources []Source, cal Calendar, st Store, cfg config.Config, now time.Time) (ScheduleOutcome, error) {
 	cs, err := loadCalendarState(ctx, cal, st, cfg, now)
 	if err != nil {
@@ -394,9 +398,10 @@ func ScheduleSources(ctx context.Context, sources []Source, cal Calendar, st Sto
 	}, nil
 }
 
-// Refresh pulls the calendar into local state without recomputing: reconcile
-// plus store commit only. It never resolves the graph and never writes the
-// calendar, so it cannot fabricate intent.
+// Refresh pulls the calendar into local state without recomputing: reconcile in
+// memory, then commit bindings/dispositions (no snapshots) and run audit. It
+// never resolves the graph and never writes the calendar, so it cannot fabricate
+// intent. Shared-calendar conflicts are reported but not acted on.
 func Refresh(ctx context.Context, cal CalendarReader, st Store, cfg config.Config, now time.Time) (RefreshOutcome, error) {
 	cs, err := loadCalendarState(ctx, cal, st, cfg, now)
 	if err != nil {
@@ -700,7 +705,8 @@ type CheckOutcome struct {
 	StoodDown       []model.Disposition // effective stood-down, for display
 	// Busy carries the write calendar plus per-read-calendar status and the
 	// lodo-on-read warnings.
-	Busy calendar.BusyReport
+	Busy       calendar.BusyReport
+	Provenance map[string]resolve.TaskProvenance
 }
 
 // Check reads the graph, the calendar's busy time and the local store, and
@@ -733,6 +739,7 @@ func CheckSources(ctx context.Context, sources []Source, cal CalendarReader, st 
 		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
 		Dispositions: effective, AllDispositions: combined,
 		Orphans: orphans, StoodDown: stood, Busy: cs.busyReport,
+		Provenance: result.Provenance,
 	}, nil
 }
 

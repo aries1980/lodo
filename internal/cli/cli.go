@@ -41,23 +41,18 @@ type options struct {
 	errOut io.Writer
 }
 
-// Run builds the command tree, executes it and returns the process exit code.
+// Run builds the command tree, executes it, and returns the process exit code.
+// It owns the run's option state and reports execution failures to stderr using
+// the resolved log format/color settings.
 func Run(args []string, stdout, stderr io.Writer) int {
-	root := newRootCmd()
+	opts := &options{}
+	root := newRootCmd(opts)
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 
 	if err := root.Execute(); err != nil {
-		opts := executedOpts
-		verbose := opts != nil && opts.verbose
-		format := ""
-		disableColors := false
-		if opts != nil {
-			format = opts.logFormat
-			disableColors = opts.disableColors
-		}
-		if resolveLogFormat(format) == "json" {
+		if resolveLogFormat(opts.logFormat) == "json" {
 			cmd, _, _ := root.Find(args)
 			name := ""
 			if cmd != nil && cmd.Name() != "" && cmd.Name() != "lodo" {
@@ -68,9 +63,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			if errors.As(err, &ee) {
 				code = ee.code
 			}
-			logRunError(stderr, verbose, name, err.Error(), code, nil)
+			logRunError(stderr, opts.verbose, name, err.Error(), code, nil)
 		} else {
-			st := newStyler(stderr, disableColors)
+			st := newStyler(stderr, opts.disableColors)
 			_, _ = fmt.Fprintln(stderr, st.danger("lodo:")+" "+err.Error())
 		}
 
@@ -85,13 +80,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return codeOK
 }
 
-// executedOpts is the options of the current Run; set in newRootCmd so
-// Run can style/log errors after Execute fails.
-var executedOpts *options
-
-func newRootCmd() *cobra.Command {
-	opts := &options{}
-	executedOpts = opts
+func newRootCmd(opts *options) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:           "lodo",
@@ -110,6 +99,7 @@ func newRootCmd() *cobra.Command {
 		newForecastCmd(opts),
 		newScheduleCmd(opts),
 		newRefreshCmd(opts),
+		newExplainCmd(opts),
 		newAuthCmd(opts),
 	)
 
@@ -205,6 +195,29 @@ func newRefreshCmd(opts *options) *cobra.Command {
 	return cmd
 }
 
+func newExplainCmd(opts *options) *cobra.Command {
+	var (
+		yes       bool
+		overrides configOverrides
+	)
+
+	cmd := &cobra.Command{
+		Use:   "explain <task-id|uuid|query>",
+		Short: "Explain why a task was placed, moved, left short, or blocked (read-only)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			opts.out = c.OutOrStdout()
+			opts.errOut = c.ErrOrStderr()
+			return runExplain(opts, overrides, args[0], yes)
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer yes to prompts (create a missing Time Maps page without asking)")
+	addSchedulingOverrideFlags(cmd, &overrides)
+	addCredentialOverrideFlags(cmd, &overrides)
+
+	return cmd
+}
+
 func newAuthCmd(opts *options) *cobra.Command {
 	var (
 		noBrowser bool
@@ -292,16 +305,17 @@ func (o configOverrides) credentialOverrides() config.CredentialOverrides {
 	}
 }
 
-// parseGraphTokens parses NAME=TOKEN entries (repeatable
-// --logseq-graph-token) into a name-keyed map; malformed entries are
-// ignored so a typo cannot become a token.
+// parseGraphTokens parses repeatable NAME=TOKEN entries (for
+// --logseq-graph-token) into a name-keyed map. Malformed, empty-name, or
+// empty-token entries are ignored so a typo cannot silently become a token;
+// callers that need visibility into skips should add explicit diagnostics.
 func parseGraphTokens(in []string) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
 	out := map[string]string{}
 	for _, e := range in {
-		name, tok, ok := splitCut(e, "=")
+		name, tok, ok := strings.Cut(e, "=")
 		if !ok {
 			continue
 		}
@@ -316,14 +330,6 @@ func parseGraphTokens(in []string) map[string]string {
 		return nil
 	}
 	return out
-}
-
-func splitCut(s, sep string) (string, string, bool) {
-	i := strings.Index(s, sep)
-	if i < 0 {
-		return "", "", false
-	}
-	return s[:i], s[i+len(sep):], true
 }
 
 func addCredentialOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {

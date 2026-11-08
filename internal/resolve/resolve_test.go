@@ -547,26 +547,38 @@ func TestOutlineOrder(t *testing.T) {
 	}
 }
 
-// TestTaskPagesSortDeterministically: pages in reverse enumeration order
-// still resolve in name order, so outline order cannot depend on the app's
-// page list.
+// TestTaskPagesSortDeterministically: page enumeration order does not affect
+// resolved order; pages resolve by normalized name so outline order is stable.
 func TestTaskPagesSortDeterministically(t *testing.T) {
 	dayAfter := "2026-10-16"
-	res, err := fixture(
-		[]*logseq.Page{page(day), page(dayAfter)},
-		map[string][]*logseq.Block{
-			day:      {props(marked("TODO", id1, "TODO Earlier day"), map[string]any{"duration": "30m"})},
-			dayAfter: {props(marked("TODO", id2, "TODO Later day"), map[string]any{"duration": "30m"})},
-		},
-	)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(res.Tasks) != 2 || res.Tasks[0].ID != id1 || res.Tasks[1].ID != id2 {
-		t.Fatalf("Tasks = %+v, want %s before %s", res.Tasks, id1, id2)
-	}
-	if res.Tasks[1].OutlineOrder != 1 {
-		t.Fatalf("OutlineOrder = %d, want 1", res.Tasks[1].OutlineOrder)
+	for _, tc := range []struct {
+		name  string
+		pages []*logseq.Page
+	}{
+		{name: "sorted", pages: []*logseq.Page{page(day), page(dayAfter)}},
+		{name: "reversed", pages: []*logseq.Page{page(dayAfter), page(day)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := fixture(
+				tc.pages,
+				map[string][]*logseq.Block{
+					day:      {props(marked("TODO", id1, "TODO Earlier day"), map[string]any{"duration": "30m"})},
+					dayAfter: {props(marked("TODO", id2, "TODO Later day"), map[string]any{"duration": "30m"})},
+				},
+			)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if diff := cmp.Diff([]string{id1, id2}, taskIDs(res)); diff != "" {
+				t.Fatalf("Task IDs mismatch (-want +got):\n%s", diff)
+			}
+			if res.Tasks[1].OutlineOrder != 1 {
+				t.Fatalf("OutlineOrder = %d, want 1", res.Tasks[1].OutlineOrder)
+			}
+			if len(res.Issues) != 0 {
+				t.Fatalf("Issues = %+v, want none", res.Issues)
+			}
+		})
 	}
 }
 

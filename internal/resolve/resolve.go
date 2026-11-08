@@ -37,39 +37,59 @@ type Input struct {
 	Location *time.Location
 }
 
+// PropertyProvenance records one effective property and where it came from.
+type PropertyProvenance struct {
+	Property  string `json:"property"`
+	Value     string `json:"value,omitempty"`
+	Source    string `json:"source"`              // direct, ancestor, page, graph-default, default-time-map, implicit
+	SourceID  string `json:"source_id,omitempty"` // ancestor block UUID or page name when applicable
+	Inherited bool   `json:"inherited"`
+}
+
+// TaskProvenance records effective/inherited properties for one Task.
+type TaskProvenance struct {
+	TaskID     string               `json:"task_id"`
+	Properties []PropertyProvenance `json:"properties,omitempty"`
+}
+
 // Result is the resolved graph: everything the planner is fed (ADR 0006)
 // plus the graph validation report check prints.
 type Result struct {
-	Tasks    []model.Task
-	TimeMaps []model.TimeMap
-	Issues   []Issue
+	Tasks      []model.Task
+	TimeMaps   []model.TimeMap
+	Issues     []Issue
+	Provenance map[string]TaskProvenance
 }
 
-// Resolve turns payloads into Tasks, Time Maps and a graph validation
-// report. Everything the parser owns is consumed, not reimplemented —
-// ParseDuration for the gate, ParseOrgStamp and ParseCivilDate for the
-// stamps, ParsePriority, ParseWindow, Slugify — and anything unparseable
-// becomes a reported Issue, never a guess.
+// Resolve turns one graph Input into Tasks, Time Maps, validation Issues, and
+// provenance for planner/CLI consumption (ADR 0006).
+//
+// Preconditions: in.Location must be non-nil (pins/org stamps resolve in it).
+// Resolve is deterministic for a given Input, performs no I/O, and does not
+// mutate Input. Parsing primitives owned by internal/parse are consumed rather
+// than reimplemented; malformed/unparseable/ambiguous data is reported as Issues
+// instead of guessed.
 func Resolve(in Input) (Result, error) {
 	if in.Location == nil {
 		return Result{}, fmt.Errorf("resolve: location is required")
 	}
 
-	r := &resolver{in: in, mapSlugs: map[string]bool{}, pageProps: map[string]string{}}
+	r := &resolver{in: in, mapSlugs: map[string]bool{}, pageProps: map[string]string{}, provenance: map[string]TaskProvenance{}}
 	r.timeMaps()
 	r.resolveTasks()
-	return Result{Tasks: r.tasks, TimeMaps: r.maps, Issues: r.issues}, nil
+	return Result{Tasks: r.tasks, TimeMaps: r.maps, Issues: r.issues, Provenance: r.provenance}, nil
 }
 
 // resolver walks one Input, collecting the output.
 type resolver struct {
 	in Input
 
-	issues    []Issue
-	maps      []model.TimeMap
-	mapSlugs  map[string]bool // slug → a map defines it
-	tasks     []model.Task
-	pageProps map[string]string // page\x00key → inherited default text
+	issues     []Issue
+	maps       []model.TimeMap
+	mapSlugs   map[string]bool // slug → a map defines it
+	tasks      []model.Task
+	pageProps  map[string]string // page\x00key → inherited default text
+	provenance map[string]TaskProvenance
 }
 
 // issue appends one reported problem. The context stays plain ("page 2026-10-15, block …");

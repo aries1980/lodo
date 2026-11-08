@@ -297,10 +297,12 @@ func (s *Store) ListDispositions() ([]model.Disposition, error) {
 }
 
 // Commit applies one run's store writes atomically: binding upserts and
-// deletes, disposition upserts, and refreshed task snapshots. The caller
-// writes the calendar first and commits second (ADR 0007); a crash between
-// the two leaves lodo=true events with no local row, which the next run
-// adopts.
+// deletes, disposition upserts, and refreshed task snapshots.
+//
+// Contract (ADR 0007): callers perform calendar writes before Commit. A crash
+// between calendar writes and Commit may leave managed/lodo events without a
+// local row; reconciliation on the next run adopts/reconciles them. All writes
+// run in a single SQLite transaction; times are stored as UTC RFC3339Nano.
 func (s *Store) Commit(bindingUpserts []Binding, bindingDeletes []BindingKey, dispositions []TimedDisposition, snapshots map[string]model.Snapshot) error {
 	tx, err := s.db.Begin()
 	if err != nil {

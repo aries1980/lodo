@@ -77,16 +77,23 @@ func TestSnapshotJSONFidelity(t *testing.T) {
 	cases := map[string]model.Snapshot{
 		"empty": {},
 		"full": {
-			Text: "Something", Marker: model.MarkerTODO, Duration: 90 * time.Minute,
+			Graph: "work",
+			Text:  "Something", Marker: model.MarkerTODO, Duration: 90 * time.Minute,
 			TimeMaps: []string{"deep", "weekends"}, Priority: model.PriorityA,
 			Deadline:  &model.CivilDate{Year: 2026, Month: 11, Day: 12},
 			PlanStart: &model.CivilDate{Year: 2026, Month: 11, Day: 9},
 			PlanEnd:   &model.CivilDate{Year: 2026, Month: 11, Day: 10},
 			Pin:       &pin,
+			Depends:   []string{"dep-a", "dep-b"},
+			Order:     model.OrderSequential,
 		},
 		"nil-vs-empty-maps": {
 			Text: "x", Marker: model.MarkerDOING, Duration: 30 * time.Minute,
 			TimeMaps: nil, Priority: "",
+		},
+		"empty-depends-and-order": {
+			Text: "x", Marker: model.MarkerTODO, Duration: time.Hour,
+			Depends: []string{}, Order: model.OrderParallel,
 		},
 	}
 	for name, snap := range cases {

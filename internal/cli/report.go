@@ -24,9 +24,11 @@ import (
 	"github.com/aries1980/lodo/internal/store"
 )
 
-// loadSources builds one run.Source per configured graph, resolving
-// per-graph tokens (file, LODO_LOGSEQ_TOKEN_<GRAPH>, global fallback).
-// Single-graph mode returns one source with empty name.
+// loadSources loads config and credentials, applies per-run overrides, resolves
+// Logseq tokens per graph (file/LODO_LOGSEQ_TOKEN_<GRAPH>/global fallback), and
+// constructs one run.Source per configured graph. Single-graph mode returns one
+// source with an empty name. It performs config/credential reads but no graph or
+// calendar I/O.
 func loadSources(opts *options, ov configOverrides) (config.Config, []run.Source, config.Credentials, error) {
 	path := opts.config
 	if path == "" {
@@ -245,7 +247,7 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 	outcome := run.CheckOutcome{
 		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
 		Dispositions: effective, AllDispositions: storedDisps,
-		Orphans: nil, StoodDown: stood,
+		Orphans: nil, StoodDown: stood, Provenance: result.Provenance,
 	}
 	_ = grid.Build // keep grid import referenced when busy is nil
 	if opts.json {

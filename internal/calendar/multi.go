@@ -1,7 +1,8 @@
-// Multi-calendar busy input (calendar.md): one write calendar plus shared
-// read calendars as busy-time union. The write calendar stays the single
-// write target; read calendars are Lodo-policy read-only, never written,
-// even when the Google ACL would allow it.
+// Multi-calendar busy input (calendar.md): one write calendar plus shared read
+// calendars as a busy-time union. Shared calendars are busy-only reads and the
+// write calendar remains the single write target (ADR 0013); read calendars are
+// Lodo-policy read-only and never written, even when the Google ACL would allow
+// it.
 package calendar
 
 import (
