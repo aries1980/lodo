@@ -10,11 +10,7 @@ import (
 // All JSON/text converters below build it once instead of scanning tasks
 // per row.
 func textByTasks(tasks []model.Task) map[string]string {
-	out := make(map[string]string, len(tasks))
-	for _, t := range tasks {
-		out[t.ID] = t.Text
-	}
-	return out
+	return model.TextByTaskID(tasks)
 }
 
 // labelFor prefers mapped text, falling back to the id.
@@ -37,13 +33,7 @@ func blockerLabels(byText map[string]string, ids []string) []string {
 // graphByTasks indexes Task graph slug by ID. The first Task wins when two
 // share an id (a duplicate UUID is refused before a real run plans).
 func graphByTasks(tasks []model.Task) map[string]string {
-	out := make(map[string]string, len(tasks))
-	for _, t := range tasks {
-		if _, ok := out[t.ID]; !ok {
-			out[t.ID] = t.Graph
-		}
-	}
-	return out
+	return model.GraphByTaskID(tasks)
 }
 
 // blockViews converts planner blocks with resolved task text.

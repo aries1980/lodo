@@ -50,37 +50,30 @@ const (
 	thinDaysToName = 2
 )
 
+// suggestInput is the planner input plus the report and cycle set that
+// suggestions are derived from.
 type suggestInput struct {
-	tasks       []model.Task
-	timemaps    []model.TimeMap
-	report      Report
-	granularity time.Duration
-	windowDays  int
-	location    *time.Location
-	now         time.Time
-	cycleSet    map[string]bool
+	Input
+	report   Report
+	cycleSet map[string]bool
 }
 
 func Suggest(in Input, schedule Schedule, cycleSet map[string]bool) []Suggestion {
-	s := suggestInput{
-		tasks: in.Tasks, timemaps: in.TimeMaps, report: schedule.Report,
-		granularity: in.Granularity, windowDays: in.WindowDays, location: in.Location, now: in.Now,
-		cycleSet: cycleSet,
-	}
-	byID := make(map[string]model.Task, len(s.tasks))
-	for _, t := range s.tasks {
+	s := suggestInput{Input: in, report: schedule.Report, cycleSet: cycleSet}
+	byID := make(map[string]model.Task, len(s.Tasks))
+	for _, t := range s.Tasks {
 		byID[t.ID] = t
 	}
-	mapsBySlug := make(map[string]model.TimeMap, len(s.timemaps))
+	mapsBySlug := make(map[string]model.TimeMap, len(s.TimeMaps))
 	var defaults []model.TimeMap
-	for _, m := range s.timemaps {
+	for _, m := range s.TimeMaps {
 		mapsBySlug[m.Slug] = m
 		if m.Default {
 			defaults = append(defaults, m)
 		}
 	}
-	today := model.CivilDateOf(s.now.In(s.location))
-	horizonEnd := today.AddDays(s.windowDays)
+	today := model.CivilDateOf(s.Now.In(s.Location))
+	horizonEnd := today.AddDays(s.WindowDays)
 	var out []Suggestion
 	for _, r := range s.report.Tasks {
 		if r.Shortfall <= 0 {
@@ -202,7 +195,7 @@ func suggestCapacity(r TaskReport, task model.Task, in suggestInput, mapsBySlug 
 	}
 	if task.PlanEnd != nil && task.PlanEnd.Before(today) {
 		out = append(out, addHoursSuggestion(task, mapsBySlug, defaults, "adds capacity for overdue task", r.TaskID))
-		out = append(out, reduceDurationSuggestion(r, task, in.granularity))
+		out = append(out, reduceDurationSuggestion(r, task, in.Granularity))
 		return out
 	}
 	if spill := spillSuggestion(task, mapsBySlug, defaults); spill != nil {
@@ -212,7 +205,7 @@ func suggestCapacity(r TaskReport, task model.Task, in suggestInput, mapsBySlug 
 	if task.PlanEnd != nil && planEndBoundsPlacement(*task.PlanEnd, horizonEnd) {
 		out = append(out, extendPlanEndSuggestion(r, task, in, mapsBySlug, defaults))
 	}
-	out = append(out, reduceDurationSuggestion(r, task, in.granularity))
+	out = append(out, reduceDurationSuggestion(r, task, in.Granularity))
 	out = append(out, addHoursSuggestion(task, mapsBySlug, defaults, "adds capacity", r.TaskID))
 	return out
 }
@@ -341,7 +334,7 @@ func extendPlanEndSuggestion(r TaskReport, task model.Task, in suggestInput, map
 	if r.Shortfall > suggestExtendShortfallThreshold {
 		eligibleMin := eligibleWeeklyMinutes(task, mapsBySlug, defaults)
 		if eligibleMin > 0 {
-			shortMin := float64(r.Shortfall) * in.granularity.Minutes()
+			shortMin := float64(r.Shortfall) * in.Granularity.Minutes()
 			dailyAvg := float64(eligibleMin) / 7.0
 			if dailyAvg > 0 {
 				need := int((shortMin + dailyAvg - 1) / dailyAvg)

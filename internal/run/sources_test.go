@@ -114,7 +114,7 @@ func TestForecastPlansAcrossGraphs(t *testing.T) {
 	}
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	outcome, err := run.Forecast(context.Background(), []run.Source{
+	outcome, err := run.ForecastSources(context.Background(), []run.Source{
 		graphSource("work", 0, primary, "deep-work"),
 		graphSource("family", 1, secondary, "deep-work"),
 	}, nil, cfg, now)

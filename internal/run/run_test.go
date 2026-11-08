@@ -192,7 +192,7 @@ func TestGoldenForecast(t *testing.T) {
 	client := newStubClient(fixtureWeek())
 	ctx := context.Background()
 
-	outcome, err := run.Forecast(ctx, []run.Source{{Client: client}}, nil, testConfig(), at(9, 8, 0))
+	outcome, err := run.Forecast(ctx, client, nil, testConfig(), at(9, 8, 0))
 	if err != nil {
 		t.Fatalf("Forecast: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestGoldenForecast(t *testing.T) {
 	}
 }
 
-func issueKinds(outcome run.Outcome) []string {
+func issueKinds(outcome run.ForecastOutcome) []string {
 	var out []string
 	for _, i := range outcome.Issues {
 		out = append(out, i.Kind)
@@ -301,7 +301,7 @@ func TestBusyShapesForecastAndKeepsManagedAside(t *testing.T) {
 	// map opens.
 	busy := g.Overlapping(at(9, 9, 0), at(9, 11, 0))
 
-	outcome, err := run.Forecast(context.Background(), []run.Source{{Client: newStubClient(busyGraph())}},
+	outcome, err := run.Forecast(context.Background(), newStubClient(busyGraph()),
 		stubBusy{mask: busy, managed: []calendar.Event{{ID: "m-1", Summary: "Lodo-made"}}}, cfg, now)
 	if err != nil {
 		t.Fatalf("Forecast: %v", err)
@@ -324,7 +324,7 @@ func TestBusyShapesForecastAndKeepsManagedAside(t *testing.T) {
 }
 
 func TestCalendarErrorsIsOperational(t *testing.T) {
-	outcome, err := run.Forecast(context.Background(), []run.Source{{Client: newStubClient(busyGraph())}},
+	outcome, err := run.Forecast(context.Background(), newStubClient(busyGraph()),
 		stubBusy{err: errors.New("the calendar is unreachable")}, testConfig(), at(9, 8, 0))
 	if err == nil || !strings.Contains(err.Error(), "the calendar is unreachable") {
 		t.Fatalf("Forecast err = %v, want the calendar's cause, not an empty mask", err)

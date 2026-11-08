@@ -1,7 +1,8 @@
 // Package run assembles the loop the CLI commands need: read the graph
 // fresh over the HTTP API, resolve it, project the calendar's busy time,
 // and plan the Schedule. Schedule and Check fold stored dispositions back
-// in through reconciliation; Forecast stays a store-free dry run.
+// in through reconciliation; Forecast and ForecastSources stay store-free
+// dry runs.
 //
 // The busy mask is the calendar's explicit input to the planner (ADR 0006):
 // resolved tasks plus a mask, never a calendar the planner reaches into.
@@ -60,9 +61,9 @@ type Scheduled struct {
 	Busy calendar.BusyReport
 }
 
-// Outcome is one forecast: Scheduled, plus the Managed events busy
+// ForecastOutcome is one forecast: Scheduled, plus the Managed events busy
 // deliberately left out (schedule reconciles them instead) and provenance.
-type Outcome struct {
+type ForecastOutcome struct {
 	Scheduled
 	// Managed is the one hole in the forecast mask: Lodo's own events are
 	// not folded into busy there; schedule and check reconcile them.
@@ -197,21 +198,27 @@ func readOne(ctx context.Context, client logseq.Client, timeMapsPage string, loc
 	return resolve.Resolve(input)
 }
 
-// Forecast reads every source, projects the calendar's busy time, and plans
-// the Schedule. One Logseq graph is a one-element sources slice. Forecast
-// and schedule --dry-run call this; it never touches the store.
-func Forecast(ctx context.Context, sources []Source, busy BusySource, cfg config.Config, now time.Time) (Outcome, error) {
+// Forecast reads one graph and plans the Schedule without touching the
+// store. It is the single-graph convenience wrapper around ForecastSources.
+func Forecast(ctx context.Context, client logseq.Client, busy BusySource, cfg config.Config, now time.Time) (ForecastOutcome, error) {
+	return ForecastSources(ctx, []Source{{Client: client}}, busy, cfg, now)
+}
+
+// ForecastSources reads every source, projects the calendar's busy time, and
+// plans the Schedule. The forecast command and schedule --dry-run call this;
+// it never touches the store.
+func ForecastSources(ctx context.Context, sources []Source, busy BusySource, cfg config.Config, now time.Time) (ForecastOutcome, error) {
 	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
 	if err != nil {
-		return Outcome{}, err
+		return ForecastOutcome{}, err
 	}
 	location, err := cfg.Scheduling.Location()
 	if err != nil {
-		return Outcome{}, err
+		return ForecastOutcome{}, err
 	}
 	result, err := ReadSources(ctx, sources, cfg.Logseq.PrimaryTimeMapsPage(), location)
 	if err != nil {
-		return Outcome{}, err
+		return ForecastOutcome{}, err
 	}
 
 	var inputBusy grid.Mask
@@ -221,7 +228,7 @@ func Forecast(ctx context.Context, sources []Source, busy BusySource, cfg config
 		g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
 		inputBusy, managed, busyReport, err = busy.Busy(ctx, g, now)
 		if err != nil {
-			return Outcome{}, err
+			return ForecastOutcome{}, err
 		}
 	}
 
@@ -236,10 +243,10 @@ func Forecast(ctx context.Context, sources []Source, busy BusySource, cfg config
 		Location:     location,
 	})
 	if err != nil {
-		return Outcome{}, err
+		return ForecastOutcome{}, err
 	}
 
-	return Outcome{
+	return ForecastOutcome{
 		Scheduled: Scheduled{
 			Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Busy: busyReport,
 		},

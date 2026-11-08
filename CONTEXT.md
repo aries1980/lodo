@@ -31,8 +31,9 @@ flowchart LR
    `internal/parse` and `internal/norm`.
 3. **Plan** (`internal/planner`) is a pure function of resolved Tasks, Time Maps, a busy
    mask, dispositions, and scheduling config (ADR 0006). `internal/grid` is the slot
-   grid it places onto (ADR 0008). `run.Forecast` is that plan with no store: the dry
-   run behind `forecast` and `schedule --dry-run`.
+   grid it places onto (ADR 0008). `run.ForecastSources` (and its single-graph
+   `run.Forecast` wrapper) is that plan with no store: the dry run behind `forecast`
+   and `schedule --dry-run`.
 4. **Reconcile and project** (`internal/reconcile`, `internal/calendar`, `internal/store`).
    `schedule` and `check` fold calendar edits into dispositions before planning.
    `internal/store` (SQLite) is the system of record for bindings, snapshots, and
@@ -49,8 +50,9 @@ not resolve the graph or recompute the Schedule.
 - `internal/cli`: Cobra command tree, flags, config loading, command handlers, and
   human/JSON output. Keep wiring explicit. Read-only commands stay off the calendar
   and the store commit. New commands render through `views.go`.
-- `internal/run`: the command loop. `Forecast` reads, resolves, and plans. `Schedule`
-  and `Check` reconcile, then plan. `Refresh` folds calendar edits without recomputing.
+- `internal/run`: the command loop. `Forecast`/`ForecastSources` read, resolve, and
+  plan. `Schedule` and `Check` reconcile, then plan. `Refresh` folds calendar edits
+  without recomputing.
   Forecast, check, and schedule share `Scheduled` (tasks, issues, schedule, busy);
   each outcome keeps only the fields that command adds.
 - `internal/resolve`: graph payloads to Tasks, Time Maps, issues, and provenance.

@@ -330,7 +330,7 @@ func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 	}
 
 	now := time.Now()
-	outcome, err := run.Forecast(context.Background(), sources, busy, cfg, now)
+	outcome, err := run.ForecastSources(context.Background(), sources, busy, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -450,7 +450,7 @@ type explanationJSON struct {
 
 // managedEvents is the note's payload: the events busy deliberately left
 // out, in view order.
-func managedEvents(outcome run.Outcome) []managedJSON {
+func managedEvents(outcome run.ForecastOutcome) []managedJSON {
 	out := make([]managedJSON, 0, len(outcome.Managed))
 	for _, e := range outcome.Managed {
 		out = append(out, managedJSON{ID: e.ID, Summary: e.Summary})
