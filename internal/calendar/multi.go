@@ -91,6 +91,7 @@ func NewMultiClient(hc *http.Client, writeID string, readIDs []string, base stri
 	if err != nil {
 		return nil, err
 	}
+	write.label = fmt.Sprintf("write calendar %q", writeID)
 	m := &MultiClient{
 		write: write, writeID: writeID, readIDs: clean,
 		ignoreAllDay:         opt.IgnoreAllDay,
@@ -101,6 +102,7 @@ func NewMultiClient(hc *http.Client, writeID string, readIDs []string, base stri
 		if err != nil {
 			return nil, err
 		}
+		c.label = fmt.Sprintf("read calendar %q", id)
 		m.reads = append(m.reads, c)
 	}
 	return m, nil
