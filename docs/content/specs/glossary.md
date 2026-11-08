@@ -68,9 +68,20 @@ _Avoid_: due date, plan end, target date
 
 **Priority**:
 A Task's rank relative to other Tasks, deciding who gets scarce hours when they compete.
-It is coarse and deliberately not a total order: ties are broken by Plan urgency and
-then by outline order.
+It is coarse and deliberately not a total order: ties fall through to Tie-break.
 _Avoid_: importance, weight, rank
+
+**Tie-break**:
+The deterministic rule that decides consideration order when higher-level ordering
+keys are equal. Pins go first, dependencies topologically override, then every
+time-bound Task before any flexible one (by `plan-end::` ascending); among remaining
+peers the order is graph order, `priority::`, outline order, then graph name and id
+as final determinism fallbacks. Outline order — depth-first, top-to-bottom Logseq
+order — is the last meaningful tie-break, so moving a block silently re-prioritises
+it; `forecast` / `schedule --verbose` and `lodo explain` surface when it decided
+placement.
+_Avoid_: tiebreaker, tie breaker
+_Note_: The placement comparator (ADR 0010) needs no tie-break; its keys are total.
 
 **Time Map**:
 A named, weekly-recurring pattern of hours in which the user is willing to do a

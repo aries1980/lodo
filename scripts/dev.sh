@@ -1,13 +1,14 @@
 #!/bin/sh
 #
-# Developer tasks for lodo, run in containers. Nothing but podman is needed on
-# the host (plus curl or wget for the docs theme download) - no local Go, Hugo
-# or make installation.
+# Developer tasks for lodo, run in containers. Nothing but podman or docker is
+# needed on the host (plus curl or wget for the docs theme download) - no local
+# Go, Hugo or make installation. Set CONTAINER_RUNTIME=podman|docker to force
+# one; otherwise podman is preferred when both are installed.
 #
-# Containers run as the invoking user: rootless podman maps the current uid
-# into the container with --userns=keep-id, and --user overrides whatever
-# USER the image declares. Files written by the tools - build output, module
-# caches under /tmp, the fetched docs theme - are therefore owned by you.
+# Containers run as the invoking user: --user overrides whatever USER the image
+# declares (plus --userns=keep-id on rootless podman, which docker does not
+# support). Files written by the tools - build output, module caches under /tmp,
+# the fetched docs theme - are therefore owned by you.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -50,21 +51,41 @@ Docs:
 EOF
 }
 
-# podrun runs a container as the invoking user.
-podrun() {
-	command -v podman >/dev/null 2>&1 || die "podman is required"
-	if [ -z "${podman_rootless:-}" ]; then
-		podman_rootless=$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || echo false)
+# ctrun runs a container as the invoking user with podman or docker.
+# CONTAINER_RUNTIME forces one; otherwise podman wins when both exist.
+ctrun() {
+	RUNTIME=${CONTAINER_RUNTIME:-}
+	if [ -z "$RUNTIME" ]; then
+		if command -v podman >/dev/null 2>&1; then
+			RUNTIME=podman
+		elif command -v docker >/dev/null 2>&1; then
+			RUNTIME=docker
+		else
+			die "podman or docker is required"
+		fi
 	fi
-	if [ "$podman_rootless" = true ]; then
-		podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" "$@"
-	else
-		podman run --rm --user "$(id -u):$(id -g)" "$@"
+	case "$RUNTIME" in
+	podman | docker) ;;
+	*) die "unknown CONTAINER_RUNTIME: $RUNTIME (want podman or docker)" ;;
+	esac
+	command -v "$RUNTIME" >/dev/null 2>&1 || die "$RUNTIME is required (CONTAINER_RUNTIME=$RUNTIME)"
+	# --userns=keep-id is podman-only: it keeps the invoking uid mapped on
+	# rootless podman. Docker (and rootful podman) just needs --user.
+	userns=""
+	if [ "$RUNTIME" = podman ]; then
+		if [ -z "${podman_rootless:-}" ]; then
+			podman_rootless=$($RUNTIME info --format '{{.Host.Security.Rootless}}' 2>/dev/null || echo false)
+		fi
+		if [ "$podman_rootless" = true ]; then
+			userns="--userns=keep-id"
+		fi
 	fi
+	# shellcheck disable=SC2086
+	$RUNTIME run --rm $userns --user "$(id -u):$(id -g)" "$@"
 }
 
 go_run() {
-	podrun \
+	ctrun \
 		-v "$ROOT:/app" -v /tmp:/tmp \
 		-e GOCACHE=/tmp/lodo-go-cache \
 		-e GOMODCACHE=/tmp/lodo-go-mod-cache \
@@ -74,7 +95,7 @@ go_run() {
 lint_run() {
 	# The lint image ships an older Go than the toolchain in go.mod asks for.
 	# GOTOOLCHAIN=local keeps it from downloading a whole toolchain to lint.
-	podrun \
+	ctrun \
 		-v "$ROOT:/app" -v /tmp:/tmp \
 		-e GOCACHE=/tmp/lodo-go-cache \
 		-e GOMODCACHE=/tmp/lodo-go-mod-cache \
@@ -88,12 +109,12 @@ hugo_run() {
 	# mounted as /project.
 	gitdir=$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || true)
 	if [ -n "$gitdir" ] && [ -d "$gitdir" ]; then
-		podrun \
+		ctrun \
 			-v "$ROOT/docs:/project:Z" -v "$gitdir:/project/.git:ro" -v /tmp:/tmp \
 			-e HUGO_CACHEDIR=/tmp/lodo-hugo-cache \
 			-w /project "$@"
 	else
-		podrun \
+		ctrun \
 			-v "$ROOT/docs:/project:Z" -v /tmp:/tmp \
 			-e HUGO_CACHEDIR=/tmp/lodo-hugo-cache \
 			-w /project "$@"
@@ -103,7 +124,7 @@ hugo_run() {
 cliff_run() {
 	# git-cliff reads the repository through the mounted .git directory, so the
 	# whole work tree has to be visible in the container.
-	podrun \
+	ctrun \
 		-v "$ROOT:/app" \
 		-w /app "$CLIFF_IMAGE" "$@"
 }

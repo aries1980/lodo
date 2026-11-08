@@ -165,6 +165,12 @@ free/busy-only shares are not yet supported. Auth and network failures still fai
 run. Every `forecast`, `schedule`, and `refresh` prints which calendars were read
 (`busy sources:`) so a placement made with a partial mask stays visible.
 
+Auth expiry fails fast and names the calendar: HTTP 401 on any calendar, and
+`invalid_grant` from Google's token endpoint (revoked, expired, or otherwise dead
+refresh token), fail the run with `write calendar "<id>"` or `read calendar "<id>"`
+and the fix — run `lodo auth google` again to re-authorize. Unlike 403/404, a 401 on
+a read calendar never warns-and-continues.
+
 ## Reconciliation on `refresh`
 
 ```mermaid

@@ -25,8 +25,9 @@ flowchart LR
 * **Logseq is the interface.** Tasks and Time Maps live in the graph. Lodo never
   writes Tasks back (except one prompted bootstrap, see below).
 * **The Schedule lives in SQLite.** The calendar is a projection of it.
-* **A CLI you invoke.** `check`, `forecast`, `schedule`, `refresh`, `auth google`.
-  Cron calling `lodo schedule` is the intended deployment.
+* **A CLI you invoke.** `check`, `forecast`, `schedule`, `refresh`, `explain <query>`,
+  `auth google`. Cron calling `lodo schedule` is the intended deployment; `explain`
+  drills into one Task (why placed, left short, or blocked).
 
 See [Specifications](specs/) for the full language — start with the
 [Glossary](specs/glossary.md) — and [Guides](../guides/) for task entry.
