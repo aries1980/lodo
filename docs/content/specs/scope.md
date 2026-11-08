@@ -23,7 +23,7 @@ The core loop: **read Tasks from Logseq → decide when → write Blocks to Goog
   busy time. Managed Events identified by private extended properties; moves become
   Pinned Blocks, deletes stand the Task down, everything else is busy time.
 - **Configuration** in a file, secrets in a `0600` credentials file; no secrets in the graph.
-- **CLI**: `check`, `forecast`, `schedule`, `refresh`, `auth google`.
+- **CLI**: `check`, `forecast`, `schedule`, `refresh`, `explain <task-id|uuid|query>`, `auth google`.
 
 ## Out of scope (roadmap, not v0.1)
 

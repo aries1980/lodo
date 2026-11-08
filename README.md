@@ -29,9 +29,9 @@ flowchart LR
 
 ## Development
 
-All tooling runs in containers via podman, so there is nothing to install locally beyond
-podman itself — no Go, no Hugo, no `make`. [`scripts/dev.sh`](scripts/dev.sh) is the
-entry point:
+All tooling runs in containers via podman or docker, so there is nothing to install locally beyond
+one of them — no Go, no Hugo, no `make`. [`scripts/dev.sh`](scripts/dev.sh) is the
+entry point (podman preferred when both exist; `CONTAINER_RUNTIME=docker` forces docker):
 
 ```sh
 ./scripts/dev.sh build   # build the CLI to ./dist/lodo
@@ -43,8 +43,10 @@ entry point:
 ./scripts/dev.sh changelog # regenerate CHANGELOG.md from the commit history
 ```
 
-The containers run as your own user (rootless podman remaps the UID with
-`--userns=keep-id`, and `--user` overrides whatever `USER` the image declares), so files
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the commit, test, and docs workflow.
+
+The containers run as your own user (`--user` overrides whatever `USER` the image declares,
+plus `--userns=keep-id` on rootless podman), so files
 written by the tools — build output, module caches under `/tmp`, the fetched docs theme —
 are owned by you, not root.
 

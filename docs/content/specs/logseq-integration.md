@@ -43,6 +43,23 @@ merges Tasks from all graphs; `depends::`/`order::` resolve per graph.
 Reads are performed fresh on each run. Lodo's SQLite store keeps a snapshot of the
 inputs it last read, so it can tell which Tasks changed without diffing the whole graph.
 
+## Availability probe (fail fast)
+
+Every command that reads the graph (`check` / `forecast` / `schedule` / `explain`)
+probes each source before touching the calendar or the store. `refresh` never reads
+the graph and `auth` never dials it, so neither probes.
+
+- The first ping gets 2s; each retry doubles it (2s → 4s → 8s, 3 attempts by default),
+  so a momentarily busy app gets more room while a dead one still fails fast (~14s
+  worst case per source).
+- Each retry is announced on stderr (`attempt n of 3; retrying ...`) and as a
+  `logseq.retry` warning in JSON logs; stdout stays machine-readable for `--json`.
+- Auth rejections (401/403, access denied) fail immediately without retry: a wrong
+  token will not fix itself. A cancelled run aborts without further attempts.
+- The first source that stays down aborts the run; later graphs are not probed, so the
+  error names the one endpoint to fix (`graph "family" at http://...` in multi-graph
+  mode).
+
 ## What Lodo reads
 
 | Source | Read as |

@@ -56,7 +56,7 @@ the planner/writer.
 
 ## Dev workflow
 
-All tooling runs via podman through [`scripts/dev.sh`](scripts/dev.sh) (no local Go/Hugo
+All tooling runs via podman or docker through [`scripts/dev.sh`](scripts/dev.sh) (no local Go/Hugo
 required):
 
 ```sh

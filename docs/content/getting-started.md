@@ -5,7 +5,7 @@ weight: 6
 
 From zero to the first `schedule` in about ten minutes.
 
-Prereqs: Logseq running, a Google Cloud OAuth client, `podman`.
+Prereqs: Logseq running, a Google Cloud OAuth client, `podman` or `docker`.
 
 ## 1. Build
 
@@ -99,16 +99,18 @@ Save a Logseq template (`/Template`) for this. Full entry guide with
 `depends::`, nesting, and page defaults:
 [Entering Tasks](../guides/entering-tasks.md).
 
-## 6. Check → forecast → schedule
+## 6. Check → forecast → explain → schedule
 
 ```sh
 dist/lodo check     # graph issues + shortfalls + stood-down + orphans
 dist/lodo forecast  # dry run: Blocks by day, shortfalls, no writes
+dist/lodo explain "report"  # why one Task placed / short / blocked (read-only, id/uuid/text query)
 dist/lodo schedule  # reconcile first, then create/move Managed Events
 dist/lodo refresh   # fold calendar moves/deletes into state, no recompute
 ```
 
-`--json` for machine-readable output, `--verbose` for placement reasons,
+`--json` for machine-readable output, `--verbose` for placement reasons
+(`explain` is always full detail; `--verbose` adds the whole consideration order),
 `--strict` to fail on reported problems (exit 2). Flags:
 [CLI](specs/cli.md).
 
@@ -127,10 +129,15 @@ runs is never clobbered.
 
 ## Troubleshooting
 
-* **Logseq unreachable** — Logseq must be running with the API server on;
-  check `logseq.api_url` scheme (`http://127.0.0.1:12315/api` by default) and token.
-* **Calendar auth failed** — re-run `auth google` with the account whose
-  calendar `calendar.id` names; enable the Calendar API on the owning project.
+* **Logseq unreachable** — `check`/`forecast`/`schedule`/`explain` probe first and fail
+  fast (2s → 4s → 8s, 3 attempts; each retry noted on stderr). Logseq must be running
+  with the API server on; check `logseq.api_url` scheme (`http://127.0.0.1:12315/api`
+  by default) and token. 401/403 fails immediately without retry — fix the token
+  (`LODO_LOGSEQ_TOKEN`, `--logseq-token`, per-graph `--logseq-graph-token`).
+* **Calendar auth failed** — HTTP 401 or `invalid_grant` names the calendar
+  (`write calendar "primary"`, `read calendar "…"`) and means the grant is expired or
+  revoked: re-run `auth google` with the account whose calendar `calendar.id` names;
+  enable the Calendar API on the owning project.
 * **Nothing scheduled** — run `check`: missing `duration::`, unknown
   `time-map::` slug, or hours outside every Time Map window.
 * **Partial mask warning** — a `403`/`404` read calendar was skipped; placement
