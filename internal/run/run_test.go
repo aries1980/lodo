@@ -192,9 +192,9 @@ func TestGoldenForecast(t *testing.T) {
 	client := newStubClient(fixtureWeek())
 	ctx := context.Background()
 
-	outcome, err := run.Graph(ctx, client, nil, testConfig(), at(9, 8, 0))
+	outcome, err := run.Forecast(ctx, []run.Source{{Client: client}}, nil, testConfig(), at(9, 8, 0))
 	if err != nil {
-		t.Fatalf("Graph: %v", err)
+		t.Fatalf("Forecast: %v", err)
 	}
 
 	pin := at(10, 9, 30)
@@ -246,13 +246,15 @@ func TestGoldenForecast(t *testing.T) {
 		t.Fatalf("Issues mismatch (-want +got):\n%s", diff)
 	}
 
-	// The planner saw the Tasks in outline order; the run's own text lookup
-	// answers by id.
-	if got := run.TaskText(outcome.Tasks, "t-pin"); got != "Team call" {
-		t.Fatalf("TaskText = %q, want the pinned Task's text", got)
+	// The forecast carries the Task text the planner saw.
+	var pinText string
+	for _, task := range outcome.Tasks {
+		if task.ID == "t-pin" {
+			pinText = task.Text
+		}
 	}
-	if got := run.TaskText(outcome.Tasks, "no-such-id"); got != "" {
-		t.Fatalf("TaskText(unknown) = %q, want empty", got)
+	if pinText != "Team call" {
+		t.Fatalf("pinned Task text = %q, want Team call", pinText)
 	}
 }
 
@@ -299,10 +301,10 @@ func TestBusyShapesForecastAndKeepsManagedAside(t *testing.T) {
 	// map opens.
 	busy := g.Overlapping(at(9, 9, 0), at(9, 11, 0))
 
-	outcome, err := run.Graph(context.Background(), newStubClient(busyGraph()),
+	outcome, err := run.Forecast(context.Background(), []run.Source{{Client: newStubClient(busyGraph())}},
 		stubBusy{mask: busy, managed: []calendar.Event{{ID: "m-1", Summary: "Lodo-made"}}}, cfg, now)
 	if err != nil {
-		t.Fatalf("Graph: %v", err)
+		t.Fatalf("Forecast: %v", err)
 	}
 
 	want := planner.Schedule{
@@ -322,10 +324,10 @@ func TestBusyShapesForecastAndKeepsManagedAside(t *testing.T) {
 }
 
 func TestCalendarErrorsIsOperational(t *testing.T) {
-	outcome, err := run.Graph(context.Background(), newStubClient(busyGraph()),
+	outcome, err := run.Forecast(context.Background(), []run.Source{{Client: newStubClient(busyGraph())}},
 		stubBusy{err: errors.New("the calendar is unreachable")}, testConfig(), at(9, 8, 0))
 	if err == nil || !strings.Contains(err.Error(), "the calendar is unreachable") {
-		t.Fatalf("Graph err = %v, want the calendar's cause, not an empty mask", err)
+		t.Fatalf("Forecast err = %v, want the calendar's cause, not an empty mask", err)
 	}
 	if outcome.Schedule.Blocks != nil {
 		t.Fatalf("a failed calendar must not half-plan: %+v", outcome.Schedule.Blocks)

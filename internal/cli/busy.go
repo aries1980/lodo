@@ -104,7 +104,7 @@ func conflictsView(conflicts []run.Conflict) []conflictJSON {
 // nil (refresh never resolves the graph), in which case Blocks are named by
 // their Task ID.
 func printConflictsText(w io.Writer, tasks []model.Task, conflicts []run.Conflict, st styler) {
-	byText := run.TextMap(tasks)
+	byText := textByTasks(tasks)
 	for _, c := range conflicts {
 		label := c.EventID
 		if c.TaskID != "" {

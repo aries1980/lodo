@@ -1,8 +1,3 @@
-// Package model holds the domain types shared by Lodo's scheduling core.
-//
-// The types are plain data with no behaviour beyond small conveniences; the
-// packages that work with them (parse, grid, planner) are pure: they never
-// reach for the filesystem, the network or the wall clock.
 package model
 
 // Marker is a Logseq task marker.

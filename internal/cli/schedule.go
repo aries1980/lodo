@@ -50,17 +50,17 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 
 	if opts.json {
 		view := scheduleReport{
-			Blocks:      scheduleBlocks(outcome),
-			Shortfalls:  scheduleShortfalls(outcome),
+			Blocks:      blockViews(outcome.Tasks, outcome.Schedule.Blocks),
+			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
 			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
 			Writes:      scheduleWrites(outcome),
-			Orphans:     scheduleOrphans(outcome),
+			Orphans:     orphanViews(outcome.Tasks, outcome.Orphans),
 			Busy:        busyView(outcome.Busy),
 		}
 		if verbose {
-			view.Explanations = scheduleExplanations(outcome)
+			view.Explanations = explanationViews(outcome.Schedule.Explanations)
 			view.Reconciled = reconcileSummary(outcome)
-			view.Dispositions = scheduleDispositions(outcome)
+			view.Dispositions = dispositionViews(outcome.Tasks, outcome.Dispositions)
 		}
 		if err := printJSON(opts.out, view); err != nil {
 			return &exitError{code: codeError, err: err}
@@ -148,18 +148,6 @@ type dispositionJSON struct {
 	Slots      int       `json:"slots,omitempty"`
 }
 
-func scheduleBlocks(outcome run.ScheduleOutcome) []blockJSON {
-	return blockViews(outcome.Tasks, outcome.Schedule.Blocks)
-}
-
-func scheduleShortfalls(outcome run.ScheduleOutcome) []shortfallJSON {
-	return shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks)
-}
-
-func scheduleExplanations(outcome run.ScheduleOutcome) []explanationJSON {
-	return explanationViews(outcome.Schedule.Explanations)
-}
-
 func scheduleWrites(outcome run.ScheduleOutcome) []writeJSON {
 	byText := textByTasks(outcome.Tasks)
 	byGraph := graphByTasks(outcome.Tasks)
@@ -181,10 +169,6 @@ func graphForWrite(tasks []model.Task, byGraph map[string]string, w run.WriteOp)
 	return byGraph[w.TaskID]
 }
 
-func scheduleOrphans(outcome run.ScheduleOutcome) []orphanJSON {
-	return orphanViews(outcome.Tasks, outcome.Orphans)
-}
-
 func reconcileSummary(outcome run.ScheduleOutcome) *reconcileJSON {
 	return &reconcileJSON{
 		BindingsUpserted: len(outcome.Reconciled.BindingUpserts),
@@ -193,20 +177,12 @@ func reconcileSummary(outcome run.ScheduleOutcome) *reconcileJSON {
 	}
 }
 
-func scheduleDispositions(outcome run.ScheduleOutcome) []dispositionJSON {
-	return dispositionViews(outcome.Tasks, outcome.Dispositions)
-}
-
 func renderScheduleText(w interface {
 	Write([]byte) (int, error)
 }, cfg config.Config, outcome run.ScheduleOutcome, now time.Time, verbose bool, st styler) {
-	// Reuse the forecast day-grouping by converting to an Outcome view.
-	// Schedule has no managed hole: reconciliation accounted for it.
-	inner := run.Outcome{
-		Tasks: outcome.Tasks, Issues: outcome.Issues, Schedule: outcome.Schedule,
-		Busy: outcome.Busy,
-	}
-	renderForecastText(w, cfg, inner, now, verbose, st)
+	// Day grouping is the forecast renderer. Schedule has no managed hole:
+	// reconciliation already accounted for Lodo's own events.
+	renderForecastText(w, cfg, outcome.Scheduled, nil, now, verbose, st)
 
 	if len(outcome.Writes) == 0 {
 		_, _ = fmt.Fprintln(w, st.success("\nCalendar: already in sync (no writes)."))
@@ -216,10 +192,10 @@ func renderScheduleText(w interface {
 			switch wr.Op {
 			case "insert":
 				_, _ = fmt.Fprintln(w, st.success(fmt.Sprintf("  + %s  %s block %d (%s)",
-					wr.EventID, taskLabel(inner, wr.TaskID), wr.BlockIndex, wr.Summary)))
+					wr.EventID, taskLabel(outcome.Tasks, wr.TaskID), wr.BlockIndex, wr.Summary)))
 			case "patch":
 				_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf("  ~ %s  %s block %d → %s",
-					wr.EventID, taskLabel(inner, wr.TaskID), wr.BlockIndex,
+					wr.EventID, taskLabel(outcome.Tasks, wr.TaskID), wr.BlockIndex,
 					wr.Start.Format("Mon 15:04"))))
 			case "delete":
 				_, _ = fmt.Fprintln(w, st.danger(fmt.Sprintf("  - %s", wr.EventID)))
@@ -249,7 +225,7 @@ func renderScheduleText(w interface {
 			})
 			for _, d := range ordered {
 				_, _ = fmt.Fprintf(w, "  %s block %d: %s\n",
-					taskLabel(inner, d.TaskID), d.BlockIndex, d.Kind)
+					taskLabel(outcome.Tasks, d.TaskID), d.BlockIndex, d.Kind)
 			}
 		}
 	}

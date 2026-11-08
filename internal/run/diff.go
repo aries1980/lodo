@@ -29,8 +29,8 @@ import (
 //   - Observed Managed event with no plan Block (stood-down already gone,
 //     Task gone, invalid pointer) → delete.
 func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.Event, loc *time.Location) (writes []WriteOp, orphans []Orphan, bindings []store.Binding) {
-	textByTask := TextMap(tasks)
-	graphByTask := GraphMap(tasks)
+	textByTask := taskTextByID(tasks)
+	graphByTask := taskGraphByID(tasks)
 	planByKey := make(map[string]model.Block, len(schedule.Blocks))
 	for _, planBlock := range schedule.Blocks {
 		planByKey[norm.BlockKey(planBlock.TaskID, planBlock.Index)] = planBlock
@@ -212,6 +212,26 @@ func orphansToDeletes(orphans []Orphan, bindings []store.Binding, reconciliation
 		// Adopted-then-orphaned in the same run, or a deterministic id the
 		// store never saw: delete by the pointer itself.
 		out = append(out, store.BindingKey{TaskID: orphan.TaskID, BlockIndex: orphan.Block})
+	}
+	return out
+}
+
+// taskTextByID and taskGraphByID copy Task text and graph onto calendar
+// writes. Display labels live in the CLI.
+func taskTextByID(tasks []model.Task) map[string]string {
+	out := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		out[t.ID] = t.Text
+	}
+	return out
+}
+
+func taskGraphByID(tasks []model.Task) map[string]string {
+	out := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		if _, ok := out[t.ID]; !ok {
+			out[t.ID] = t.Graph
+		}
 	}
 	return out
 }

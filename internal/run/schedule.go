@@ -6,7 +6,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
@@ -39,20 +38,15 @@ type Orphan struct {
 	Summary string
 }
 
-// ScheduleOutcome is one schedule run: the resolved graph, the planned
-// Schedule, the effective dispositions it planned with, the calendar writes
-// it issued, and the orphaned events it removed (or would remove).
+// ScheduleOutcome is one schedule run: Scheduled, the effective dispositions
+// it planned with, the calendar writes it issued, and the orphaned events it
+// removed.
 type ScheduleOutcome struct {
-	Tasks        []model.Task
-	Issues       []resolve.Issue
-	Schedule     planner.Schedule
+	Scheduled
 	Dispositions []model.Disposition // effective, what the planner saw
 	Reconciled   reconcile.Result    // what this run folded in
 	Writes       []WriteOp
 	Orphans      []Orphan
-	// Busy carries the write calendar plus per-read-calendar status for the
-	// busy sources line and warnings.
-	Busy calendar.BusyReport
 }
 
 // resolveAndPlanSources resolves every graph fresh and plans with the
@@ -140,8 +134,9 @@ func ScheduleSources(ctx context.Context, sources []Source, cal Calendar, runSto
 	}
 
 	return ScheduleOutcome{
-		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
+		Scheduled: Scheduled{
+			Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Busy: state.busyReport,
+		},
 		Dispositions: effective, Reconciled: state.reconciliation, Writes: writes, Orphans: orphans,
-		Busy: state.busyReport,
 	}, nil
 }

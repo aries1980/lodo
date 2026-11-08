@@ -20,8 +20,10 @@ type reportInput struct {
 	scope          *placementScope
 }
 
-// placeOrdered gates each Task on its dependencies (Q8, Q14) and places the
-// survivors. It records ends as the max of pinned + new flexible blocks.
+// placeOrdered gates each Task on its dependencies and places the
+// survivors. Any dependency that is stood down, short, unplaced, or in a
+// cycle blocks the Task entirely. It records ends as the max of pinned and
+// newly placed flexible blocks.
 func placeOrdered(planBuilder *builder, order []*taskPlan, lookup planLookup, cycleSet map[string]bool, scope *placementScope) (blockedReason map[string]Reason, blockedBy map[string][]string) {
 	blockedReason = map[string]Reason{}
 	blockedBy = map[string][]string{}
@@ -40,7 +42,7 @@ func placeOrdered(planBuilder *builder, order []*taskPlan, lookup planLookup, cy
 			continue // not due yet; left unplaced silently
 		}
 		// Full-gate: any dep stood-down, shortfall, unplaced, or cycle
-		// blocks the plan entirely (Q8, Q14).
+		// blocks the Task entirely.
 		blockingIDs, depEnd, hasDepEnd, blocked := dependencyGate(plan, lookup, cycleSet, scope.ends)
 		plan.decision.Eligibility.Considered = true
 		if hasDepEnd {
@@ -246,7 +248,7 @@ func buildReport(in reportInput) Report {
 		var blockers []string
 		if len(plan.task.Depends) > 0 {
 			// Time-bound unmet warning: dependency pressure narrows the
-			// window; name the deps so the warning is actionable (Q11).
+			// window; name the deps so the warning is actionable.
 			reason = ReasonBlockedByDependency
 			blockers = append(blockers, plan.task.Depends...)
 			slices.Sort(blockers)
@@ -261,7 +263,7 @@ func buildReport(in reportInput) Report {
 			BlockedBy: blockers,
 		})
 	}
-	// Pin-precedes-dependency violations: Pins stay, loudly reported (Q10).
+	// Pin-precedes-dependency violations: Pins stay, and the order break is reported.
 	for _, plan := range in.pins {
 		if len(plan.task.Depends) == 0 {
 			continue

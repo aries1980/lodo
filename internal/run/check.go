@@ -6,28 +6,21 @@ import (
 	"context"
 	"time"
 
-	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
-	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/resolve"
 )
 
-// CheckOutcome is one check run: the graph report plus the state section.
+// CheckOutcome is one check run: Scheduled plus the state section.
 // No store commit and no calendar writes happen here.
 type CheckOutcome struct {
-	Tasks           []model.Task
-	Issues          []resolve.Issue
-	Schedule        planner.Schedule
+	Scheduled
 	Dispositions    []model.Disposition // effective, what the planner saw
 	AllDispositions []model.Disposition // stored plus in-memory reconciled
 	Orphans         []Orphan
 	StoodDown       []model.Disposition // effective stood-down, for display
-	// Busy carries the write calendar plus per-read-calendar status and the
-	// lodo-on-read warnings.
-	Busy       calendar.BusyReport
-	Provenance map[string]resolve.TaskProvenance
+	Provenance      map[string]resolve.TaskProvenance
 }
 
 // Check reads the graph, the calendar's busy time and the local store, and
@@ -57,9 +50,10 @@ func CheckSources(ctx context.Context, sources []Source, cal CalendarReader, run
 		}
 	}
 	return CheckOutcome{
-		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
+		Scheduled: Scheduled{
+			Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Busy: state.busyReport,
+		},
 		Dispositions: effective, AllDispositions: combined,
-		Orphans: orphans, StoodDown: stood, Busy: state.busyReport,
-		Provenance: result.Provenance,
+		Orphans: orphans, StoodDown: stood, Provenance: result.Provenance,
 	}, nil
 }

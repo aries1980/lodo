@@ -37,7 +37,7 @@ func TestSuggestExtendAndReduce(t *testing.T) {
 	maps := []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 16, Placed: 4, Shortfall: 12, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	if !hasReason(got, SuggestExtendPlanEnd) {
 		t.Fatalf("want extend-plan-end, got %+v", got)
 	}
@@ -58,7 +58,7 @@ func TestSuggestBlockedOnlyFixesBlocker(t *testing.T) {
 		{TaskID: "b", Required: 4, Placed: 0, Shortfall: 4, Reason: ReasonBlockedByDependency, BlockedBy: []string{"a"}},
 	}}
 	in, schedule := makeSuggestFixture([]model.Task{a, b}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	var forB []Suggestion
 	for _, s := range got {
 		if s.TaskID == "b" {
@@ -80,7 +80,7 @@ func TestSuggestPinGetsNothing(t *testing.T) {
 	task := model.Task{ID: "p", Text: "Pinned", Marker: model.MarkerTODO, Duration: duration(30), Pin: &pin, Depends: []string{"a"}}
 	report := Report{Tasks: []TaskReport{{TaskID: "p", Shortfall: 0, Reason: ReasonPinPrecedesDependency, BlockedBy: []string{"a"}}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, nil, report)
-	if got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil); len(got) != 0 {
+	if got := Suggest(in, schedule, nil); len(got) != 0 {
 		t.Fatalf("pin violation wants no suggestions, got %+v", got)
 	}
 }
@@ -90,7 +90,7 @@ func TestSuggestUnknownMap(t *testing.T) {
 	maps := []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 4, Placed: 0, Shortfall: 4, Reason: ReasonNoEligibleTime}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	if !hasReason(got, SuggestFixTimeMap) {
 		t.Fatalf("want fix-time-map, got %+v", got)
 	}
@@ -106,7 +106,7 @@ func TestSuggestOverdueAvoidsExtend(t *testing.T) {
 	maps := []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 16, Placed: 4, Shortfall: 12, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	if hasReason(got, SuggestExtendPlanEnd) {
 		t.Fatalf("overdue must not suggest extend-plan-end, got %+v", got)
 	}
@@ -120,7 +120,7 @@ func TestSuggestFlexibleSkipsExtend(t *testing.T) {
 	maps := []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 16, Placed: 4, Shortfall: 12, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	if hasReason(got, SuggestExtendPlanEnd) {
 		t.Fatalf("flexible task must not suggest extend-plan-end, got %+v", got)
 	}
@@ -144,7 +144,7 @@ func TestSuggestSpillRespectsTiers(t *testing.T) {
 	task := mkTask("t1", "proj")
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 4, Placed: 0, Shortfall: 4, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, []model.TimeMap{yellowProj, greenDef}, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	for _, s := range got {
 		if s.TaskID == "t1" && (s.Reason == SuggestSpillToDefaultYellow || s.Reason == SuggestSpillToDefaultGreen) {
 			t.Fatalf("yellow task must never spill to green, got %+v", got)
@@ -155,7 +155,7 @@ func TestSuggestSpillRespectsTiers(t *testing.T) {
 	rtask := mkTask("r1", "proj")
 	rreport := Report{Tasks: []TaskReport{{TaskID: "r1", Required: 4, Placed: 0, Shortfall: 4, Reason: ReasonPartialFit}}}
 	in2, sched2 := makeSuggestFixture([]model.Task{rtask}, []model.TimeMap{redProj, yellowDef}, rreport)
-	got2 := Suggest(in2.Tasks, in2.TimeMaps, sched2, in2.Granularity, in2.WindowDays, in2.Location, in2.Now, nil)
+	got2 := Suggest(in2, sched2, nil)
 	for _, s := range got2 {
 		if s.TaskID == "r1" && s.Reason == SuggestSpillToDefaultYellow {
 			t.Fatalf("red task must never spill to yellow, got %+v", got2)
@@ -164,7 +164,7 @@ func TestSuggestSpillRespectsTiers(t *testing.T) {
 
 	// Red task with red default: red spill allowed.
 	in3, sched3 := makeSuggestFixture([]model.Task{rtask}, []model.TimeMap{redProj, redDef}, rreport)
-	got3 := Suggest(in3.Tasks, in3.TimeMaps, sched3, in3.Granularity, in3.WindowDays, in3.Location, in3.Now, nil)
+	got3 := Suggest(in3, sched3, nil)
 	if !hasReason(got3, SuggestSpillToDefaultRed) {
 		t.Fatalf("red task with red default wants red spill, got %+v", got3)
 	}
@@ -185,7 +185,7 @@ func TestSuggestDownstreamOfCycleSuggestsFixCycle(t *testing.T) {
 	}}
 	in, schedule := makeSuggestFixture([]model.Task{a, b, c}, maps, report)
 	cycles := map[string]bool{"a": true, "b": true}
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, cycles)
+	got := Suggest(in, schedule, cycles)
 	found := false
 	for _, s := range got {
 		if s.TaskID == "c" && s.Reason == SuggestFixCycle {
@@ -207,7 +207,7 @@ func TestSuggestStoodDownSuggestsRestore(t *testing.T) {
 	maps := []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 8, Placed: 4, StoodDown: 2, Shortfall: 2, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	if !hasReason(got, SuggestRestoreStoodDown) {
 		t.Fatalf("stood-down wants restore suggestion, got %+v", got)
 	}
@@ -220,7 +220,7 @@ func TestSuggestHoursNamesDays(t *testing.T) {
 	maps := []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 16, Placed: 4, Shortfall: 12, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	for _, s := range got {
 		if s.Reason == SuggestAddTimeMapHours {
 			if s.Change == "add Time Map hours on free days" {
@@ -239,7 +239,7 @@ func TestSuggestExtendSuppressedBeyondHorizon(t *testing.T) {
 	maps := []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 16, Placed: 4, Shortfall: 12, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	if hasReason(got, SuggestExtendPlanEnd) {
 		t.Fatalf("plan-end beyond horizon must not suggest extend-plan-end, got %+v", got)
 	}
@@ -255,7 +255,7 @@ func TestSuggestExtendImpactIsEstimate(t *testing.T) {
 	maps := []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 16, Placed: 4, Shortfall: 12, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	for _, s := range got {
 		if s.Reason == SuggestExtendPlanEnd {
 			if s.Impact == "" || len(s.Impact) < 5 || s.Impact[:4] != "adds" {
@@ -284,7 +284,7 @@ func TestSuggestAddHoursFiltersFallbackTier(t *testing.T) {
 	maps := []model.TimeMap{yellowProj, greenDef}
 	report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 4, Placed: 0, Shortfall: 4, Reason: ReasonPartialFit}}}
 	in, schedule := makeSuggestFixture([]model.Task{task}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	for _, s := range got {
 		if s.Reason == SuggestAddTimeMapHours {
 			if containsDay(s.Change, "Mon") {
@@ -304,7 +304,7 @@ func TestSuggestStoodDownSuppressedWhenBlocked(t *testing.T) {
 		{TaskID: "b", Required: 4, Placed: 0, StoodDown: 2, Shortfall: 4, Reason: ReasonBlockedByDependency, BlockedBy: []string{"a"}},
 	}}
 	in, schedule := makeSuggestFixture([]model.Task{a, b}, maps, report)
-	got := Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, nil)
+	got := Suggest(in, schedule, nil)
 	for _, s := range got {
 		if s.TaskID == "b" && s.Reason == SuggestRestoreStoodDown {
 			t.Fatalf("blocked task must not suggest restore-stood-down, got %+v", got)

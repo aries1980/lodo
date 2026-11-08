@@ -61,28 +61,28 @@ type suggestInput struct {
 	cycleSet    map[string]bool
 }
 
-func Suggest(tasks []model.Task, timemaps []model.TimeMap, schedule Schedule, granularity time.Duration, windowDays int, location *time.Location, now time.Time, cycleSet map[string]bool) []Suggestion {
-	in := suggestInput{
-		tasks: tasks, timemaps: timemaps, report: schedule.Report,
-		granularity: granularity, windowDays: windowDays, location: location, now: now,
+func Suggest(in Input, schedule Schedule, cycleSet map[string]bool) []Suggestion {
+	s := suggestInput{
+		tasks: in.Tasks, timemaps: in.TimeMaps, report: schedule.Report,
+		granularity: in.Granularity, windowDays: in.WindowDays, location: in.Location, now: in.Now,
 		cycleSet: cycleSet,
 	}
-	byID := make(map[string]model.Task, len(tasks))
-	for _, t := range tasks {
+	byID := make(map[string]model.Task, len(s.tasks))
+	for _, t := range s.tasks {
 		byID[t.ID] = t
 	}
-	mapsBySlug := make(map[string]model.TimeMap, len(timemaps))
+	mapsBySlug := make(map[string]model.TimeMap, len(s.timemaps))
 	var defaults []model.TimeMap
-	for _, m := range timemaps {
+	for _, m := range s.timemaps {
 		mapsBySlug[m.Slug] = m
 		if m.Default {
 			defaults = append(defaults, m)
 		}
 	}
-	today := model.CivilDateOf(now.In(location))
-	horizonEnd := today.AddDays(windowDays)
+	today := model.CivilDateOf(s.now.In(s.location))
+	horizonEnd := today.AddDays(s.windowDays)
 	var out []Suggestion
-	for _, r := range in.report.Tasks {
+	for _, r := range s.report.Tasks {
 		if r.Shortfall <= 0 {
 			continue
 		}
@@ -97,7 +97,7 @@ func Suggest(tasks []model.Task, timemaps []model.TimeMap, schedule Schedule, gr
 			// A dependency/cycle/unknown blocker is the thing to fix;
 			// restoring stood-down blocks cannot unblock it, so keep the
 			// advice focused on the blocker.
-			out = append(out, suggestBlocked(r, task, byID, in.cycleSet)...)
+			out = append(out, suggestBlocked(r, task, byID, s.cycleSet)...)
 			continue
 		}
 		if r.StoodDown > 0 {
@@ -110,7 +110,7 @@ func Suggest(tasks []model.Task, timemaps []model.TimeMap, schedule Schedule, gr
 			out = append(out, authoring...)
 			continue
 		}
-		out = append(out, suggestCapacity(r, task, in, mapsBySlug, defaults, today, horizonEnd)...)
+		out = append(out, suggestCapacity(r, task, s, mapsBySlug, defaults, today, horizonEnd)...)
 	}
 	slices.SortFunc(out, func(a, b Suggestion) int {
 		if a.TaskID != b.TaskID {

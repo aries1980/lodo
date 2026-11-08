@@ -1,7 +1,7 @@
 // Package model defines Lodo's domain types shared across resolution, planning,
 // reconciliation, persistence, and CLI presentation.
 //
-// Names and semantics should stay aligned with the project glossary/specs
-// (docs/content/specs/glossary.md), including Task, Block, Time Map, Schedule,
-// Managed Event-related dispositions/snapshots, and civil/pin time concepts.
+// The types are plain data with no behaviour beyond small conveniences. Names
+// and semantics stay aligned with the glossary (docs/content/specs/glossary.md):
+// Task, Block, Time Map, Schedule, dispositions, snapshots, and civil/pin time.
 package model

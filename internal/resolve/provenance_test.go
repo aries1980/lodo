@@ -41,16 +41,20 @@ func TestProvenanceRecordsInheritance(t *testing.T) {
 		t.Fatalf("missing provenance for t1: %+v", res.Provenance)
 	}
 	hasPagePriority := false
+	hasDirectDuration := false
 	for _, p := range p1.Properties {
 		if p.Property == "priority" && p.Source == "page" && p.Inherited {
 			hasPagePriority = true
 		}
 		if p.Property == "duration" && p.Source == "direct" && !p.Inherited {
-			// ok
+			hasDirectDuration = true
 		}
 	}
 	if !hasPagePriority {
 		t.Fatalf("t1 should inherit priority from page: %+v", p1.Properties)
+	}
+	if !hasDirectDuration {
+		t.Fatalf("t1 duration should be authored on the block: %+v", p1.Properties)
 	}
 	p2, ok := res.Provenance["t2"]
 	if !ok {

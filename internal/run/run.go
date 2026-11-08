@@ -1,8 +1,7 @@
 // Package run assembles the loop the CLI commands need: read the graph
 // fresh over the HTTP API, resolve it, project the calendar's busy time,
 // and plan the Schedule. Schedule and Check fold stored dispositions back
-// in through reconciliation; Graph (the forecast path) stays a store-free
-// dry run.
+// in through reconciliation; Forecast stays a store-free dry run.
 //
 // The busy mask is the calendar's explicit input to the planner (ADR 0006):
 // resolved tasks plus a mask, never a calendar the planner reaches into.
@@ -48,115 +47,27 @@ type Source struct {
 	APIURL         string
 }
 
-// Outcome is one forecast's read side: the Tasks that were seen, the graph
-// problems to report, the Schedule planned from them, and the Managed
-// events busy deliberately left out (schedule reconciles them instead).
-type Outcome struct {
+// Scheduled is the core forecast, check, and schedule share: the Tasks that
+// were seen, the graph problems to report, the Schedule planned from them,
+// and the busy-source audit. Each command's outcome embeds this and adds
+// only the fields that command has.
+type Scheduled struct {
 	Tasks    []model.Task
 	Issues   []resolve.Issue
 	Schedule planner.Schedule
-	// Managed is the one hole in the forecast mask: Lodo's own events are
-	// not folded into busy there; schedule and check reconcile them.
-	Managed []calendar.Event
 	// Busy carries the write calendar plus per-read-calendar status for the
 	// busy sources line and warnings.
-	Busy       calendar.BusyReport
+	Busy calendar.BusyReport
+}
+
+// Outcome is one forecast: Scheduled, plus the Managed events busy
+// deliberately left out (schedule reconciles them instead) and provenance.
+type Outcome struct {
+	Scheduled
+	// Managed is the one hole in the forecast mask: Lodo's own events are
+	// not folded into busy there; schedule and check reconcile them.
+	Managed    []calendar.Event
 	Provenance map[string]resolve.TaskProvenance
-}
-
-// Graph reads the graph fresh, resolves it, projects the calendar's busy
-// time and plans the Schedule with the effective config's settings.
-// Forecast and schedule --dry-run call this; it never touches the store.
-func Graph(ctx context.Context, client logseq.Client, busy BusySource, cfg config.Config, now time.Time) (Outcome, error) {
-	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
-	if err != nil {
-		return Outcome{}, err
-	}
-	location, err := cfg.Scheduling.Location()
-	if err != nil {
-		return Outcome{}, err
-	}
-
-	result, err := Read(ctx, client, cfg.Logseq.TimeMapsPage, location)
-	if err != nil {
-		return Outcome{}, err
-	}
-
-	var inputBusy grid.Mask
-	var managed []calendar.Event
-	var busyReport calendar.BusyReport
-	if busy != nil {
-		g := grid.Build(now, location, granularity, cfg.Scheduling.WindowDays)
-		inputBusy, managed, busyReport, err = busy.Busy(ctx, g, now)
-		if err != nil {
-			return Outcome{}, err
-		}
-	}
-
-	schedule, err := planner.Plan(planner.Input{
-		Tasks:        result.Tasks,
-		TimeMaps:     result.TimeMaps,
-		Busy:         inputBusy,
-		Dispositions: nil, // forecast stays store-free by design
-		Now:          now,
-		Granularity:  granularity,
-		WindowDays:   cfg.Scheduling.WindowDays,
-		Location:     location,
-	})
-	if err != nil {
-		return Outcome{}, err
-	}
-
-	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed, Busy: busyReport, Provenance: result.Provenance}, nil
-}
-
-// Read walks the read strategy from logseq-integration.md: enumerate pages,
-// then fetch each page's block tree, and the page properties wherever they
-// can matter (task-marked blocks inherit from their page, and the Time Maps
-// page needs its tree even when nothing on it is TODO).
-func Read(ctx context.Context, client logseq.Client, timeMapsPage string, loc *time.Location) (resolve.Result, error) {
-	pages, err := client.Pages(ctx)
-	if err != nil {
-		return resolve.Result{}, err
-	}
-	sortPages(pages)
-
-	tmName := lowerTrim(timeMapsPage)
-	input := resolve.Input{
-		Pages:        pages,
-		Trees:        make(map[string][]*logseq.Block, len(pages)),
-		TimeMapsPage: timeMapsPage,
-		Location:     loc,
-	}
-
-	for _, p := range pages {
-		tree, err := client.Tree(ctx, p.Name)
-		if err != nil {
-			return resolve.Result{}, err
-		}
-		input.Trees[p.Name] = tree
-
-		if lowerTrim(p.Name) != tmName && !hasCandidate(tree) {
-			continue // page properties cannot matter for a page with no candidates
-		}
-		info, err := client.Page(ctx, p.Name)
-		if err != nil {
-			return resolve.Result{}, err
-		}
-		if info == nil {
-			continue // the page vanished between enumeration and the fetch
-		}
-		p.Properties = info.Properties
-	}
-
-	res, err := resolve.Resolve(input)
-	if err != nil {
-		return resolve.Result{}, err
-	}
-	if err := validateTaskIDs(res.Tasks); err != nil {
-		return resolve.Result{}, err
-	}
-	return res, nil
 }
 
 // validateTaskIDs refuses duplicated block UUIDs. Event ids, planner indexes
@@ -241,7 +152,10 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 	return resolve.Result{Tasks: allTasks, TimeMaps: maps, Issues: allIssues, Provenance: provenance}, nil
 }
 
-// readOne is Read plus graph identity.
+// readOne walks one graph the way logseq-integration.md specifies: enumerate
+// pages, fetch each page's block tree, and the page properties wherever they
+// can matter (task-marked blocks inherit from their page, and the Time Maps
+// page needs its tree even when nothing on it is TODO).
 func readOne(ctx context.Context, client logseq.Client, timeMapsPage string, loc *time.Location, graph string, order int, defaultMap string) (resolve.Result, error) {
 	pages, err := client.Pages(ctx)
 	if err != nil {
@@ -283,8 +197,10 @@ func readOne(ctx context.Context, client logseq.Client, timeMapsPage string, loc
 	return resolve.Resolve(input)
 }
 
-// GraphSources is Graph over multiple graphs.
-func GraphSources(ctx context.Context, sources []Source, busy BusySource, cfg config.Config, now time.Time) (Outcome, error) {
+// Forecast reads every source, projects the calendar's busy time, and plans
+// the Schedule. One Logseq graph is a one-element sources slice. Forecast
+// and schedule --dry-run call this; it never touches the store.
+func Forecast(ctx context.Context, sources []Source, busy BusySource, cfg config.Config, now time.Time) (Outcome, error) {
 	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
 	if err != nil {
 		return Outcome{}, err
@@ -323,7 +239,12 @@ func GraphSources(ctx context.Context, sources []Source, busy BusySource, cfg co
 		return Outcome{}, err
 	}
 
-	return Outcome{Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Managed: managed, Busy: busyReport, Provenance: result.Provenance}, nil
+	return Outcome{
+		Scheduled: Scheduled{
+			Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule, Busy: busyReport,
+		},
+		Managed: managed, Provenance: result.Provenance,
+	}, nil
 }
 
 // hasCandidate reports whether any block in the tree is marked TODO or
@@ -357,48 +278,4 @@ func sortPages(pages []*logseq.Page) {
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
-}
-
-// TextMap indexes Task display text by ID for O(1) rendering lookups.
-func TextMap(tasks []model.Task) map[string]string {
-	out := make(map[string]string, len(tasks))
-	for _, t := range tasks {
-		out[t.ID] = t.Text
-	}
-	return out
-}
-
-// GraphMap indexes Task graph by ID.
-func GraphMap(tasks []model.Task) map[string]string {
-	out := make(map[string]string, len(tasks))
-	for _, t := range tasks {
-		if _, ok := out[t.ID]; !ok {
-			out[t.ID] = t.Graph
-		}
-	}
-	return out
-}
-
-// Label prefers the Task's text, falling back to its id.
-func Label(tasks []model.Task, id string) string {
-	return LabelWithMap(TextMap(tasks), id)
-}
-
-// LabelWithMap prefers the mapped text, falling back to the id.
-func LabelWithMap(byID map[string]string, id string) string {
-	if text, ok := byID[id]; ok && text != "" {
-		return text
-	}
-	return id
-}
-
-// TaskText returns the display text of the Task with the given id, for
-// check and forecast rows. Empty when the id is unknown.
-func TaskText(tasks []model.Task, id string) string {
-	for _, t := range tasks {
-		if t.ID == id {
-			return t.Text
-		}
-	}
-	return ""
 }

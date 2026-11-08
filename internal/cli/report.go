@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/logseq"
@@ -175,14 +176,14 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 		busy := busyView(outcome.Busy)
 		view := checkReport{
 			GraphIssues: outcome.Issues,
-			Shortfalls:  checkShortfalls(outcome),
+			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
 			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
 			StoodDown:   checkStoodDown(outcome),
-			Orphaned:    checkOrphans(outcome),
+			Orphaned:    orphanViews(outcome.Tasks, outcome.Orphans),
 			Busy:        &busy,
 		}
 		if opts.verbose {
-			view.Explanations = checkExplanations(outcome)
+			view.Explanations = explanationViews(outcome.Schedule.Explanations)
 		}
 		if err := printJSON(opts.out, view); err != nil {
 			return &exitError{code: codeError, err: err}
@@ -248,9 +249,11 @@ func buildCheckOutcomeWithoutCalendar(cfg config.Config, sources []run.Source, s
 		}
 	}
 	return run.CheckOutcome{
-		Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
+		Scheduled: run.Scheduled{
+			Tasks: result.Tasks, Issues: result.Issues, Schedule: schedule,
+		},
 		Dispositions: effective, AllDispositions: storedDisps,
-		Orphans: nil, StoodDown: stood, Provenance: result.Provenance,
+		StoodDown: stood, Provenance: result.Provenance,
 	}, nil
 }
 
@@ -270,13 +273,13 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 	if opts.json {
 		view := checkReport{
 			GraphIssues: outcome.Issues,
-			Shortfalls:  checkShortfalls(outcome),
+			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
 			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
 			StoodDown:   checkStoodDown(outcome),
-			Orphaned:    checkOrphans(outcome),
+			Orphaned:    orphanViews(outcome.Tasks, outcome.Orphans),
 		}
 		if opts.verbose {
-			view.Explanations = checkExplanations(outcome)
+			view.Explanations = explanationViews(outcome.Schedule.Explanations)
 		}
 		if err := printJSON(opts.out, view); err != nil {
 			return &exitError{code: codeError, err: err}
@@ -327,27 +330,27 @@ func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 	}
 
 	now := time.Now()
-	outcome, err := run.GraphSources(context.Background(), sources, busy, cfg, now)
+	outcome, err := run.Forecast(context.Background(), sources, busy, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 
 	if opts.json {
 		view := forecastReport{
-			Blocks:      blocks(outcome),
-			Shortfalls:  shortfalls(outcome),
+			Blocks:      blockViews(outcome.Tasks, outcome.Schedule.Blocks),
+			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
 			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
 			Managed:     managedEvents(outcome),
 			Busy:        busyView(outcome.Busy),
 		}
 		if verbose {
-			view.Explanations = explanations(outcome)
+			view.Explanations = explanationViews(outcome.Schedule.Explanations)
 		}
 		if err := printJSON(opts.out, view); err != nil {
 			return &exitError{code: codeError, err: err}
 		}
 	} else {
-		renderForecastText(opts.out, cfg, outcome, now, verbose, style)
+		renderForecastText(opts.out, cfg, outcome.Scheduled, outcome.Managed, now, verbose, style)
 	}
 	logBusyWarnings(opts, "forecast", outcome.Busy)
 	if len(outcome.Managed) > 0 {
@@ -445,18 +448,6 @@ type explanationJSON struct {
 	RunSlots   int       `json:"run_slots,omitempty"`
 }
 
-func blocks(outcome run.Outcome) []blockJSON {
-	return blockViews(outcome.Tasks, outcome.Schedule.Blocks)
-}
-
-func shortfalls(outcome run.Outcome) []shortfallJSON {
-	return shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks)
-}
-
-func explanations(outcome run.Outcome) []explanationJSON {
-	return explanationViews(outcome.Schedule.Explanations)
-}
-
 // managedEvents is the note's payload: the events busy deliberately left
 // out, in view order.
 func managedEvents(outcome run.Outcome) []managedJSON {
@@ -476,10 +467,6 @@ func printJSON(w io.Writer, v any) error {
 
 // Text rendering, in the Scheduling timezone the blocks were built in.
 
-func checkShortfalls(outcome run.CheckOutcome) []shortfallJSON {
-	return shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks)
-}
-
 func checkStoodDown(outcome run.CheckOutcome) []stoodDownJSON {
 	byText := textByTasks(outcome.Tasks)
 	byGraph := graphByTasks(outcome.Tasks)
@@ -493,21 +480,9 @@ func checkStoodDown(outcome run.CheckOutcome) []stoodDownJSON {
 	return out
 }
 
-func checkOrphans(outcome run.CheckOutcome) []orphanJSON {
-	return orphanViews(outcome.Tasks, outcome.Orphans)
-}
-
-func checkExplanations(outcome run.CheckOutcome) []explanationJSON {
-	return explanationViews(outcome.Schedule.Explanations)
-}
-
-func checkTaskLabel(outcome run.CheckOutcome, id string) string {
-	return graphLabel(outcome.Tasks, id)
-}
-
 // graphLabel prefixes the task text with [graph] in multi-graph mode.
 func graphLabel(tasks []model.Task, id string) string {
-	text := run.Label(tasks, id)
+	text := labelFor(textByTasks(tasks), id)
 	for _, tk := range tasks {
 		if tk.ID == id && tk.Graph != "" {
 			return "[" + tk.Graph + "] " + text
@@ -533,9 +508,9 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool, st sty
 		_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf("Plan (real busy time): %d Task(s) could not be fully placed.", len(short))))
 		for _, r := range short {
 			line := fmt.Sprintf("  %s: %d of %d slots placed — %s",
-				checkTaskLabel(outcome, r.TaskID), r.Placed, r.Required, r.Reason)
+				taskLabel(outcome.Tasks, r.TaskID), r.Placed, r.Required, r.Reason)
 			if len(r.BlockedBy) > 0 {
-				line += fmt.Sprintf(" (blocked by %s)", strings.Join(blockedLabels(outcome, r.BlockedBy), ", "))
+				line += fmt.Sprintf(" (blocked by %s)", strings.Join(blockedTaskLabels(outcome.Tasks, r.BlockedBy), ", "))
 			}
 			_, _ = fmt.Fprintln(w, st.warning(line))
 		}
@@ -547,7 +522,7 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool, st sty
 		_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf("Stood-down: %d Block(s) the user deleted, not recreated until inputs change:", len(outcome.StoodDown))))
 		for _, d := range outcome.StoodDown {
 			_, _ = fmt.Fprintf(w, "  %s block %d (%d slots)\n",
-				checkTaskLabel(outcome, d.TaskID), d.BlockIndex, d.Slots)
+				taskLabel(outcome.Tasks, d.TaskID), d.BlockIndex, d.Slots)
 		}
 	}
 
@@ -566,17 +541,17 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool, st sty
 		_, _ = fmt.Fprintln(w, st.bold("Explanations:"))
 		for _, e := range outcome.Schedule.Explanations {
 			_, _ = fmt.Fprintf(w, "  %s block %d at %s (%d slots), %s\n",
-				checkTaskLabel(outcome, e.TaskID), e.BlockIndex,
+				taskLabel(outcome.Tasks, e.TaskID), e.BlockIndex,
 				e.Start.Format("Mon 15:04"), e.Slots, e.Kind)
 		}
 		renderDecisionSummaries(w, outcome.Schedule.Decisions, func(id string) string {
-			return checkTaskLabel(outcome, id)
+			return taskLabel(outcome.Tasks, id)
 		}, st)
 		_, _ = fmt.Fprintln(w, st.dim("For full reasoning use `lodo explain <task-id>` (same planner logic, per-task detail)."))
 	}
 
 	renderSuggestionText(w, outcome.Tasks, outcome.Schedule.Suggestions, func(id string) string {
-		return checkTaskLabel(outcome, id)
+		return taskLabel(outcome.Tasks, id)
 	}, st)
 
 	printBusyText(w, outcome.Busy, st)
@@ -594,7 +569,7 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool, st sty
 	}
 }
 
-func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now time.Time, verbose bool, st styler) {
+func renderForecastText(w io.Writer, cfg config.Config, scheduled run.Scheduled, managed []calendar.Event, now time.Time, verbose bool, st styler) {
 	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
 	if err != nil {
 		granularity = 15 * time.Minute // unreachable after config validation
@@ -610,15 +585,15 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 		durationMinutes(granularity, 1),
 		loc,
 	)))
-	printBusyText(w, outcome.Busy, st)
+	printBusyText(w, scheduled.Busy, st)
 
 	// The known forecast hole, said plainly: Lodo's own events are not in
 	// the busy mask there, and schedule's reconciliation is what folds them
 	// back in.
-	if n := len(outcome.Managed); n > 0 {
+	if n := len(managed); n > 0 {
 		_, _ = fmt.Fprintln(w, st.warning(fmt.Sprintf(
 			"\nNote: %d Managed event(s) on the calendar are not counted as busy yet — they are\nthe ones Lodo itself created; the schedule command's reconciliation will account for them:", n)))
-		for _, e := range outcome.Managed {
+		for _, e := range managed {
 			summary := e.Summary
 			if summary == "" {
 				summary = "(no title)"
@@ -627,7 +602,7 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 		}
 	}
 
-	if len(outcome.Schedule.Blocks) == 0 {
+	if len(scheduled.Schedule.Blocks) == 0 {
 		_, _ = fmt.Fprintln(w, "\nNothing to schedule.")
 	}
 
@@ -640,7 +615,7 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 	}
 	rows := map[model.CivilDate]*dayRow{}
 	var order []model.CivilDate
-	for _, b := range outcome.Schedule.Blocks {
+	for _, b := range scheduled.Schedule.Blocks {
 		start := b.Start.In(loc)
 		d := model.CivilDateOf(start)
 		row, ok := rows[d]
@@ -674,7 +649,7 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 			if b.Kind == model.BlockPin {
 				kind = " (pin)"
 			}
-			task := taskLabel(outcome, b.TaskID) + kind
+			task := taskLabel(scheduled.Tasks, b.TaskID) + kind
 			if b.Kind == model.BlockPin {
 				task = st.warning(task)
 			} else {
@@ -691,27 +666,27 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 		_ = tw.Flush()
 	}
 
-	if short := outcome.Schedule.Report.Tasks; len(short) > 0 {
+	if short := scheduled.Schedule.Report.Tasks; len(short) > 0 {
 		_, _ = fmt.Fprintln(w, st.warning("\nShortfall:"))
 		for _, r := range short {
 			line := fmt.Sprintf("  %s: %d of %d slots placed — %s",
-				taskLabel(outcome, r.TaskID), r.Placed, r.Required, r.Reason)
+				taskLabel(scheduled.Tasks, r.TaskID), r.Placed, r.Required, r.Reason)
 			if len(r.BlockedBy) > 0 {
-				line += fmt.Sprintf(" (blocked by %s)", strings.Join(forecastBlockedLabels(outcome, r.BlockedBy), ", "))
+				line += fmt.Sprintf(" (blocked by %s)", strings.Join(blockedTaskLabels(scheduled.Tasks, r.BlockedBy), ", "))
 			}
 			_, _ = fmt.Fprintln(w, st.warning(line))
 		}
 	}
 
-	renderSuggestionText(w, outcome.Tasks, outcome.Schedule.Suggestions, func(id string) string {
-		return taskLabel(outcome, id)
+	renderSuggestionText(w, scheduled.Tasks, scheduled.Schedule.Suggestions, func(id string) string {
+		return taskLabel(scheduled.Tasks, id)
 	}, st)
 
 	if verbose {
 		_, _ = fmt.Fprintln(w, st.bold("\nExplanations:"))
-		for _, e := range outcome.Schedule.Explanations {
+		for _, e := range scheduled.Schedule.Explanations {
 			line := fmt.Sprintf("  %s block %d at %s (%d slots), %s",
-				taskLabel(outcome, e.TaskID),
+				taskLabel(scheduled.Tasks, e.TaskID),
 				e.BlockIndex,
 				e.Start.In(loc).Format("Mon 15:04"),
 				e.Slots,
@@ -723,25 +698,26 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 			}
 			_, _ = fmt.Fprintln(w, st.dim(line))
 		}
-		renderDecisionSummaries(w, outcome.Schedule.Decisions, func(id string) string {
-			return taskLabel(outcome, id)
+		renderDecisionSummaries(w, scheduled.Schedule.Decisions, func(id string) string {
+			return taskLabel(scheduled.Tasks, id)
 		}, st)
 		_, _ = fmt.Fprintln(w, st.dim("For full reasoning use `lodo explain <task-id>` (same planner logic, per-task detail)."))
 	}
 
 	// Summary footer for humans and cron mail.
 	summary := fmt.Sprintf("Summary: %d block(s), %d shortfall(s), %d managed left out",
-		len(outcome.Schedule.Blocks), len(outcome.Schedule.Report.Tasks), len(outcome.Managed))
-	if len(outcome.Schedule.Report.Tasks) > 0 {
+		len(scheduled.Schedule.Blocks), len(scheduled.Schedule.Report.Tasks), len(managed))
+	if len(scheduled.Schedule.Report.Tasks) > 0 {
 		_, _ = fmt.Fprintln(w, st.warning(summary))
 	} else {
 		_, _ = fmt.Fprintln(w, st.success(summary))
 	}
 }
 
-// taskLabel prefers the Task's text, falling back to its id.
-func taskLabel(outcome run.Outcome, id string) string {
-	return graphLabel(outcome.Tasks, id)
+// taskLabel prefers the Task's text, falling back to its id, and prefixes
+// the graph slug in multi-graph mode.
+func taskLabel(tasks []model.Task, id string) string {
+	return graphLabel(tasks, id)
 }
 
 // renderDecisionSummaries prints one line per task decision in consideration
@@ -816,14 +792,9 @@ func renderDecisionSummaries(w io.Writer, decisions []planner.TaskDecision, labe
 	}
 }
 
-// forecastBlockedLabels prefers Task text for blocker IDs.
-func forecastBlockedLabels(outcome run.Outcome, ids []string) []string {
-	return blockerLabels(textByTasks(outcome.Tasks), ids)
-}
-
-// blockedLabels prefers Task text for blocker IDs in check output.
-func blockedLabels(outcome run.CheckOutcome, ids []string) []string {
-	return blockerLabels(textByTasks(outcome.Tasks), ids)
+// blockedTaskLabels prefers Task text for blocker IDs.
+func blockedTaskLabels(tasks []model.Task, ids []string) []string {
+	return blockerLabels(textByTasks(tasks), ids)
 }
 
 // durationMinutes renders a Block's span: "30m", "1h" or "1h30m".

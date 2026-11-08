@@ -94,7 +94,7 @@ func TestReadSourcesRefusesDuplicateTaskIDs(t *testing.T) {
 	}
 }
 
-func TestGraphSourcesPlansAcrossGraphs(t *testing.T) {
+func TestForecastPlansAcrossGraphs(t *testing.T) {
 	primary := graphFixture{
 		pages: []*logseq.Page{memPage("a"), memPage("Time Maps")},
 		trees: map[string][]*logseq.Block{
@@ -114,12 +114,12 @@ func TestGraphSourcesPlansAcrossGraphs(t *testing.T) {
 	}
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	outcome, err := run.GraphSources(context.Background(), []run.Source{
+	outcome, err := run.Forecast(context.Background(), []run.Source{
 		graphSource("work", 0, primary, "deep-work"),
 		graphSource("family", 1, secondary, "deep-work"),
 	}, nil, cfg, now)
 	if err != nil {
-		t.Fatalf("GraphSources: %v", err)
+		t.Fatalf("Forecast: %v", err)
 	}
 	if len(outcome.Schedule.Blocks) != 2 {
 		t.Fatalf("Blocks = %+v, want both graphs placed", outcome.Schedule.Blocks)

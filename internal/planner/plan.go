@@ -4,9 +4,16 @@
 // files, makes no network calls and never looks at the wall clock, and
 // identical inputs always produce identical output (ADR 0006).
 //
-// Plan flow: validateInput → buildBusy → buildPlans → collectPins/emitPins/emitPinned
-// → indexPlans/collectCandidates/findUnknownDeps → topoOrder → initialEnds
-// → placeOrdered → buildReport → sorted/buildDecisions.
+// Files, in pipeline order:
+//   - plan.go — Plan, pins, and the candidate index
+//   - taskplan.go — one Task's placement state
+//   - order.go — dependency order (topoOrder)
+//   - search.go — free-run search and Block emission
+//   - comparator.go — the ADR 0010 placement comparator
+//   - report.go — the dependency gate (placeOrdered) and the shortfall report
+//   - decisions.go — per-Task explain decisions
+//   - trace.go — explain decision types Plan fills in
+//   - suggest.go — advisory suggestions for shortfalls
 package planner
 
 import (
@@ -176,8 +183,8 @@ func Plan(in Input) (Schedule, error) {
 
 	// Pins are immovable and exact, so they shape the timeline before any
 	// search begins. They are emitted at their authored time, never snapped.
-	// A Pin with dependencies stays (Q10 Pin wins); the violation is
-	// reported after placement.
+	// A Pin with dependencies stays at its authored time; the order
+	// violation is reported after placement.
 	pins := collectPins(plans)
 	emitPins(pins, planBuilder)
 	planBuilder.pinMask = planBuilder.busy.AndNot(planBuilder.external)
@@ -237,7 +244,7 @@ func Plan(in Input) (Schedule, error) {
 		scope:          &scope,
 	})
 	schedule := Schedule{Blocks: blocks, Report: report, Explanations: explanations, Decisions: decisions}
-	schedule.Suggestions = Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, cycleSet)
+	schedule.Suggestions = Suggest(in, schedule, cycleSet)
 	return schedule, nil
 }
 

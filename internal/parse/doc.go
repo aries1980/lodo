@@ -1,7 +1,7 @@
-// Package parse provides parsing/normalization primitives for Logseq-authored
-// values consumed by resolution and domain logic (durations, org timestamps and
-// civil dates, priorities, time-map windows/slugs, and related helpers).
+// Package parse reads the values Lodo stores in the Logseq graph: durations,
+// dates, org timestamps, priorities, slugs, and Time Map window lines.
 //
-// It owns these parsing rules so callers (especially internal/resolve) can report
-// Issues for unparseable input instead of reimplementing or guessing semantics.
+// Malformed input is always an error; the parser never guesses. Callers
+// (especially internal/resolve) report Issues instead of reimplementing these
+// rules.
 package parse
