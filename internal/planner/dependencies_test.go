@@ -93,6 +93,33 @@ func TestCycleIsReported(t *testing.T) {
 	}
 }
 
+func TestDependentOfCycleIsBlockedNotCycle(t *testing.T) {
+	a := depTask("a", duration(30), "b")
+	b := depTask("b", duration(30), "a")
+	c := depTask("c", duration(30), "a")
+	in := newInput(a, b, c)
+	in.TimeMaps = []model.TimeMap{deepMap(on(time.Monday, 9, 0, 12, 0))}
+	s, err := Plan(in)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	reasons := map[string]Reason{}
+	for _, r := range s.Report.Tasks {
+		reasons[r.TaskID] = r.Reason
+	}
+	if reasons["a"] != ReasonDependencyCycle || reasons["b"] != ReasonDependencyCycle {
+		t.Fatalf("cycle members = %+v, want dependency cycles", s.Report.Tasks)
+	}
+	if reasons["c"] != ReasonBlockedByDependency {
+		t.Fatalf("downstream c reason = %q, want %q", reasons["c"], ReasonBlockedByDependency)
+	}
+	for _, r := range s.Report.Tasks {
+		if r.TaskID == "c" && (len(r.BlockedBy) != 1 || r.BlockedBy[0] != "a") {
+			t.Fatalf("c BlockedBy = %v, want [a]", r.BlockedBy)
+		}
+	}
+}
+
 func TestUnknownDependsBlocks(t *testing.T) {
 	a := depTask("a", duration(30), "ghost-id")
 	in := newInput(a)

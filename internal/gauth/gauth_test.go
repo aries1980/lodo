@@ -519,6 +519,14 @@ func TestRunNoBrowserToleratesNoise(t *testing.T) {
 	if res.RefreshToken != "1//stored-refresh-token" {
 		t.Fatalf("RefreshToken = %q", res.RefreshToken)
 	}
+	// The prose must not be consumed as the bare code: only the final
+	// code-shaped line may reach the token endpoint.
+	if len(s.code) != 1 {
+		t.Fatalf("code exchanges = %d, want 1", len(s.code))
+	}
+	if got := s.code[0].Get("code"); got != "auth-code" {
+		t.Fatalf("exchanged code = %q, want auth-code (prose was consumed)", got)
+	}
 }
 
 func TestRunNoBrowserDeniedPaste(t *testing.T) {

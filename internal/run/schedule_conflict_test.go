@@ -32,6 +32,15 @@ func (c *conflictCal) List(_ context.Context, _, _ time.Time) ([]calendar.Event,
 	return c.managed, nil
 }
 
+func (c *conflictCal) Get(_ context.Context, id string) (calendar.Event, error) {
+	for _, e := range c.managed {
+		if e.ID == id {
+			return e, nil
+		}
+	}
+	return calendar.Event{}, missingError()
+}
+
 func (c *conflictCal) Insert(_ context.Context, e calendar.Event) (calendar.Event, error) {
 	c.inserts = append(c.inserts, e.ID)
 	if c.insertFn != nil {

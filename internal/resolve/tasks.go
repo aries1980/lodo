@@ -530,7 +530,11 @@ func (r *resolver) taskWithAncestors(page *logseq.Page, b *logseq.Block, ancesto
 			r.appendBad(r.blockContext(page, b), "scheduled", text,
 				fmt.Errorf("no time: a Pin is an exact date-time and the day-granular equivalent is plan-start or plan-end"))
 		default:
-			pin := stamp.Instant(r.in.Location)
+			pin, pinErr := stamp.Instant(r.in.Location)
+			if pinErr != nil {
+				r.appendBad(r.blockContext(page, b), "scheduled", text, pinErr)
+				break
+			}
 			t.Pin = &pin
 		}
 	}

@@ -146,7 +146,42 @@ func Read(ctx context.Context, client logseq.Client, timeMapsPage string, loc *t
 		p.Properties = info.Properties
 	}
 
-	return resolve.Resolve(input)
+	res, err := resolve.Resolve(input)
+	if err != nil {
+		return resolve.Result{}, err
+	}
+	if err := validateTaskIDs(res.Tasks); err != nil {
+		return resolve.Result{}, err
+	}
+	return res, nil
+}
+
+// validateTaskIDs refuses duplicated block UUIDs. Event ids, planner indexes
+// and store keys are built from the UUID alone, so two graphs sharing one
+// (a cloned graph) would collapse into one Task and one calendar event.
+func validateTaskIDs(tasks []model.Task) error {
+	seen := make(map[string]model.Task, len(tasks))
+	for _, t := range tasks {
+		if prev, ok := seen[t.ID]; ok {
+			if prev.Graph == t.Graph {
+				return fmt.Errorf("task UUID %s appears more than once in %s; block UUIDs must be unique",
+					t.ID, graphLabel(t.Graph))
+			}
+			return fmt.Errorf("task UUID %s appears in %s and %s; cloned graphs share block UUIDs — give the Tasks unique UUIDs before scheduling both",
+				t.ID, graphLabel(prev.Graph), graphLabel(t.Graph))
+		}
+		seen[t.ID] = t
+	}
+	return nil
+}
+
+// graphLabel names a source graph in diagnostics; single-graph mode has no
+// slug.
+func graphLabel(graph string) string {
+	if graph == "" {
+		return "single-graph mode"
+	}
+	return fmt.Sprintf("graph %q", graph)
 }
 
 // ReadSources reads every graph and merges the resolved results.
@@ -160,6 +195,9 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 	if len(sources) == 1 {
 		res, err := readOne(ctx, sources[0].Client, timeMapsPage, loc, sources[0].Name, sources[0].Order, sources[0].DefaultTimeMap)
 		if err != nil {
+			return resolve.Result{}, err
+		}
+		if err := validateTaskIDs(res.Tasks); err != nil {
 			return resolve.Result{}, err
 		}
 		return res, nil
@@ -189,6 +227,9 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 			}
 			allIssues = append(allIssues, is)
 		}
+	}
+	if err := validateTaskIDs(allTasks); err != nil {
+		return resolve.Result{}, err
 	}
 	return resolve.Result{Tasks: allTasks, TimeMaps: maps, Issues: allIssues}, nil
 }

@@ -118,6 +118,12 @@ func (m *MultiClient) List(ctx context.Context, from, to time.Time) ([]Event, er
 	return m.write.List(ctx, from, to)
 }
 
+// Get fetches one Managed event by id from the write calendar only. It lets
+// reconciliation tell an event outside the List window from a user deletion.
+func (m *MultiClient) Get(ctx context.Context, id string) (Event, error) {
+	return m.write.Get(ctx, id)
+}
+
 // Insert creates one Managed event on the write calendar only.
 func (m *MultiClient) Insert(ctx context.Context, e Event) (Event, error) {
 	return m.write.Insert(ctx, e)

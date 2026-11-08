@@ -160,6 +160,45 @@ func TestGoldenTable(t *testing.T) {
 	}
 }
 
+func TestOwnSpanMoveDoesNotPin(t *testing.T) {
+	granularity := 15 * time.Minute
+	now := at(9, 8, 0)
+	start, end := at(9, 14, 0), at(9, 14, 30)
+	b := store.Binding{TaskID: "t1", BlockIndex: 0, EventID: "e1", Start: at(9, 9, 0), End: at(9, 9, 30), Slots: 2}
+	obs := managed("e1", "t1", 0, start, end)
+	obs.ExtendedProperties.Private["lodo-span"] = SpanMarker(start, end)
+
+	res, err := Reconcile([]calendar.Event{obs}, []store.Binding{b}, nil, granularity, london, now)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(res.BindingUpserts) != 1 || !res.BindingUpserts[0].Start.Equal(start) {
+		t.Fatalf("binding must follow Lodo's own write: %+v", res.BindingUpserts)
+	}
+	if len(res.DispositionUpserts) != 0 {
+		t.Fatalf("Lodo's own write must not fabricate a pin: %+v", res.DispositionUpserts)
+	}
+	if len(res.BindingDeletes) != 0 {
+		t.Fatalf("no binding must be deleted: %+v", res.BindingDeletes)
+	}
+}
+
+func TestStaleSpanMarkerStillPins(t *testing.T) {
+	granularity := 15 * time.Minute
+	now := at(9, 8, 0)
+	b := store.Binding{TaskID: "t1", BlockIndex: 0, EventID: "e1", Start: at(9, 9, 0), End: at(9, 9, 30), Slots: 2}
+	obs := managed("e1", "t1", 0, at(9, 14, 0), at(9, 14, 30))
+	obs.ExtendedProperties.Private["lodo-span"] = SpanMarker(at(9, 9, 0), at(9, 9, 30))
+
+	res, err := Reconcile([]calendar.Event{obs}, []store.Binding{b}, nil, granularity, london, now)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(res.DispositionUpserts) != 1 || res.DispositionUpserts[0].Disposition.Kind != model.DispositionPinned {
+		t.Fatalf("a user move with a stale marker must pin: %+v", res.DispositionUpserts)
+	}
+}
+
 func TestAdoptedThenDeletedMatchesNothing(t *testing.T) {
 	granularity := 15 * time.Minute
 	now := at(9, 8, 0)

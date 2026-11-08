@@ -36,7 +36,8 @@ defaults are a starting point; edit the page in Logseq to suit your week.
   slugified, case-insensitively, into a key (`Deep Work` → `deep-work`).
 - **Each child block = one window.** A window is a human-readable line: days, then a
   start–end time, then an optional trailing tier word.
-- A map with no child blocks is empty and schedules nothing.
+- A map with no child blocks is empty and schedules nothing itself; a Task naming it
+  spills into the default map from the default's best tier.
 
 ### Window grammar
 

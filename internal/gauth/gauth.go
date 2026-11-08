@@ -302,13 +302,17 @@ func pastedCode(r io.Reader, state string) (string, error) {
 }
 
 // pasted reads one pasted line: either the full redirect address (an
-// absolute URL, whose code and state carry the grant) or the bare code
-// alone. usable says whether the line produced a decision; err is a failed
-// wait — a denied grant or a mismatched state — the same conditions the
-// listener reports, with the same messages.
+// absolute URL, whose code and state carry the grant) or a code-shaped bare
+// token. Prose and unparseable addresses are not usable and let the reader
+// wait for the next line. usable says whether the line produced a decision;
+// err is a failed wait — a denied grant or a mismatched state — the same
+// conditions the listener reports, with the same messages.
 func pasted(line, state string) (code string, usable bool, err error) {
 	if !strings.HasPrefix(line, "http://") && !strings.HasPrefix(line, "https://") {
-		return line, line != "", nil // the bare code, no state to check
+		if isBareCode(line) {
+			return line, true, nil // the bare code, no state to check
+		}
+		return "", false, nil // prose or a malformed paste; try the next line
 	}
 	u, perr := url.Parse(line)
 	if perr != nil {
@@ -326,6 +330,29 @@ func pasted(line, state string) (code string, usable bool, err error) {
 	}
 	code = q.Get("code")
 	return code, code != "", nil
+}
+
+// isBareCode reports whether a non-URL line looks like Google's opaque
+// authorization code rather than prose typed while waiting. Codes are single
+// URL-safe tokens; prose has spaces or punctuation and is skipped so the
+// reader keeps waiting for the real paste instead of exchanging the prose.
+func isBareCode(line string) bool {
+	if len(line) < 8 || strings.ContainsAny(line, " \t") {
+		return false
+	}
+	codeish := false
+	for _, r := range line {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+			codeish = true
+		case strings.ContainsRune("-_.~+/=", r):
+			codeish = true
+		default:
+			return false
+		}
+	}
+	return codeish
 }
 
 // Persist merges res into the credentials file at path: the google section

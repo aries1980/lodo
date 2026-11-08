@@ -1,6 +1,7 @@
 package resolve_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 	_ "time/tzdata"
@@ -855,6 +856,45 @@ func TestBadPropertyValues(t *testing.T) {
 				t.Fatalf("Tasks = %+v, want the Task kept with its good properties; issues %+v", res.Tasks, res.Issues)
 			}
 			tt.check(t, res.Tasks[0])
+		})
+	}
+}
+
+// TestScheduledPinRejectsDSTGapsAndOverlaps keeps a Pin an exact instant:
+// a wall time that does not exist or occurs twice is a reported bad
+// property, never a silently shifted or arbitrarily chosen Pin.
+func TestScheduledPinRejectsDSTGapsAndOverlaps(t *testing.T) {
+	tests := []struct {
+		name string
+		date string
+		want string
+	}{
+		{"spring-forward gap", "<2026-03-29 Sun 01:30>", "does not exist"},
+		{"fall-back overlap", "<2026-10-25 Sun 01:30>", "occurs twice"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := fixture([]*logseq.Page{page(day)},
+				map[string][]*logseq.Block{day: {props(marked("TODO", id1, "TODO DST Pin"),
+					map[string]any{"duration": "30m", "scheduled": tt.date})}})
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if len(res.Tasks) != 1 {
+				t.Fatalf("Tasks = %+v, want the Task kept", res.Tasks)
+			}
+			if res.Tasks[0].Pin != nil {
+				t.Fatalf("Pin = %v, want nil", *res.Tasks[0].Pin)
+			}
+			found := false
+			for _, issue := range res.Issues {
+				if issue.Kind == resolve.IssueBadProperty && strings.Contains(issue.Detail, tt.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Issues = %+v, want a bad-property issue containing %q", res.Issues, tt.want)
+			}
 		})
 	}
 }

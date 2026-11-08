@@ -114,6 +114,30 @@ func TestProjectUnknownMapStaysStrict(t *testing.T) {
 	}
 }
 
+func TestProjectEmptyMapSpillsFromGreen(t *testing.T) {
+	// A named map with no windows ranks green for fallback purposes: the
+	// default map's green hours must remain reachable.
+	empty := model.TimeMap{Slug: "jlp"}
+	def := model.TimeMap{Slug: "deep", Default: true, Windows: []model.Window{
+		on(time.Monday, 9, 0, 12, 0),
+	}}
+	task := model.Task{ID: "t1", Text: "t1", Marker: model.MarkerTODO, Duration: duration(60), TimeMaps: []string{"jlp"}}
+	in := newInput(task)
+	in.TimeMaps = []model.TimeMap{empty, def}
+
+	s, err := Plan(in)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	want := []string{"Mon 09:00@60m"}
+	if diff := cmp.Diff(want, describe(s.Blocks)); diff != "" {
+		t.Fatalf("Blocks mismatch (-want +got):\n%s", diff)
+	}
+	if len(s.Report.Tasks) != 0 {
+		t.Fatalf("empty project map must spill into the default, got %+v", s.Report.Tasks)
+	}
+}
+
 func TestProjectNoUpwardSpill(t *testing.T) {
 	weekends := model.TimeMap{Slug: "weekends", Windows: []model.Window{
 		onTier(time.Saturday, 8, 0, 20, 0, model.TierYellow),

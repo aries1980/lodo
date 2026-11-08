@@ -25,21 +25,24 @@ import (
 )
 
 // Calendar is the full calendar surface schedule needs: read busy time,
-// list Managed events, and insert/patch/delete them. List and the writes
-// are write-calendar-only; Busy unions the write plus read calendars.
+// list and get Managed events, and insert/patch/delete them. List, Get and
+// the writes are write-calendar-only; Busy unions the write plus read
+// calendars.
 type Calendar interface {
 	Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []calendar.Event, calendar.BusyReport, error)
 	List(ctx context.Context, from, to time.Time) ([]calendar.Event, error)
+	Get(ctx context.Context, id string) (calendar.Event, error)
 	Insert(ctx context.Context, e calendar.Event) (calendar.Event, error)
 	Patch(ctx context.Context, id string, e calendar.Event) (calendar.Event, error)
 	Delete(ctx context.Context, id string) error
 }
 
-// CalendarReader is the read-only surface refresh and check need. List is
-// write-calendar-only; Busy unions the write plus read calendars.
+// CalendarReader is the read-only surface refresh and check need. List and
+// Get are write-calendar-only; Busy unions the write plus read calendars.
 type CalendarReader interface {
 	Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []calendar.Event, calendar.BusyReport, error)
 	List(ctx context.Context, from, to time.Time) ([]calendar.Event, error)
+	Get(ctx context.Context, id string) (calendar.Event, error)
 }
 
 // Store is the system of record surface run needs. *store.Store satisfies it;
@@ -84,7 +87,7 @@ type WriteOp struct {
 }
 
 // Orphan is one Managed event with no home in the current plan: its
-// task/block does not resolve, or its Block is beyond the window. Check
+// task/block does not resolve, or the plan keeps no Block for it. Check
 // lists these; schedule deletes them.
 type Orphan struct {
 	EventID string
@@ -149,9 +152,7 @@ type calendarState struct {
 
 // loadCalendarState reads busy time and stored rows, then reconciles in
 // memory. It never resolves the graph and never writes.
-func loadCalendarState(ctx context.Context, cal interface {
-	Busy(context.Context, *grid.Grid, time.Time) (grid.Mask, []calendar.Event, calendar.BusyReport, error)
-}, st Store, cfg config.Config, now time.Time) (calendarState, error) {
+func loadCalendarState(ctx context.Context, cal CalendarReader, st Store, cfg config.Config, now time.Time) (calendarState, error) {
 	var cs calendarState
 	granularity, err := config.ParseGranularity(cfg.Scheduling.Granularity)
 	if err != nil {
@@ -170,8 +171,62 @@ func loadCalendarState(ctx context.Context, cal interface {
 	if err != nil {
 		return calendarState{}, err
 	}
-	rec, err := reconcile.Reconcile(managed, bindings, snapshots, granularity, location, now)
+
+	// List is bounded to [now, windowEnd), so a binding absent from it is
+	// not necessarily a user deletion. Ask the calendar directly about each
+	// absent event: a future event that still exists was moved out of the
+	// window and must stay pinned, not stand its Block down. An event that
+	// has ended is expired: reconcile it as absent so the past Block stands
+	// down rather than being recreated. Only a genuinely missing event is a
+	// user deletion.
+	managedByID := make(map[string]bool, len(managed))
+	for _, e := range managed {
+		managedByID[e.ID] = true
+	}
+	reconcileBindings := make([]store.Binding, 0, len(bindings))
+	var outOfRange []calendar.Event
+	for _, b := range bindings {
+		if managedByID[b.EventID] {
+			reconcileBindings = append(reconcileBindings, b)
+			continue
+		}
+		e, err := cal.Get(ctx, b.EventID)
+		switch {
+		case err == nil:
+			if !e.Managed() || e.Cancelled() {
+				// The ownership marker was removed, or the user cancelled
+				// the event: treat the binding as a deletion, as List-based
+				// reconciliation always has.
+				reconcileBindings = append(reconcileBindings, b)
+				continue
+			}
+			_, end, spanErr := e.Span(location)
+			if spanErr != nil {
+				return calendarState{}, spanErr
+			}
+			if _, _, ok := reconcile.TaskRef(e); !ok {
+				// No usable ownership pointer: leave the row untouched
+				// rather than reading it as a deletion.
+				continue
+			}
+			if end.After(now) {
+				managed = append(managed, e)
+				managedByID[e.ID] = true
+				outOfRange = append(outOfRange, e)
+			}
+			reconcileBindings = append(reconcileBindings, b)
+		case isNotFound(err):
+			reconcileBindings = append(reconcileBindings, b)
+		default:
+			return calendarState{}, fmt.Errorf("read managed event %s: %w", b.EventID, err)
+		}
+	}
+
+	rec, err := reconcile.Reconcile(managed, reconcileBindings, snapshots, granularity, location, now)
 	if err != nil {
+		return calendarState{}, err
+	}
+	if err := pinOutOfRange(&rec, outOfRange, bindings, storedDisps, snapshots, granularity, location, now); err != nil {
 		return calendarState{}, err
 	}
 	cs = calendarState{
@@ -180,6 +235,76 @@ func loadCalendarState(ctx context.Context, cal interface {
 		bindings: bindings, snapshots: snapshots, storedDisps: storedDisps, rec: rec,
 	}
 	return cs, nil
+}
+
+// pinOutOfRange keeps Managed events that sit beyond the List window in the
+// plan. Their spans are pinned, so the planner leaves them exactly where the
+// user put them and diffPlan matches them instead of patching them back into
+// the window. Stored rows that already match the observed span are left
+// alone, keeping an unchanged run a no-op. Events without a usable Task
+// pointer are never passed here.
+func pinOutOfRange(rec *reconcile.Result, observed []calendar.Event, bindings []store.Binding, storedDisps []model.Disposition, snapshots map[string]model.Snapshot, granularity time.Duration, loc *time.Location, now time.Time) error {
+	if len(observed) == 0 {
+		return nil
+	}
+	freshPins := make(map[string]bool, len(observed))
+	freshBindings := make(map[string]bool, len(observed))
+	for _, d := range rec.DispositionUpserts {
+		if d.Disposition.Kind == model.DispositionPinned {
+			freshPins[norm.BlockKey(d.Disposition.TaskID, d.Disposition.BlockIndex)] = true
+		}
+	}
+	for _, b := range rec.BindingUpserts {
+		freshBindings[norm.BlockKey(b.TaskID, b.BlockIndex)] = true
+	}
+	storedBindings := make(map[string]store.Binding, len(bindings))
+	for _, b := range bindings {
+		storedBindings[norm.BlockKey(b.TaskID, b.BlockIndex)] = b
+	}
+	storedPins := make(map[string]model.Disposition, len(storedDisps))
+	for _, d := range storedDisps {
+		if d.Kind == model.DispositionPinned {
+			storedPins[norm.BlockKey(d.TaskID, d.BlockIndex)] = d
+		}
+	}
+	for _, e := range observed {
+		taskID, blockIndex, ok := reconcile.TaskRef(e)
+		if !ok {
+			continue
+		}
+		start, end, err := e.Span(loc)
+		if err != nil {
+			return err
+		}
+		key := norm.BlockKey(taskID, blockIndex)
+		slots := norm.Units(end.Sub(start), granularity)
+		if !freshBindings[key] {
+			stored, known := storedBindings[key]
+			if !known || stored.EventID != e.ID || !stored.Start.Equal(start) || !stored.End.Equal(end) || stored.Slots != slots {
+				rec.BindingUpserts = append(rec.BindingUpserts, store.Binding{
+					TaskID: taskID, BlockIndex: blockIndex, EventID: e.ID,
+					Start: start, End: end, Slots: slots,
+				})
+				freshBindings[key] = true
+			}
+		}
+		if !freshPins[key] {
+			stored, known := storedPins[key]
+			if !known || !stored.Start.Equal(start) || !stored.End.Equal(end) || stored.Slots != slots {
+				rec.DispositionUpserts = append(rec.DispositionUpserts, store.TimedDisposition{
+					Disposition: model.Disposition{
+						TaskID: taskID, BlockIndex: blockIndex,
+						Kind:  model.DispositionPinned,
+						Start: start, End: end,
+						Slots: slots, Snapshot: snapshots[taskID],
+					},
+					RecordedAt: now,
+				})
+				freshPins[key] = true
+			}
+		}
+	}
+	return nil
 }
 
 // resolveAndPlanSources resolves every graph fresh and plans with the
@@ -348,7 +473,7 @@ func sharedConflicts(managed []calendar.Event, shared grid.Mask, g *grid.Grid, n
 //   - Plan Block matching on both instant and title → untouched (the
 //     no-op rule: a no-op run issues no writes).
 //   - Observed Managed event with no plan Block (stood-down already gone,
-//     Task gone, invalid pointer, beyond-window) → delete.
+//     Task gone, invalid pointer) → delete.
 func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.Event, loc *time.Location) (writes []WriteOp, orphans []Orphan, bindings []store.Binding) {
 	textByTask := TextMap(tasks)
 	graphByTask := GraphMap(tasks)
@@ -523,19 +648,30 @@ func insertMissing(ctx context.Context, cal Calendar, w WriteOp) error {
 func insertPayload(w WriteOp) calendar.Event {
 	e := eventTimes(w)
 	e.ID = w.EventID
-	priv := map[string]string{
-		"lodo": "true", "task": w.TaskID, "block": strconv.Itoa(w.BlockIndex),
-	}
-	if w.Graph != "" {
-		priv["graph"] = w.Graph
-	}
-	e.ExtendedProperties = calendar.Extended{Private: priv}
+	e.ExtendedProperties = calendar.Extended{Private: privateProps(w)}
 	e.Reminders = &calendar.Reminders{UseDefault: true}
 	return e
 }
 
 func patchPayload(w WriteOp) calendar.Event {
-	return eventTimes(w)
+	e := eventTimes(w)
+	e.ExtendedProperties = calendar.Extended{Private: privateProps(w)}
+	return e
+}
+
+// privateProps is the Managed-event ownership record plus the span marker
+// reconciliation uses to recognise Lodo's own delayed write. Patches send
+// the whole map: Google's PATCH replaces the private bag, so omitting the
+// ownership keys would orphan the event.
+func privateProps(w WriteOp) map[string]string {
+	priv := map[string]string{
+		"lodo": "true", "task": w.TaskID, "block": strconv.Itoa(w.BlockIndex),
+		"lodo-span": reconcile.SpanMarker(w.Start, w.End),
+	}
+	if w.Graph != "" {
+		priv["graph"] = w.Graph
+	}
+	return priv
 }
 
 func eventTimes(w WriteOp) calendar.Event {
@@ -711,11 +847,15 @@ func isNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	if code, ok := calendar.StatusCodeOf(err); ok && code == http.StatusNotFound {
-		return true
+	if code, ok := calendar.StatusCodeOf(err); ok {
+		// 410 is Google's "gone" for an event that was deleted.
+		if code == http.StatusNotFound || code == http.StatusGone {
+			return true
+		}
 	}
 	s := err.Error()
-	return strings.Contains(s, "404") || strings.Contains(s, "notFound") || strings.Contains(s, "no such event")
+	return strings.Contains(s, "404") || strings.Contains(s, "410 Gone") ||
+		strings.Contains(s, "notFound") || strings.Contains(s, "no such event")
 }
 
 // isAlreadyExists reports Google's duplicate-id failure on insert: HTTP 409

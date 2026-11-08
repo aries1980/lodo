@@ -36,6 +36,26 @@ func EventID(taskID string, blockIndex int) string {
 	return "lodo" + strings.ToLower(raw)
 }
 
+// spanMarkerKey is the private property Lodo stamps on every Managed event
+// with the span it intended. A calendar write lands before the store commit
+// (ADR 0007), so after a crash the stale binding and the event disagree; the
+// marker says whether that disagreement came from Lodo's own write or from
+// the user moving the event.
+const spanMarkerKey = "lodo-span"
+
+// SpanMarker is the value Lodo writes into spanMarkerKey: the event's
+// intended start and end as Unix nanoseconds.
+func SpanMarker(start, end time.Time) string {
+	return strconv.FormatInt(start.UnixNano(), 10) + ":" + strconv.FormatInt(end.UnixNano(), 10)
+}
+
+// OwnSpan reports whether e carries Lodo's marker for exactly [start, end).
+// Events written before the marker existed return false and keep the old
+// user-move reading.
+func OwnSpan(e calendar.Event, start, end time.Time) bool {
+	return e.ExtendedProperties.Private[spanMarkerKey] == SpanMarker(start, end)
+}
+
 // TaskRef reads the ownership pointer off a Managed event: task uuid and
 // block index from its private properties. ok is false when either is
 // missing or malformed; the caller leaves such events for check to list as
@@ -80,12 +100,19 @@ type Result struct {
 //   - Moved (bound event id present, times differ): upsert the binding to
 //     the observed span and record/refresh a pinned disposition at the
 //     observed span (used exactly, never snapped).
+//   - Lodo's own move (times differ, but the event carries the span marker
+//     Lodo wrote for the observed span): upsert the binding only. This is
+//     the calendar-written/store-commit-failed gap for a patch, where the
+//     event is Lodo's write, not user intent.
 //   - Deleted (bound event id absent): delete the binding and record a
 //     stood-down with Slots = the binding's slots and Snapshot = the
 //     stored snapshot, or an empty snapshot when the task was
 //     adopted-but-never-resolved. An empty snapshot matches nothing, so
 //     the Block is re-created once and a later user delete stands down
 //     properly; inventing a snapshot refresh-time would fabricate intent.
+//     The caller passes only bindings it knows are genuinely absent:
+//     events outside the List window are checked directly and either
+//     kept (still in the future) or recognised as expired first.
 //   - Adopted (lodo=true with no store row): upsert a binding row from the
 //     observed span (no snapshot, no disposition).
 //   - Time unchanged: nothing.
@@ -120,18 +147,24 @@ func Reconcile(observed []calendar.Event, bindings []store.Binding, snapshots ma
 			if b.Start.Equal(start) && b.End.Equal(end) {
 				continue // time unchanged: nothing
 			}
-			// Moved: the binding follows the observed span and the Block
-			// becomes pinned there. A Task that later gains a scheduled::
-			// Pin still records here; the planner resolves precedence
-			// (newTaskPlan clears dispositions under a Pin).
+			// Moved: the binding follows the observed span. A Task that
+			// later gains a scheduled:: Pin still records here; the planner
+			// resolves precedence (newTaskPlan clears dispositions under a
+			// Pin).
 			out.BindingUpserts = append(out.BindingUpserts, store.Binding{
 				TaskID: taskID, BlockIndex: blockIndex, EventID: e.ID,
 				Start: start, End: end, Slots: slots,
 			})
-			// Snapshot for a pinned disposition is the stored one when
-			// known; the planner keeps pinned spans regardless of inputs
-			// (they survive unrelated changes until deleted), so it is
-			// informational.
+			// A span Lodo itself just wrote is not user intent: the
+			// calendar write landed and the store commit did not. Do not
+			// pin it; the next successful commit records the binding.
+			if OwnSpan(e, start, end) {
+				continue
+			}
+			// User move: pin at the observed span. Snapshot for a pinned
+			// disposition is the stored one when known; the planner keeps
+			// pinned spans regardless of inputs (they survive unrelated
+			// changes until deleted), so it is informational.
 			snap := snapshots[taskID]
 			out.DispositionUpserts = append(out.DispositionUpserts, store.TimedDisposition{
 				Disposition: model.Disposition{

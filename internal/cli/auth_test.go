@@ -113,6 +113,72 @@ func TestAuthGoogleNoLaunchBrowser(t *testing.T) {
 	}
 }
 
+// TestAuthGoogleJSONKeepsStdoutMachineReadable pins the --json contract:
+// the authorization prompt and URL go to stderr, and stdout carries only the
+// stored-path result. Before the fix the prompt preceded the JSON and made
+// stdout unparseable.
+func TestAuthGoogleJSONKeepsStdoutMachineReadable(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+	credPath := filepath.Join(dir, "lodo", "credentials.json")
+	if err := os.MkdirAll(filepath.Dir(credPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credPath,
+		[]byte(`{"logseq":{"token":"st-token"},"google":{"client_id":"cid","client_secret":"secret"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		if r.Form.Get("code") != "auth-code" {
+			t.Errorf("code = %q, want auth-code", r.Form.Get("code"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "1//access", "refresh_token": "1//granted", "expires_in": 3600, "token_type": "Bearer",
+		})
+	}))
+	t.Cleanup(srv.Close)
+	oldEndpoint := googleEndpoint
+	googleEndpoint = oauth2.Endpoint{
+		AuthURL:   srv.URL + "/authorize",
+		TokenURL:  srv.URL + "/token",
+		AuthStyle: oauth2.AuthStyleInParams,
+	}
+	t.Cleanup(func() { googleEndpoint = oldEndpoint })
+
+	lines := &bytes.Buffer{}
+	runFeed := stdin
+	stdin = func() io.Reader { return lines }
+	t.Cleanup(func() { stdin = runFeed })
+
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
+	feed := newFeeder(t, lines)
+	code := Run([]string{"--json", "auth", "google", "--no-launch-browser"},
+		stdout, io.MultiWriter(stderr, feed))
+	if code != 0 {
+		t.Fatalf("auth google --json: exit %d, stderr %q", code, stderr.String())
+	}
+
+	// stdout must be exactly the JSON result, with no prompt text before it.
+	var result struct {
+		Stored string `json:"stored"`
+	}
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Stored != credPath {
+		t.Fatalf("stored = %q, want %q", result.Stored, credPath)
+	}
+	if !strings.Contains(stderr.String(), "Finish Google's authorization") {
+		t.Fatalf("stderr = %q, want the authorization prompt", stderr.String())
+	}
+}
+
 // newFeeder wraps an io.Writer: every write whose text carries a raised
 // authorization URL is answered with the redirect line the pasting user
 // would give back.

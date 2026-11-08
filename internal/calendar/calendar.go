@@ -143,7 +143,7 @@ func Classify(e Event) Kind {
 	if e.Managed() {
 		return KindManaged
 	}
-	if e.Status == statusCancelled || e.userDeclined() || e.Transparency == statusTransparent {
+	if e.Cancelled() || e.userDeclined() || e.Transparency == statusTransparent {
 		return KindFree
 	}
 	return KindBusy
@@ -155,6 +155,11 @@ func Classify(e Event) Kind {
 func (e Event) Managed() bool {
 	return e.ExtendedProperties.Private["lodo"] == "true"
 }
+
+// Cancelled reports whether Google marks the event cancelled. A cancelled
+// event is omitted from List but can still answer a Get by id, so
+// reconciliation receives that signal too.
+func (e Event) Cancelled() bool { return e.Status == statusCancelled }
 
 // AllDay reports Google's all-day shape: a start date and no dateTime.
 // A timed event with an unparseable dateTime is not all-day; Span falls
@@ -242,9 +247,9 @@ func (c *Client) List(ctx context.Context, from, to time.Time) ([]Event, error) 
 	}
 }
 
-// Get fetches one event by id. Reconciliation works from List (a missing
-// Managed event in the window is a user deletion); Get is for tests and
-// curious callers. A missing event is the client's ordinary error.
+// Get fetches one event by id. Reconciliation uses it for bindings absent
+// from the windowed List: an event still present outside the window is not a
+// user deletion. A missing event is the client's ordinary error.
 func (c *Client) Get(ctx context.Context, id string) (Event, error) {
 	var e Event
 	if err := c.get(ctx, []string{"calendars", c.id, "events", id}, nil, &e); err != nil {

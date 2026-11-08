@@ -1,8 +1,10 @@
 package parse
 
 import (
+	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/aries1980/lodo/internal/model"
 )
@@ -143,13 +145,54 @@ func TestOrgStampInstant(t *testing.T) {
 	loc := time.FixedZone("UTC+1", 3600)
 	stamp := OrgStamp{Date: model.CivilDate{Year: 2026, Month: time.October, Day: 20}, Hour: 9, Minute: 30, HasTime: true}
 	want := time.Date(2026, time.October, 20, 9, 30, 0, 0, loc)
-	if got := stamp.Instant(loc); !got.Equal(want) {
+	got, err := stamp.Instant(loc)
+	if err != nil {
+		t.Fatalf("Instant: %v", err)
+	}
+	if !got.Equal(want) {
 		t.Fatalf("Instant = %v, want %v", got, want)
 	}
 
 	dayOnly := OrgStamp{Date: stamp.Date}
-	if got := dayOnly.Instant(loc); !got.Equal(time.Date(2026, time.October, 20, 0, 0, 0, 0, loc)) {
+	got, err = dayOnly.Instant(loc)
+	if err != nil {
+		t.Fatalf("day-only Instant: %v", err)
+	}
+	if !got.Equal(time.Date(2026, time.October, 20, 0, 0, 0, 0, loc)) {
 		t.Fatalf("day-only Instant = %v, want midnight", got)
+	}
+}
+
+func TestOrgStampInstantRejectsDSTGapsAndOverlaps(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		date model.CivilDate
+		want string
+	}{
+		{
+			// 01:30 does not exist: the clocks jump 01:00 GMT to 02:00 BST.
+			name: "spring-forward gap",
+			date: model.CivilDate{Year: 2026, Month: time.March, Day: 29},
+			want: "does not exist",
+		},
+		{
+			// 01:30 happens twice: 01:30 BST and then 01:30 GMT.
+			name: "fall-back overlap",
+			date: model.CivilDate{Year: 2026, Month: time.October, Day: 25},
+			want: "occurs twice",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stamp := OrgStamp{Date: tt.date, Hour: 1, Minute: 30, HasTime: true}
+			if _, err := stamp.Instant(loc); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Instant err = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 

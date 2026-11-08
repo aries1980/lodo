@@ -381,16 +381,61 @@ func topoOrder(candidates []*taskPlan, byID, lowerByID map[string]*taskPlan, blo
 	for _, p := range order {
 		inOrder[p.task.ID] = true
 	}
-	// Remaining candidates with indegree>0 (or dangling) are cycle/blocked.
-	cycleSet = map[string]bool{}
+	// Remaining candidates are either on a cycle or downstream of one.
+	// Only the former are cycle members; the latter must report the
+	// dependency that blocks them.
+	var remaining []*taskPlan
 	for _, p := range candidates {
-		if !inOrder[p.task.ID] {
-			if _, blocked := blockedUnknown[p.task.ID]; !blocked {
-				cycleSet[p.task.ID] = true
-			}
+		if inOrder[p.task.ID] {
+			continue
+		}
+		if _, blocked := blockedUnknown[p.task.ID]; blocked {
+			continue
+		}
+		remaining = append(remaining, p)
+	}
+	cycleSet = cycleMembers(remaining, byID, lowerByID)
+	return order, cycleSet
+}
+
+// cycleMembers returns the Tasks that can reach themselves through
+// dependency edges. topoOrder's leftovers also include dependents of a
+// cycle; those are blocked by it, not members of it.
+func cycleMembers(remaining []*taskPlan, byID, lowerByID map[string]*taskPlan) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range remaining {
+		if reachesTask(p.task.ID, p.task.ID, byID, lowerByID, map[string]bool{}) {
+			out[p.task.ID] = true
 		}
 	}
-	return order, cycleSet
+	return out
+}
+
+// reachesTask reports whether following dependency edges from id reaches
+// target. Only edges topoOrder counted participate: Pins, containers and
+// fully stood-down/pinned dependencies are temporal, not ordering, edges.
+func reachesTask(id, target string, byID, lowerByID map[string]*taskPlan, seen map[string]bool) bool {
+	if seen[id] {
+		return false
+	}
+	seen[id] = true
+	p, ok := lookupDep(byID, lowerByID, id)
+	if !ok || p.task.Container {
+		return false
+	}
+	for _, dep := range p.task.Depends {
+		depPlan, ok := lookupDep(byID, lowerByID, dep)
+		if !ok || depPlan.task.Pin != nil || depPlan.task.Container || depPlan.required() == 0 {
+			continue
+		}
+		if depPlan.task.ID == target {
+			return true
+		}
+		if reachesTask(depPlan.task.ID, target, byID, lowerByID, seen) {
+			return true
+		}
+	}
+	return false
 }
 
 // initialEnds tracks ends for dependency gating (Pins + pinned already placed).
@@ -515,6 +560,10 @@ func placeOrdered(b *builder, order []*taskPlan, byID, lowerByID map[string]*tas
 }
 
 func buildReport(candidates, order, pins []*taskPlan, byID, lowerByID map[string]*taskPlan, cycleSet map[string]bool, blockedUnknown map[string][]string, blockedReason map[string]Reason, blockedBy map[string][]string, ends map[string]time.Time) Report {
+	inOrder := make(map[string]bool, len(order))
+	for _, p := range order {
+		inOrder[p.task.ID] = true
+	}
 	var report Report
 	for _, p := range candidates {
 		if _, ok := blockedUnknown[p.task.ID]; ok {
@@ -547,6 +596,32 @@ func buildReport(candidates, order, pins []*taskPlan, byID, lowerByID map[string
 				StoodDown: p.stoodDown,
 				Shortfall: p.n - p.stoodDown - p.pinnedSlots,
 				Reason:    ReasonDependencyCycle,
+				BlockedBy: bl,
+			})
+			continue
+		}
+		if !inOrder[p.task.ID] {
+			// Downstream of a cycle: not a member, blocked by an unplaced
+			// dependency. Name those dependencies for the report.
+			var bl []string
+			for _, dep := range p.task.Depends {
+				d, ok := lookupDep(byID, lowerByID, dep)
+				if !ok || d.task.Container || d.task.Pin != nil || d.required() == 0 {
+					continue
+				}
+				if !inOrder[d.task.ID] {
+					bl = append(bl, d.task.ID)
+				}
+			}
+			slices.Sort(bl)
+			bl = slices.Compact(bl)
+			report.Tasks = append(report.Tasks, TaskReport{
+				TaskID:    p.task.ID,
+				Required:  p.n,
+				Placed:    p.placed,
+				StoodDown: p.stoodDown,
+				Shortfall: p.required(),
+				Reason:    ReasonBlockedByDependency,
 				BlockedBy: bl,
 			})
 			continue
@@ -845,8 +920,8 @@ func tierRank(t model.Tier) int {
 }
 
 // bestTierRank is the best (lowest-rank) tier in the given maps. A set with
-// no windows at all ranks worst, so an empty project map spills everything
-// into the default map instead of shortfalling.
+// no windows at all ranks green, so an empty project map tries the default
+// map from its green tier instead of shortfalling.
 func bestTierRank(maps []model.TimeMap) int {
 	best := 2
 	found := false
@@ -857,6 +932,9 @@ func bestTierRank(maps []model.TimeMap) int {
 				found = true
 			}
 		}
+	}
+	if !found {
+		return 0 // empty set: try the fallback from its best tier
 	}
 	return best
 }

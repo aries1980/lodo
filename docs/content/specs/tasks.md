@@ -69,7 +69,10 @@ like flexible Tasks with maximum urgency — never silently dropped and never st
 A `scheduled::` on the Task is a Pin. It overrides Plan and Priority: Lodo places the
 Task at that moment and does not move it. Times belong to Pins; windows are days. A
 Pin's time is used exactly as authored — it need not align with the scheduling
-granularity — and it blocks every slot it overlaps.
+granularity — and it blocks every slot it overlaps. A local time that does not exist
+(the spring-forward gap) or occurs twice (the fall-back overlap) is a reported
+`bad-property-value`: a Pin must name one exact instant, so Lodo refuses to normalise
+it or choose an occurrence.
 
 ### Time Map — *which hours of the week*
 

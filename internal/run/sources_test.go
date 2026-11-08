@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,34 @@ func TestReadSourcesMerges(t *testing.T) {
 	// Time Maps come from primary only.
 	if len(res.TimeMaps) != 1 || res.TimeMaps[0].Slug != "deep-work" {
 		t.Fatalf("TimeMaps = %+v, want primary deep-work", res.TimeMaps)
+	}
+}
+
+func TestReadSourcesRefusesDuplicateTaskIDs(t *testing.T) {
+	primary := graphFixture{
+		pages: []*logseq.Page{memPage("a"), memPage("Time Maps")},
+		trees: map[string][]*logseq.Block{
+			"Time Maps": {mapDeepWork},
+			"a": {
+				props(marked("TODO", "t-cloned", "TODO Work copy"), map[string]any{"duration": "30m"}),
+			},
+		},
+	}
+	secondary := graphFixture{
+		pages: []*logseq.Page{memPage("b")},
+		trees: map[string][]*logseq.Block{
+			"b": {
+				props(marked("TODO", "t-cloned", "TODO Family copy"), map[string]any{"duration": "30m"}),
+			},
+		},
+	}
+	_, err := run.ReadSources(context.Background(), []run.Source{
+		graphSource("work", 0, primary, "deep-work"),
+		graphSource("family", 1, secondary, ""),
+	}, "Time Maps", london)
+	if err == nil || !strings.Contains(err.Error(), "t-cloned") ||
+		!strings.Contains(err.Error(), "graph \"work\"") || !strings.Contains(err.Error(), "graph \"family\"") {
+		t.Fatalf("ReadSources err = %v, want the duplicate UUID and both graphs", err)
 	}
 }
 

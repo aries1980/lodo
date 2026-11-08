@@ -18,8 +18,51 @@ type OrgStamp struct {
 }
 
 // Instant resolves the stamp in loc. A day-only stamp resolves to midnight.
-func (s OrgStamp) Instant(loc *time.Location) time.Time {
-	return time.Date(s.Date.Year, s.Date.Month, s.Date.Day, s.Hour, s.Minute, 0, 0, loc)
+// A local wall time that does not exist (the spring-forward gap) or occurs
+// twice (the fall-back overlap) is an error: a Pin names one exact instant,
+// and silently normalising or picking one of two would move the user's Block.
+func (s OrgStamp) Instant(loc *time.Location) (time.Time, error) {
+	if loc == nil {
+		return time.Time{}, fmt.Errorf("parse org timestamp: no location")
+	}
+	t := time.Date(s.Date.Year, s.Date.Month, s.Date.Day, s.Hour, s.Minute, 0, 0, loc)
+	// time.Date normalises a nonexistent wall time past the gap; a
+	// round-trip mismatch is how that shows.
+	if y, m, d := t.Date(); y != s.Date.Year || m != s.Date.Month || d != s.Date.Day ||
+		t.Hour() != s.Hour || t.Minute() != s.Minute {
+		return time.Time{}, fmt.Errorf("local time %s does not exist in %s (the clocks spring forward); pick another time",
+			s.wallString(), loc)
+	}
+	// An ambiguous wall time maps to two instants. Adding a small offset
+	// across the transition lands on the other occurrence and leaves the
+	// wall-clock fields unchanged.
+	for delta := -3 * time.Hour; delta <= 3*time.Hour; delta += 15 * time.Minute {
+		if delta == 0 {
+			continue
+		}
+		u := t.Add(delta)
+		if sameWall(u, t) {
+			return time.Time{}, fmt.Errorf("local time %s occurs twice in %s (the clocks fall back); pick a time that is unambiguous",
+				s.wallString(), loc)
+		}
+	}
+	return t, nil
+}
+
+// wallString renders the stamp's local wall time for diagnostics.
+func (s OrgStamp) wallString() string {
+	if s.HasTime {
+		return fmt.Sprintf("%04d-%02d-%02d %02d:%02d", s.Date.Year, s.Date.Month, s.Date.Day, s.Hour, s.Minute)
+	}
+	return fmt.Sprintf("%04d-%02d-%02d", s.Date.Year, s.Date.Month, s.Date.Day)
+}
+
+// sameWall reports whether two instants read as the same local wall time.
+func sameWall(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd &&
+		a.Hour() == b.Hour() && a.Minute() == b.Minute()
 }
 
 var orgWeekdays = [...]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}

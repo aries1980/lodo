@@ -110,10 +110,18 @@ func containsNotFoundMsg(msg string) bool {
 // flow the URL must be printed, because the grant is finished on another
 // device.
 func raise(opts *options, noBrowser bool) func(string) error {
+	// Prompt output follows --json's contract: stdout stays machine-readable,
+	// so the URL and its instructions go to stderr in that mode. The
+	// interactive default keeps them on stdout, where a person (and the
+	// existing paste-back flow) expects them.
+	out := opts.out
+	if opts.json {
+		out = errWriter(opts)
+	}
 	return func(authURL string) error {
 		switch {
 		case noBrowser:
-			_, _ = fmt.Fprintf(opts.out,
+			_, _ = fmt.Fprintf(out,
 				"Finish Google's authorization on any device: open\n\n%s\n\n"+
 					"Afterwards the browser tries an address starting with http://127.0.0.1 —\n"+
 					"on this or any other device that will not load, which is expected.\n"+
@@ -122,13 +130,13 @@ func raise(opts *options, noBrowser bool) func(string) error {
 					"and Ctrl-C ends the wait.)\n",
 				authURL)
 		case opts.verbose:
-			_, _ = fmt.Fprintf(opts.out, "Authorize in a browser at:\n%s\nWaiting for the redirect…\n", authURL)
+			_, _ = fmt.Fprintf(out, "Authorize in a browser at:\n%s\nWaiting for the redirect…\n", authURL)
 		default:
 			if err := xdgOpen(authURL); err == nil {
-				_, _ = fmt.Fprintln(opts.out,
+				_, _ = fmt.Fprintln(out,
 					"Opened the Google authorization page. Finish there and the flow continues here (waiting for the redirect…).")
 			} else {
-				_, _ = fmt.Fprintf(opts.out,
+				_, _ = fmt.Fprintf(out,
 					"no browser on this machine (%s). Open this URL yourself — on an SSH-tunnelled redirect\n"+
 						"the flow completes here as well — or re-run with --no-launch-browser to finish the\n"+
 						"grant on any device and paste the redirect back:\n%s\n",

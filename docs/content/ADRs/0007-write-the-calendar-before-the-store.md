@@ -6,9 +6,16 @@ weight: 70
 
 Lodo writes to two systems with no shared transaction: Google Calendar and its SQLite
 store. Every `schedule` writes the calendar first and commits the store second. A crash
-between the two therefore leaves `lodo=true` events with no local row — which
-reconciliation reads as "Lodo's state was lost" and adopts, after which the next run
-reproduces the same times from the same intent.
+after an insert leaves a `lodo=true` event with no local row — which reconciliation
+reads as "Lodo's state was lost" and adopts, after which the next run reproduces the
+same times from the same intent.
+
+A crash after a patch is the harder case: the local row exists but still carries the
+old span, so the observed change could look like a user move. Every Lodo insert and
+patch therefore stamps `extendedProperties.private.lodo-span` with the span it
+intended. Reconciliation only turns a changed span into a Pinned Block when the
+marker does not match that span; a matching marker is Lodo's own delayed write, so
+the binding simply follows it.
 
 The reverse order is a trap. Committing the store first leaves rows whose Managed Events
 are missing, and reconciliation reads a missing Managed Event as the user having deleted

@@ -40,6 +40,17 @@ func (f *scheduleFake) mount(t *testing.T, initial []map[string]any) string {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "fake", "token_type": "Bearer", "expires_in": 3600,
 			})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/events/"):
+			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			e, ok := f.events[id]
+			if !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":{"message":"no such event"}}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(e)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/events"):
 			f.lists++
 			items := make([]map[string]any, 0, len(f.events))

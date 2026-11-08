@@ -56,9 +56,12 @@ client. Create a **Desktop app** client in your own Cloud project:
 Ownership is recorded on the event itself, so it survives Lodo losing its local state:
 
 - Every Managed Event carries **`extendedProperties.private`**:
-  `lodo=true`, `task=<Logseq block UUID>`, `block=<index>`, and
-  `graph=<slug>` in multi-graph mode (absent for single-graph events
-  written before graphs).
+  `lodo=true`, `task=<Logseq block UUID>`, `block=<index>`,
+  `lodo-span=<start>:<end>` (the span Lodo last wrote, as Unix nanoseconds,
+  recorded so a crash between the calendar write and the store commit is
+  recognised as Lodo's own write rather than a user move; absent on events
+  written before the marker existed), and `graph=<slug>` in multi-graph mode
+  (absent for single-graph events written before graphs).
 - Every Managed Event is inserted with a **client-supplied deterministic `id`**
   (base32hex, derived from the Task's block UUID and block index), so re-inserting is
   idempotent and cannot duplicate.
@@ -72,7 +75,10 @@ Everything else on the write calendar, and everything on a read calendar, is an
 ### Task identity
 
 A Task is identified across runs by its **Logseq block UUID**, not its title. Renaming a
-Task does not orphan its Blocks or its calendar events.
+Task does not orphan its Blocks or its calendar events. Block UUIDs must be unique
+across every configured graph: Lodo refuses to run when two graphs (for example a
+cloned graph) report the same Task UUID, because event ids and local keys use that UUID
+alone.
 
 ## Event shape
 
@@ -83,7 +89,10 @@ Task does not orphan its Blocks or its calendar events.
   "start": { "dateTime": "2026-10-20T09:00:00+01:00", "timeZone": "Europe/London" },
   "end":   { "dateTime": "2026-10-20T11:00:00+01:00", "timeZone": "Europe/London" },
   "extendedProperties": {
-    "private": { "lodo": "true", "task": "<logseq-block-uuid>", "block": "0" }
+    "private": {
+      "lodo": "true", "task": "<logseq-block-uuid>", "block": "0",
+      "lodo-span": "<start-unixnano>:<end-unixnano>"
+    }
   },
   "reminders": { "useDefault": true }
 }
@@ -165,7 +174,7 @@ flowchart TD
     M -->|Yes| CH{"Time or span changed?"}
     CH -->|Unchanged| KEEP["Projection intact: nothing"]
     CH -->|Moved| PIN["Becomes Pinned Block<br/>works around user time + span"]
-    CH -->|Missing: user deleted| STAND["Block stood down<br/>not recreated until Task inputs change"]
+    CH -->|Missing after id check| STAND["Block stood down<br/>not recreated until Task inputs change"]
 
     E2["Event without lodo=true<br/>any calendar"] --> BUSY2["External Event: busy time<br/>never moved"]
 ```
@@ -179,6 +188,13 @@ Every `schedule` reconciles first. The rules:
 | Managed event missing | user deleted it | that **Block** becomes **stood down**; not recreated until its Task's inputs change. Surviving Blocks stay projected |
 | `lodo=true` event with no SQLite row | Lodo's state was lost | adopted into SQLite |
 | Event without `lodo=true` | an External Event | busy time; never moved |
+
+List is bounded to the Scheduling window, so absence alone is not proof of a
+deletion. For a binding outside that list, Lodo fetches the event by id: a future
+event that still exists is kept where the user put it and becomes a Pinned Block
+(even beyond the window), while a genuinely missing event stands its Block down.
+An event that has already ended is expired — its past Block stands down rather
+than being recreated.
 
 Stood-down is **per-Block**: deleting a Managed Event stands down only that Block,
 not the whole Task. The Task's remaining Blocks stay projected and future runs may place
@@ -215,9 +231,12 @@ overlaps shared busy time is reported as a warning naming the Block. `refresh`
 changes nothing in response: no moves, no stand-downs. Re-placement happens only in
 `schedule`.
 
-Adoption is also what makes `schedule` writing the calendar **before** the store safe: a
-crash between the two leaves `lodo=true` events with no local row, which the next run
-adopts. See [ADR 0007](../ADRs/0007-write-the-calendar-before-the-store.md).
+Adoption is also what makes `schedule` writing the calendar **before** the store safe:
+a crash after an insert leaves a `lodo=true` event with no local row, which the next run
+adopts. A crash after a patch leaves the old binding, but the event carries Lodo's
+`lodo-span` marker for the span it just wrote, so reconciliation updates the binding
+instead of inventing a user move. See
+[ADR 0007](../ADRs/0007-write-the-calendar-before-the-store.md).
 
 ## Deferred
 

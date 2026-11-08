@@ -30,6 +30,10 @@ func (s stubReader) List(context.Context, time.Time, time.Time) ([]calendar.Even
 	return s.managed, nil
 }
 
+func (s stubReader) Get(context.Context, string) (calendar.Event, error) {
+	return calendar.Event{}, &calendar.APIError{StatusCode: 404, Message: "no such event"}
+}
+
 func TestRefreshReportsSharedOverlapAndChangesNothing(t *testing.T) {
 	cfg := testConfig()
 	now := at(9, 8, 0)
