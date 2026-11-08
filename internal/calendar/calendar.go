@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/aries1980/lodo/internal/grid"
 )
 
@@ -49,6 +51,9 @@ type Client struct {
 	hc   *http.Client
 	base *url.URL
 	id   string
+	// label names the calendar in errors: `calendar "id"` standalone,
+	// `write calendar "id"` / `read calendar "id"` inside a MultiClient.
+	label string
 }
 
 // NewClient starts one reader for the calendar id names (for example the
@@ -70,7 +75,7 @@ func NewClient(hc *http.Client, id, base string) (*Client, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: DefaultTimeout}
 	}
-	return &Client{hc: hc, base: u, id: id}, nil
+	return &Client{hc: hc, base: u, id: id, label: fmt.Sprintf("calendar %q", id)}, nil
 }
 
 // Event is one Calendar API v3 event, in the parts M4 recognises in the
@@ -352,7 +357,7 @@ func (c *Client) get(ctx context.Context, path []string, q url.Values, out any) 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return fmt.Errorf("google calendar api: %w", err)
+		return fmt.Errorf("google calendar api: %s: %w", c.label, err)
 	}
 	return c.do(req, strings.Join(path, "/"), out, http.StatusOK)
 }
@@ -368,13 +373,13 @@ func (c *Client) write(ctx context.Context, method string, path []string, in any
 	if in != nil {
 		raw, err := json.Marshal(in)
 		if err != nil {
-			return fmt.Errorf("google calendar api: %s: %w", strings.Join(path, "/"), err)
+			return fmt.Errorf("google calendar api: %s (%s): %w", c.label, strings.Join(path, "/"), err)
 		}
 		body = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
-		return fmt.Errorf("google calendar api: %w", err)
+		return fmt.Errorf("google calendar api: %s: %w", c.label, err)
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -388,13 +393,16 @@ func (c *Client) write(ctx context.Context, method string, path []string, in any
 func (c *Client) do(req *http.Request, path string, out any, okStatuses ...int) error {
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("google calendar api: %s: %w", path, errorCause(err))
+		if isAuthFailure(err) {
+			return fmt.Errorf("google calendar api: %s (%s): google auth expired or revoked (invalid_grant); run `lodo auth google` again to re-authorize: %w", c.label, path, errorCause(err))
+		}
+		return fmt.Errorf("google calendar api: %s (%s): %w", c.label, path, errorCause(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
 	if err != nil {
-		return fmt.Errorf("google calendar api: %s: %w", path, err)
+		return fmt.Errorf("google calendar api: %s (%s): %w", c.label, path, err)
 	}
 	ok := false
 	for _, s := range okStatuses {
@@ -408,13 +416,13 @@ func (c *Client) do(req *http.Request, path string, out any, okStatuses ...int) 
 		if msg == "" {
 			msg = snippet(data)
 		}
-		return &APIError{StatusCode: resp.StatusCode, Message: msg, Path: path}
+		return &APIError{StatusCode: resp.StatusCode, Message: msg, Path: path, Calendar: c.label}
 	}
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("google calendar api: %s: decode: %w (body: %s)", path, err, snippet(data))
+		return fmt.Errorf("google calendar api: %s (%s): decode: %w (body: %s)", c.label, path, err, snippet(data))
 	}
 	return nil
 }
@@ -422,15 +430,40 @@ func (c *Client) do(req *http.Request, path string, out any, okStatuses ...int) 
 // APIError is one Google Calendar API failure with its HTTP status, so the
 // multi-calendar read can tell a per-calendar 403/404 (warn-and-continue)
 // from an auth or network failure (fail the run). Message is Google's own
-// {"error":{"message"}} or a body snippet.
+// {"error":{"message"}} or a body snippet. Calendar names the calendar in
+// errors (`write calendar "id"`, `read calendar "id"`, or `calendar "id"`
+// standalone); empty keeps the legacy path-only shape.
 type APIError struct {
 	StatusCode int
 	Message    string
 	Path       string
+	Calendar   string
 }
 
 func (e *APIError) Error() string {
+	if e.Calendar != "" {
+		if e.StatusCode == http.StatusUnauthorized {
+			return fmt.Sprintf("google calendar api: %s (%s): HTTP %d: %s; google auth expired or revoked; run `lodo auth google` again to re-authorize", e.Calendar, e.Path, e.StatusCode, e.Message)
+		}
+		return fmt.Sprintf("google calendar api: %s (%s): HTTP %d: %s", e.Calendar, e.Path, e.StatusCode, e.Message)
+	}
 	return fmt.Sprintf("google calendar api: %s: HTTP %d: %s", e.Path, e.StatusCode, e.Message)
+}
+
+// isAuthFailure reports whether err is a failed OAuth refresh because the
+// grant is gone: Google's token endpoint answering invalid_grant for a
+// revoked, expired, or otherwise dead refresh token. The oauth2 transport
+// surfaces it (wrapped in *url.Error) on the calendar call that triggers
+// the refresh, e.g. `oauth2: "invalid_grant" "Bad Request"`.
+func isAuthFailure(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	if errors.As(err, &retrieveErr) {
+		if retrieveErr.ErrorCode == "invalid_grant" {
+			return true
+		}
+	}
+	// Fallback for wrapped or future shapes that still carry the code.
+	return strings.Contains(strings.ToLower(err.Error()), "invalid_grant")
 }
 
 // StatusCodeOf unwraps an API failure's HTTP status. False when the error is

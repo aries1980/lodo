@@ -14,6 +14,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/google/go-cmp/cmp"
+	"golang.org/x/oauth2"
 
 	"github.com/aries1980/lodo/internal/grid"
 )
@@ -381,5 +382,57 @@ func TestBusyRefusesAnUntruthfulCalendar(t *testing.T) {
 	if _, _, _, err := c.Busy(context.Background(), g, now); err == nil ||
 		!strings.Contains(err.Error(), "broken") {
 		t.Fatalf("Busy = %v, want a time-parse refusal, not a silent hole", err)
+	}
+}
+
+// authFailTransport fails the refresh the way Google answers a dead grant:
+// invalid_grant from the token endpoint, surfacing on the calendar call.
+type authFailTransport struct {
+	code string
+	desc string
+}
+
+func (t authFailTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, &oauth2.RetrieveError{ErrorCode: t.code, ErrorDescription: t.desc}
+}
+
+func TestTransportInvalidGrantHintsReauth(t *testing.T) {
+	hc := &http.Client{Transport: authFailTransport{code: "invalid_grant", desc: "Bad Request"}}
+	c, err := NewClient(hc, "primary", "https://www.example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, err = c.List(context.Background(), london32(t), london32(t).Add(time.Hour))
+	if err == nil {
+		t.Fatal("List succeeded, want the revoked refresh to fail")
+	}
+	msg := err.Error()
+	for _, want := range []string{`calendar "primary"`, "calendars/primary/events", "invalid_grant", "lodo auth google"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("List err = %q, want it to contain %q", msg, want)
+		}
+	}
+}
+
+func TestAPI401HintsReauth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":401,"message":"Request had invalid authentication credentials."}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(nil, "primary", srv.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, err = c.List(context.Background(), london32(t), london32(t).Add(time.Hour))
+	if err == nil {
+		t.Fatal("List succeeded, want the 401 to fail")
+	}
+	msg := err.Error()
+	for _, want := range []string{`calendar "primary"`, "401", "invalid authentication", "lodo auth google"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("List err = %q, want it to contain %q", msg, want)
+		}
 	}
 }

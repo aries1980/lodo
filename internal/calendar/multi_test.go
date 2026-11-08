@@ -258,6 +258,68 @@ func TestWriteFailureFailsTheRun(t *testing.T) {
 	}
 }
 
+func TestWrite401HintsReauth(t *testing.T) {
+	fa := &multiFake{status: map[string]int{"primary": http.StatusUnauthorized}}
+	m, err := NewMultiClient(nil, "primary", []string{"a@example.com"}, fa.serve(t), ReadOptions{})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	g, now, _ := busyFixture(t)
+	_, _, _, err = m.Busy(context.Background(), g, now)
+	if err == nil {
+		t.Fatal("Busy succeeded, want the write 401 to fail the run")
+	}
+	msg := err.Error()
+	for _, want := range []string{`write calendar "primary"`, "401", "lodo auth google"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("Busy err = %q, want it to contain %q", msg, want)
+		}
+	}
+}
+
+func TestRead401FailsWithCalendarName(t *testing.T) {
+	fa := &multiFake{
+		bodies: map[string][]string{
+			"primary": {listBody([]string{timed("w", "2026-11-09T10:00:00Z", "2026-11-09T11:00:00Z")}, "")},
+		},
+		status: map[string]int{"bad@example.com": http.StatusUnauthorized},
+	}
+	m, err := NewMultiClient(nil, "primary", []string{"bad@example.com"}, fa.serve(t), ReadOptions{})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	g, now, _ := busyFixture(t)
+	_, _, _, err = m.Busy(context.Background(), g, now)
+	if err == nil {
+		t.Fatal("Busy succeeded, want the read 401 to fail the run (only 403/404 warn)")
+	}
+	msg := err.Error()
+	for _, want := range []string{`read calendar "bad@example.com"`, "401", "lodo auth google"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("Busy err = %q, want it to contain %q", msg, want)
+		}
+	}
+}
+
+func TestWriteTransportInvalidGrantHintsReauth(t *testing.T) {
+	hc := &http.Client{Transport: authFailTransport{code: "invalid_grant", desc: "Bad Request"}}
+	m, err := NewMultiClient(hc, "primary", []string{"a@example.com"}, "https://www.example.com", ReadOptions{})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	g, now, _ := busyFixture(t)
+	_, _, _, err = m.Busy(context.Background(), g, now)
+	if err == nil {
+		t.Fatal("Busy succeeded, want the revoked refresh to fail")
+	}
+	msg := err.Error()
+	for _, want := range []string{`write calendar "primary"`, "invalid_grant", "lodo auth google"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("Busy err = %q, want it to contain %q", msg, want)
+		}
+	}
+}
+
 func TestReadRulesMatchWrite(t *testing.T) {
 	loc := london(t)
 	// All-day on a read calendar blocks the whole Tuesday; cancelled,
