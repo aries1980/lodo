@@ -44,6 +44,7 @@ type Schedule struct {
 	Report       Report
 	Explanations []Explanation
 	Decisions    []TaskDecision
+	Suggestions  []Suggestion
 }
 
 // Report lists the Tasks the planner could not fully place.
@@ -235,7 +236,9 @@ func Plan(in Input) (Schedule, error) {
 		report:         report,
 		scope:          &scope,
 	})
-	return Schedule{Blocks: blocks, Report: report, Explanations: explanations, Decisions: decisions}, nil
+	schedule := Schedule{Blocks: blocks, Report: report, Explanations: explanations, Decisions: decisions}
+	schedule.Suggestions = Suggest(in.Tasks, in.TimeMaps, schedule, in.Granularity, in.WindowDays, in.Location, in.Now, cycleSet)
+	return schedule, nil
 }
 
 func validateInput(in Input) error {

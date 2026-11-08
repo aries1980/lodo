@@ -176,6 +176,7 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 		view := checkReport{
 			GraphIssues: outcome.Issues,
 			Shortfalls:  checkShortfalls(outcome),
+			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
 			StoodDown:   checkStoodDown(outcome),
 			Orphaned:    checkOrphans(outcome),
 			Busy:        &busy,
@@ -270,6 +271,7 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 		view := checkReport{
 			GraphIssues: outcome.Issues,
 			Shortfalls:  checkShortfalls(outcome),
+			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
 			StoodDown:   checkStoodDown(outcome),
 			Orphaned:    checkOrphans(outcome),
 		}
@@ -332,10 +334,11 @@ func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 
 	if opts.json {
 		view := forecastReport{
-			Blocks:     blocks(outcome),
-			Shortfalls: shortfalls(outcome),
-			Managed:    managedEvents(outcome),
-			Busy:       busyView(outcome.Busy),
+			Blocks:      blocks(outcome),
+			Shortfalls:  shortfalls(outcome),
+			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
+			Managed:     managedEvents(outcome),
+			Busy:        busyView(outcome.Busy),
 		}
 		if verbose {
 			view.Explanations = explanations(outcome)
@@ -366,6 +369,7 @@ func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 type checkReport struct {
 	GraphIssues  []resolve.Issue   `json:"graph_issues,omitempty"`
 	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
+	Suggestions  []suggestionJSON  `json:"suggestions,omitempty"`
 	StoodDown    []stoodDownJSON   `json:"stood_down,omitempty"`
 	Orphaned     []orphanJSON      `json:"orphaned,omitempty"`
 	Explanations []explanationJSON `json:"explanations,omitempty"`
@@ -383,6 +387,7 @@ type stoodDownJSON struct {
 type forecastReport struct {
 	Blocks       []blockJSON       `json:"blocks,omitempty"`
 	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
+	Suggestions  []suggestionJSON  `json:"suggestions,omitempty"`
 	Explanations []explanationJSON `json:"explanations,omitempty"` // with --verbose
 	// Managed are the calendar's Lodo-made events forecast deliberately
 	// leaves out; schedule's reconciliation closes that hole.
@@ -418,6 +423,16 @@ type shortfallJSON struct {
 	Shortfall int      `json:"shortfall"`
 	Reason    string   `json:"reason"`
 	BlockedBy []string `json:"blocked_by,omitempty"`
+}
+
+type suggestionJSON struct {
+	TaskID string `json:"task_id"`
+	Task   string `json:"task"`
+	Graph  string `json:"graph,omitempty"`
+	Reason string `json:"reason"`
+	Change string `json:"change"`
+	Impact string `json:"impact"`
+	Tier   string `json:"tier,omitempty"`
 }
 
 type explanationJSON struct {
@@ -560,6 +575,10 @@ func renderCheckText(w io.Writer, outcome run.CheckOutcome, verbose bool, st sty
 		_, _ = fmt.Fprintln(w, st.dim("For full reasoning use `lodo explain <task-id>` (same planner logic, per-task detail)."))
 	}
 
+	renderSuggestionText(w, outcome.Tasks, outcome.Schedule.Suggestions, func(id string) string {
+		return checkTaskLabel(outcome, id)
+	}, st)
+
 	printBusyText(w, outcome.Busy, st)
 
 	// Summary footer: one scannable line for humans and cron mail.
@@ -684,6 +703,10 @@ func renderForecastText(w io.Writer, cfg config.Config, outcome run.Outcome, now
 		}
 	}
 
+	renderSuggestionText(w, outcome.Tasks, outcome.Schedule.Suggestions, func(id string) string {
+		return taskLabel(outcome, id)
+	}, st)
+
 	if verbose {
 		_, _ = fmt.Fprintln(w, st.bold("\nExplanations:"))
 		for _, e := range outcome.Schedule.Explanations {
@@ -724,6 +747,22 @@ func taskLabel(outcome run.Outcome, id string) string {
 // renderDecisionSummaries prints one line per task decision in consideration
 // order (then id), so --verbose shows structured reasoning, not just blocks.
 // It consumes planner.TaskDecision produced by the actual Plan run (no drift).
+func renderSuggestionText(w io.Writer, tasks []model.Task, suggestions []planner.Suggestion, label func(string) string, st styler) {
+	if len(suggestions) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, st.bold("\nSuggestions:"))
+	for _, s := range suggestions {
+		name := label(s.TaskID)
+		tier := ""
+		if s.Tier != "" {
+			tier = fmt.Sprintf(" [%s]", s.Tier)
+		}
+		_, _ = fmt.Fprintf(w, "  Suggestion: %s%s — %s (%s, %s)\n", name, tier, s.Change, s.Reason, s.Impact)
+	}
+	_, _ = fmt.Fprintln(w, st.dim("Suggestions are advisory only; Lodo never applies them automatically."))
+}
+
 func renderDecisionSummaries(w io.Writer, decisions []planner.TaskDecision, label func(string) string, st styler) {
 	if len(decisions) == 0 {
 		return

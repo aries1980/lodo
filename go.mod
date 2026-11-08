@@ -5,6 +5,7 @@ go 1.27
 toolchain go1.27.3
 
 require (
+	github.com/cucumber/godog v0.16.0
 	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/oauth2 v0.37.0
@@ -13,9 +14,15 @@ require (
 )
 
 require (
+	github.com/cucumber/gherkin/go/v42 v42.0.0 // indirect
+	github.com/cucumber/messages/go/v34 v34.2.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
+	github.com/hashicorp/go-memdb v1.3.5 // indirect
+	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

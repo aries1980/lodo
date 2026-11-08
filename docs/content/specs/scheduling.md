@@ -182,5 +182,14 @@ flowchart TD
     SF -->|Yes| SH["Report window full / Time Map too thin<br/>with hours needed vs available"]
 ```
 
-No Auto-Defer, no Time-Map-violation escape hatch, and no Suggestions in v0.1. Each of
-those is a policy for breaking a rule, and v0.1 has none.
+No Auto-Defer, no Time-Map-violation escape hatch. Suggestions are advisory-only:
+for each reported shortfall Lodo proposes the minimal relief (move `plan-end::`
+by N days when `plan-end` bounds placement inside the current window — suppressed
+when the window itself is the limit — with impact as an estimate like
+`adds ~N days of eligible <tier> capacity`, spill to an allowed default tier
+`if free` without verifying calendar occupancy, add Time Map hours on the
+thinnest eligible days, reduce duration, or fix blockers/maps) in human output
+and `--json` with stable `reason`/`change`/`impact`/`tier`.
+Blocked tasks get blocker fixes only (no `restore-stood-down` noise).
+Time Map hour advice is currently add-only; shifting hours stays future work.
+Lodo never applies them automatically.

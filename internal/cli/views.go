@@ -62,6 +62,20 @@ func shortfallViews(tasks []model.Task, reports []planner.TaskReport) []shortfal
 	return out
 }
 
+// suggestionViews converts planner suggestions with resolved task text.
+func suggestionViews(tasks []model.Task, suggestions []planner.Suggestion) []suggestionJSON {
+	byText := textByTasks(tasks)
+	byGraph := graphByTasks(tasks)
+	out := make([]suggestionJSON, 0, len(suggestions))
+	for _, s := range suggestions {
+		out = append(out, suggestionJSON{
+			TaskID: s.TaskID, Task: byText[s.TaskID], Graph: byGraph[s.TaskID],
+			Reason: s.Reason, Change: s.Change, Impact: s.Impact, Tier: s.Tier,
+		})
+	}
+	return out
+}
+
 // explanationViews converts planner explanations.
 func explanationViews(expls []planner.Explanation) []explanationJSON {
 	out := make([]explanationJSON, 0, len(expls))

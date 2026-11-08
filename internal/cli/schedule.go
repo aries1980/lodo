@@ -50,11 +50,12 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 
 	if opts.json {
 		view := scheduleReport{
-			Blocks:     scheduleBlocks(outcome),
-			Shortfalls: scheduleShortfalls(outcome),
-			Writes:     scheduleWrites(outcome),
-			Orphans:    scheduleOrphans(outcome),
-			Busy:       busyView(outcome.Busy),
+			Blocks:      scheduleBlocks(outcome),
+			Shortfalls:  scheduleShortfalls(outcome),
+			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
+			Writes:      scheduleWrites(outcome),
+			Orphans:     scheduleOrphans(outcome),
+			Busy:        busyView(outcome.Busy),
 		}
 		if verbose {
 			view.Explanations = scheduleExplanations(outcome)
@@ -100,6 +101,7 @@ func scheduleProblems(outcome run.ScheduleOutcome) int {
 type scheduleReport struct {
 	Blocks       []blockJSON       `json:"blocks,omitempty"`
 	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
+	Suggestions  []suggestionJSON  `json:"suggestions,omitempty"`
 	Explanations []explanationJSON `json:"explanations,omitempty"`
 	Writes       []writeJSON       `json:"writes,omitempty"`
 	Orphans      []orphanJSON      `json:"orphaned,omitempty"`

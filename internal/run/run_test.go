@@ -217,6 +217,11 @@ func TestGoldenForecast(t *testing.T) {
 				},
 			},
 		},
+		Suggestions: []planner.Suggestion{
+			{TaskID: "t-audit", Reason: planner.SuggestAddTimeMapHours, Change: "add Time Map hours on Sun, Sat", Impact: "adds capacity"},
+			{TaskID: "t-audit", Reason: planner.SuggestExtendPlanEnd, Change: "move plan-end by 2 days", Impact: "adds ~2 days of eligible green capacity", Tier: "green"},
+			{TaskID: "t-audit", Reason: planner.SuggestReduceDuration, Change: "reduce duration by 1h", Impact: "fits in current window"},
+		},
 		Explanations: []planner.Explanation{
 			{TaskID: "t-audit", BlockIndex: 0, Kind: model.BlockFlexible, Start: at(9, 9, 0), Slots: 12, RunStart: at(9, 9, 0), RunSlots: 12},
 			{TaskID: "t-invoices", BlockIndex: 0, Kind: model.BlockFlexible, Start: at(10, 9, 0), Slots: 2, RunStart: at(10, 9, 0), RunSlots: 2},

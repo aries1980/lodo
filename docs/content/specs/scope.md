@@ -18,7 +18,7 @@ The core loop: **read Tasks from Logseq → decide when → write Blocks to Goog
 - **Dependencies** via `depends:: ((uuid))` (strict finish-to-start, AND, full-gate) plus SkedPal-parity nesting: containers (parents with Task children unscheduled), `order:: sequential|parallel` chains, block-cascade inheritance, DONE-parent suppression.
 - **Time Maps** authored in the graph on a configurable page, in a line-based format, with green/yellow/red preference tiers.
 - **Scheduling**: front-loading, deterministic, minimal-churn displacement; a no-change run is a strict no-op. Highlights the rules in [`scheduling.md`](./scheduling.md).
-- **Infeasibility** is reported, never silently resolved: no Auto-Defer, no plan or Time-Map violation. Partial placement is allowed with a reported shortfall.
+- **Infeasibility** is reported, never silently resolved: no Auto-Defer, no plan or Time-Map violation. Partial placement is allowed with a reported shortfall. For reported shortfalls, `check`/`forecast`/`schedule` emit advisory-only suggestions (extend plan-end when it bounds placement, spill to allowed default tier if free, add Time Map hours on specific days, reduce duration, fix blockers/maps) in human text and `--json` (`reason`, `change`, `impact`, `tier`); Lodo never applies them automatically.
 - **Google Workspace Calendar** only: one write calendar plus shared read calendars for
   busy time. Managed Events identified by private extended properties; moves become
   Pinned Blocks, deletes stand the Task down, everything else is busy time.
@@ -37,7 +37,7 @@ soon they are likely to matter.
 - **Recurring Tasks and habits.**
 - **Sequential one-at-a-time gating** (sequential chains schedule upfront in order).
 - **Multiple Plans per Task.**
-- **Suggestions** (SkedPal's proposal of a more realistic date).
+- **Applying suggestions automatically** (suggestions themselves are in scope as advisory-only; any command that applies them remains future work).
 - **Outlook and iCloud** calendars.
 - **A read-only projection into the graph** (`lodo-*` mirror).
 - **NLP** parsing of Task titles.
