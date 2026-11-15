@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/i18n"
 )
 
 const (
@@ -33,6 +34,7 @@ type options struct {
 	config        string
 	logFormat     string
 	disableColors bool
+	lang          string
 
 	// out receives command output; Run wires in the process stdout.
 	out io.Writer
@@ -46,6 +48,7 @@ type options struct {
 // the resolved log format/color settings.
 func Run(args []string, stdout, stderr io.Writer) int {
 	opts := &options{}
+	i18n.SetLang(i18n.ResolveLang(langFlagFromArgs(args)))
 	root := newRootCmd(opts)
 	root.SetArgs(args)
 	root.SetOut(stdout)
@@ -84,15 +87,16 @@ func newRootCmd(opts *options) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:           "lodo",
-		Short:         "Schedule Logseq tasks onto one Google Calendar",
+		Short:         i18n.T("Schedule Logseq tasks onto one Google Calendar"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().BoolVar(&opts.json, "json", false, "machine-readable output")
-	root.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, "show placement reasoning (full detail: lodo explain <task-id>)")
-	root.PersistentFlags().StringVar(&opts.config, "config", "", "config file (default: $XDG_CONFIG_HOME/lodo/config.yaml)")
-	root.PersistentFlags().StringVar(&opts.logFormat, "log-format", logFormatDefault(), "diagnostic log format: auto|text|json (auto is text; json is JSONL on stderr for CI/cron)")
-	root.PersistentFlags().BoolVar(&opts.disableColors, "disable-colors", false, "disable colors in human-readable output (also NO_COLOR, TERM=dumb, non-TTY)")
+	root.PersistentFlags().BoolVar(&opts.json, "json", false, i18n.T("machine-readable output"))
+	root.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, i18n.T("show placement reasoning (full detail: lodo explain <task-id>)"))
+	root.PersistentFlags().StringVar(&opts.config, "config", "", i18n.T("config file (default: $XDG_CONFIG_HOME/lodo/config.yaml)"))
+	root.PersistentFlags().StringVar(&opts.logFormat, "log-format", logFormatDefault(), i18n.T("diagnostic log format: auto|text|json (auto is text; json is JSONL on stderr for CI/cron)"))
+	root.PersistentFlags().BoolVar(&opts.disableColors, "disable-colors", false, i18n.T("disable colors in human-readable output (also NO_COLOR, TERM=dumb, non-TTY)"))
+	root.PersistentFlags().StringVar(&opts.lang, "lang", "", i18n.T("select language (also LODO_LANG, LANG, LC_ALL, LC_MESSAGES)"))
 
 	root.AddCommand(
 		newCheckCmd(opts),
@@ -115,15 +119,15 @@ func newCheckCmd(opts *options) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "check",
-		Short: "Validate the graph and local state; prompts before any write",
+		Short: i18n.T("Validate the graph and local state; prompts before any write"),
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
 			return runCheck(opts, overrides, strict, yes)
 		},
 	}
-	cmd.Flags().BoolVar(&strict, "strict", false, "treat reported problems as a non-zero exit")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer yes to prompts (create a missing Time Maps page without asking)")
+	cmd.Flags().BoolVar(&strict, "strict", false, i18n.T("treat reported problems as a non-zero exit"))
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("answer yes to prompts (create a missing Time Maps page without asking)"))
 	addCredentialOverrideFlags(cmd, &overrides)
 
 	return cmd
@@ -137,14 +141,14 @@ func newForecastCmd(opts *options) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "forecast",
-		Short: "Print the Schedule that would be written; a dry run",
+		Short: i18n.T("Print the Schedule that would be written; a dry run"),
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
 			return runForecast(opts, overrides, opts.verbose, yes)
 		},
 	}
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer yes to prompts (create a missing Time Maps page without asking)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("answer yes to prompts (create a missing Time Maps page without asking)"))
 	addSchedulingOverrideFlags(cmd, &overrides)
 	addCredentialOverrideFlags(cmd, &overrides)
 
@@ -161,16 +165,16 @@ func newScheduleCmd(opts *options) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "schedule",
-		Short: "Reconcile, compute the Schedule and write it to the Calendar",
+		Short: i18n.T("Reconcile, compute the Schedule and write it to the Calendar"),
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
 			return runSchedule(opts, overrides, dryRun, strict, opts.verbose, yes)
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "same as forecast")
-	cmd.Flags().BoolVar(&strict, "strict", false, "treat reported problems as a non-zero exit")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer yes to prompts (create a missing Time Maps page without asking)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("same as forecast"))
+	cmd.Flags().BoolVar(&strict, "strict", false, i18n.T("treat reported problems as a non-zero exit"))
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("answer yes to prompts (create a missing Time Maps page without asking)"))
 	addSchedulingOverrideFlags(cmd, &overrides)
 	addCredentialOverrideFlags(cmd, &overrides)
 
@@ -182,14 +186,14 @@ func newRefreshCmd(opts *options) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "refresh",
-		Short: "Fold calendar edits into local state without recomputing",
+		Short: i18n.T("Fold calendar edits into local state without recomputing"),
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
 			return runRefresh(opts, overrides)
 		},
 	}
-	cmd.Flags().StringArrayVar(&overrides.readCalendars, "read-calendar", nil, "shared calendar to read for busy time; repeatable, replaces config read_calendars for one run")
+	cmd.Flags().StringArrayVar(&overrides.readCalendars, "read-calendar", nil, i18n.T("shared calendar to read for busy time; repeatable, replaces config read_calendars for one run"))
 	addCredentialOverrideFlags(cmd, &overrides)
 
 	return cmd
@@ -203,7 +207,7 @@ func newExplainCmd(opts *options) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "explain <task-id|uuid|query>",
-		Short: "Explain why a task was placed, moved, left short, or blocked (read-only)",
+		Short: i18n.T("Explain why a task was placed, moved, left short, or blocked (read-only)"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			opts.out = c.OutOrStdout()
@@ -211,7 +215,7 @@ func newExplainCmd(opts *options) *cobra.Command {
 			return runExplain(opts, overrides, args[0], yes)
 		},
 	}
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "answer yes to prompts (create a missing Time Maps page without asking)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("answer yes to prompts (create a missing Time Maps page without asking)"))
 	addSchedulingOverrideFlags(cmd, &overrides)
 	addCredentialOverrideFlags(cmd, &overrides)
 
@@ -226,46 +230,13 @@ func newAuthCmd(opts *options) *cobra.Command {
 
 	auth := &cobra.Command{
 		Use:   "auth",
-		Short: "Manage provider credentials",
+		Short: i18n.T("Manage provider credentials"),
 	}
 	cmd := &cobra.Command{
 		Use:   "google",
-		Short: "Run the loopback OAuth flow and store the refresh token",
-		Long: `Store Google's refresh token for ` + "`lodo forecast` and `lodo schedule`" + `, one time.
-
-Before running, create an OAuth client in the Google Cloud console (a
-"Desktop app" is the dependable type; its redirect URI is http://127.0.0.1/)
-and supply client_id and client_secret via flags, environment
-(LODO_GOOGLE_CLIENT_ID and LODO_GOOGLE_CLIENT_SECRET), or credentials.json
-beside the Logseq token:
-
-  {"google": {"client_id": "…", "client_secret": "…"}}
-
-Pass --google-refresh-token with the pair to store the grant without
-running the browser flow (or set LODO_GOOGLE_REFRESH_TOKEN to skip the file
-at runtime entirely).
-
-The flow binds a loopback listener, raises the authorization URL
-(calendar.events scope, offline access and a re-consent, so the grant is a
-refresh token that survives a revocation) and accepts exactly one
-redirect. On a machine that opens a browser, xdg-open takes the URL and
-the flow waits; print the URL instead with --verbose.
-
-Google's login is one system for personal Gmail and Google Workspace
-accounts: approve with the account whose calendar Lodo should use, and
-calendar.id names the one calendar inside it. A Workspace admin's
-third-party app policy must allow your own client (the unverified-app
-page is normal for a personal client_id), and the Calendar API must be
-enabled in the project that owns it.
-
-On a machine with no browser to open — a cloud VM — pass
---no-launch-browser: the URL is printed to finish on any device, and the
-redirect address Google then shows (which will not load off the machine)
-is pasted back here on one line to exchange; the bare authorization code
-works too. The same listener still completes an SSH-tunnelled redirect.
-Run the command again after a revocation. Missing client credentials exit
-1 with a hint; there are no interactive prompts about them.`,
-		Args: cobra.NoArgs,
+		Short: i18n.T("Run the loopback OAuth flow and store the refresh token"),
+		Long:  i18n.T(authGoogleLong),
+		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
@@ -273,10 +244,10 @@ Run the command again after a revocation. Missing client credentials exit
 		},
 	}
 	cmd.Flags().BoolVar(&noBrowser, "no-launch-browser", false,
-		"headless machines: finish the grant on another device and paste the redirect back here")
-	cmd.Flags().StringVar(&overrides.googleClientID, "google-client-id", "", "Google OAuth client_id for one run (overrides file and env)")
-	cmd.Flags().StringVar(&overrides.googleClientSecret, "google-client-secret", "", "Google OAuth client_secret for one run (overrides file and env)")
-	cmd.Flags().StringVar(&overrides.googleRefreshToken, "google-refresh-token", "", "store this refresh token directly without running the browser flow")
+		i18n.T("headless machines: finish the grant on another device and paste the redirect back here"))
+	cmd.Flags().StringVar(&overrides.googleClientID, "google-client-id", "", i18n.T("Google OAuth client_id for one run (overrides file and env)"))
+	cmd.Flags().StringVar(&overrides.googleClientSecret, "google-client-secret", "", i18n.T("Google OAuth client_secret for one run (overrides file and env)"))
+	cmd.Flags().StringVar(&overrides.googleRefreshToken, "google-refresh-token", "", i18n.T("store this refresh token directly without running the browser flow"))
 	auth.AddCommand(cmd)
 
 	return auth
@@ -333,15 +304,70 @@ func parseGraphTokens(in []string) map[string]string {
 }
 
 func addCredentialOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {
-	cmd.Flags().StringVar(&overrides.logseqToken, "logseq-token", "", "Logseq API token for one run (overrides file and env)")
-	cmd.Flags().StringArrayVar(&overrides.logseqGraphTokens, "logseq-graph-token", nil, "per-graph Logseq token NAME=TOKEN; repeatable, overrides file and env for that graph")
-	cmd.Flags().StringVar(&overrides.googleClientID, "google-client-id", "", "Google OAuth client_id for one run (overrides file and env)")
-	cmd.Flags().StringVar(&overrides.googleClientSecret, "google-client-secret", "", "Google OAuth client_secret for one run (overrides file and env)")
-	cmd.Flags().StringVar(&overrides.googleRefreshToken, "google-refresh-token", "", "Google refresh token for one run (overrides file and env)")
+	cmd.Flags().StringVar(&overrides.logseqToken, "logseq-token", "", i18n.T("Logseq API token for one run (overrides file and env)"))
+	cmd.Flags().StringArrayVar(&overrides.logseqGraphTokens, "logseq-graph-token", nil, i18n.T("per-graph Logseq token NAME=TOKEN; repeatable, overrides file and env for that graph"))
+	cmd.Flags().StringVar(&overrides.googleClientID, "google-client-id", "", i18n.T("Google OAuth client_id for one run (overrides file and env)"))
+	cmd.Flags().StringVar(&overrides.googleClientSecret, "google-client-secret", "", i18n.T("Google OAuth client_secret for one run (overrides file and env)"))
+	cmd.Flags().StringVar(&overrides.googleRefreshToken, "google-refresh-token", "", i18n.T("Google refresh token for one run (overrides file and env)"))
 }
 
 func addSchedulingOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {
-	cmd.Flags().IntVar(&overrides.windowDays, "window-days", 0, "override scheduling.window_days for one run")
-	cmd.Flags().StringVar(&overrides.timezone, "timezone", "", "override scheduling.timezone for one run")
-	cmd.Flags().StringArrayVar(&overrides.readCalendars, "read-calendar", nil, "shared calendar to read for busy time; repeatable, replaces config read_calendars for one run")
+	cmd.Flags().IntVar(&overrides.windowDays, "window-days", 0, i18n.T("override scheduling.window_days for one run"))
+	cmd.Flags().StringVar(&overrides.timezone, "timezone", "", i18n.T("override scheduling.timezone for one run"))
+	cmd.Flags().StringArrayVar(&overrides.readCalendars, "read-calendar", nil, i18n.T("shared calendar to read for busy time; repeatable, replaces config read_calendars for one run"))
 }
+
+// langFlagFromArgs pre-scans raw args for --lang so the language is set
+// before Cobra builds help text. Supports --lang en-GB and --lang=en-GB.
+func langFlagFromArgs(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--lang" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(a, "--lang=") {
+			return strings.TrimPrefix(a, "--lang=")
+		}
+		if a == "--" {
+			break
+		}
+	}
+	return ""
+}
+
+// authGoogleLong is the en-US source for `lodo auth google --help`.
+// It stays a constant so the PO msgid never drifts from the code.
+const authGoogleLong = `Store Google's refresh token for ` + "`lodo forecast` and `lodo schedule`" + `, one time.
+
+Before running, create an OAuth client in the Google Cloud console (a
+"Desktop app" is the dependable type; its redirect URI is http://127.0.0.1/)
+and supply client_id and client_secret via flags, environment
+(LODO_GOOGLE_CLIENT_ID and LODO_GOOGLE_CLIENT_SECRET), or credentials.json
+beside the Logseq token:
+
+  {"google": {"client_id": "…", "client_secret": "…"}}
+
+Pass --google-refresh-token with the pair to store the grant without
+running the browser flow (or set LODO_GOOGLE_REFRESH_TOKEN to skip the file
+at runtime entirely).
+
+The flow binds a loopback listener, raises the authorization URL
+(calendar.events scope, offline access and a re-consent, so the grant is a
+refresh token that survives a revocation) and accepts exactly one
+redirect. On a machine that opens a browser, xdg-open takes the URL and
+the flow waits; print the URL instead with --verbose.
+
+Google's login is one system for personal Gmail and Google Workspace
+accounts: approve with the account whose calendar Lodo should use, and
+calendar.id names the one calendar inside it. A Workspace admin's
+third-party app policy must allow your own client (the unverified-app
+page is normal for a personal client_id), and the Calendar API must be
+enabled in the project that owns it.
+
+On a machine with no browser to open — a cloud VM — pass
+--no-launch-browser: the URL is printed to finish on any device, and the
+redirect address Google then shows (which will not load off the machine)
+is pasted back here on one line to exchange; the bare authorization code
+works too. The same listener still completes an SSH-tunnelled redirect.
+Run the command again after a revocation. Missing client credentials exit
+1 with a hint; there are no interactive prompts about them.`

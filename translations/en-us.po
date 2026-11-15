@@ -10,3 +10,124 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Schedule Logseq tasks onto one Google Calendar"
+msgstr ""
+
+msgid "machine-readable output"
+msgstr ""
+
+msgid "show placement reasoning (full detail: lodo explain <task-id>)"
+msgstr ""
+
+msgid "config file (default: $XDG_CONFIG_HOME/lodo/config.yaml)"
+msgstr ""
+
+msgid "diagnostic log format: auto|text|json (auto is text; json is JSONL on stderr for CI/cron)"
+msgstr ""
+
+msgid "disable colors in human-readable output (also NO_COLOR, TERM=dumb, non-TTY)"
+msgstr ""
+
+msgid "select language (also LODO_LANG, LANG, LC_ALL, LC_MESSAGES)"
+msgstr ""
+
+msgid "Validate the graph and local state; prompts before any write"
+msgstr ""
+
+msgid "treat reported problems as a non-zero exit"
+msgstr ""
+
+msgid "answer yes to prompts (create a missing Time Maps page without asking)"
+msgstr ""
+
+msgid "Print the Schedule that would be written; a dry run"
+msgstr ""
+
+msgid "Reconcile, compute the Schedule and write it to the Calendar"
+msgstr ""
+
+msgid "same as forecast"
+msgstr ""
+
+msgid "Fold calendar edits into local state without recomputing"
+msgstr ""
+
+msgid "shared calendar to read for busy time; repeatable, replaces config read_calendars for one run"
+msgstr ""
+
+msgid "Explain why a task was placed, moved, left short, or blocked (read-only)"
+msgstr ""
+
+msgid "Manage provider credentials"
+msgstr ""
+
+msgid "Run the loopback OAuth flow and store the refresh token"
+msgstr ""
+
+msgid "headless machines: finish the grant on another device and paste the redirect back here"
+msgstr ""
+
+msgid "Google OAuth client_id for one run (overrides file and env)"
+msgstr ""
+
+msgid "Google OAuth client_secret for one run (overrides file and env)"
+msgstr ""
+
+msgid "store this refresh token directly without running the browser flow"
+msgstr ""
+
+msgid "Logseq API token for one run (overrides file and env)"
+msgstr ""
+
+msgid "per-graph Logseq token NAME=TOKEN; repeatable, overrides file and env for that graph"
+msgstr ""
+
+msgid "Google refresh token for one run (overrides file and env)"
+msgstr ""
+
+msgid "override scheduling.window_days for one run"
+msgstr ""
+
+msgid "override scheduling.timezone for one run"
+msgstr ""
+
+msgid "Graph: %d issues"
+msgstr ""
+
+msgid ""
+"Store Google's refresh token for `lodo forecast` and `lodo schedule`, one time.\n"
+"\n"
+"Before running, create an OAuth client in the Google Cloud console (a\n"
+"\"Desktop app\" is the dependable type; its redirect URI is http://127.0.0.1/)\n"
+"and supply client_id and client_secret via flags, environment\n"
+"(LODO_GOOGLE_CLIENT_ID and LODO_GOOGLE_CLIENT_SECRET), or credentials.json\n"
+"beside the Logseq token:\n"
+"\n"
+"  {\"google\": {\"client_id\": \"…\", \"client_secret\": \"…\"}}\n"
+"\n"
+"Pass --google-refresh-token with the pair to store the grant without\n"
+"running the browser flow (or set LODO_GOOGLE_REFRESH_TOKEN to skip the file\n"
+"at runtime entirely).\n"
+"\n"
+"The flow binds a loopback listener, raises the authorization URL\n"
+"(calendar.events scope, offline access and a re-consent, so the grant is a\n"
+"refresh token that survives a revocation) and accepts exactly one\n"
+"redirect. On a machine that opens a browser, xdg-open takes the URL and\n"
+"the flow waits; print the URL instead with --verbose.\n"
+"\n"
+"Google's login is one system for personal Gmail and Google Workspace\n"
+"accounts: approve with the account whose calendar Lodo should use, and\n"
+"calendar.id names the one calendar inside it. A Workspace admin's\n"
+"third-party app policy must allow your own client (the unverified-app\n"
+"page is normal for a personal client_id), and the Calendar API must be\n"
+"enabled in the project that owns it.\n"
+"\n"
+"On a machine with no browser to open — a cloud VM — pass\n"
+"--no-launch-browser: the URL is printed to finish on any device, and the\n"
+"redirect address Google then shows (which will not load off the machine)\n"
+"is pasted back here on one line to exchange; the bare authorization code\n"
+"works too. The same listener still completes an SSH-tunnelled redirect.\n"
+"Run the command again after a revocation. Missing client credentials exit\n"
+"1 with a hint; there are no interactive prompts about them."
+msgstr ""
