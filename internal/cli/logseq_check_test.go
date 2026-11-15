@@ -100,7 +100,7 @@ func TestCheckLogseqAvailablePassesWhenAllAnswer(t *testing.T) {
 		{Client: &pingClient{}, APIURL: "http://127.0.0.1:12315/api"},
 		{Name: "work", Order: 0, Client: &pingClient{}, APIURL: "http://127.0.0.1:12316/api"},
 	}
-	if err := checkLogseqAvailable(context.Background(), sources, nil); err != nil {
+	if err := checkLogseqAvailable(t.Context(), sources, nil); err != nil {
 		t.Fatalf("check = %v, want nil", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestCheckLogseqAvailableNamesUnreachableEndpoint(t *testing.T) {
 		{Client: c, APIURL: "http://127.0.0.1:12315/api"},
 	}
 	var notices []logseqProbeAttempt
-	err := checkLogseqAvailable(context.Background(), sources, func(a logseqProbeAttempt) {
+	err := checkLogseqAvailable(t.Context(), sources, func(a logseqProbeAttempt) {
 		notices = append(notices, a)
 	})
 	if err == nil {
@@ -140,7 +140,7 @@ func TestCheckLogseqAvailableNamesGraph(t *testing.T) {
 		{Name: "work", Order: 0, Client: &pingClient{}, APIURL: "http://127.0.0.1:12315/api"},
 		{Name: "family", Order: 1, Client: &pingClient{pingErr: errors.New("logseq api: boom")}, APIURL: "http://127.0.0.1:12316/api"},
 	}
-	err := checkLogseqAvailable(context.Background(), sources, nil)
+	err := checkLogseqAvailable(t.Context(), sources, nil)
 	if err == nil {
 		t.Fatal("check succeeded with the second graph down")
 	}
@@ -161,7 +161,7 @@ func TestCheckLogseqAvailableHintsTokenOnAuthFailure(t *testing.T) {
 		{Client: c, APIURL: "http://127.0.0.1:12315/api"},
 	}
 	notified := false
-	err := checkLogseqAvailable(context.Background(), sources, func(logseqProbeAttempt) { notified = true })
+	err := checkLogseqAvailable(t.Context(), sources, func(logseqProbeAttempt) { notified = true })
 	if err == nil {
 		t.Fatal("check succeeded against a denying app")
 	}
@@ -186,7 +186,7 @@ func TestCheckLogseqAvailableRetriesThenRecovers(t *testing.T) {
 		{Client: c, APIURL: "http://127.0.0.1:12315/api"},
 	}
 	var notices []logseqProbeAttempt
-	if err := checkLogseqAvailable(context.Background(), sources, func(a logseqProbeAttempt) {
+	if err := checkLogseqAvailable(t.Context(), sources, func(a logseqProbeAttempt) {
 		notices = append(notices, a)
 	}); err != nil {
 		t.Fatalf("check = %v, want nil after the retry answers", err)
@@ -253,7 +253,7 @@ func TestCheckLogseqAvailableTimesOutEarly(t *testing.T) {
 	}
 	start := time.Now()
 	var notices []logseqProbeAttempt
-	err := checkLogseqAvailable(context.Background(), sources, func(a logseqProbeAttempt) {
+	err := checkLogseqAvailable(t.Context(), sources, func(a logseqProbeAttempt) {
 		notices = append(notices, a)
 	})
 	took := time.Since(start)
@@ -318,7 +318,7 @@ func TestCheckLogseqAvailableRetriesPortsContainingStatusCodes(t *testing.T) {
 					t.Fatal(err)
 				}
 				notices := 0
-				err = checkLogseqAvailable(context.Background(), []run.Source{{Name: graph, Client: client, APIURL: endpoint}}, func(logseqProbeAttempt) {
+				err = checkLogseqAvailable(t.Context(), []run.Source{{Name: graph, Client: client, APIURL: endpoint}}, func(logseqProbeAttempt) {
 					notices++
 				})
 				if err == nil {
@@ -368,7 +368,7 @@ func TestCheckLogseqAvailableClassifiesAPIResponses(t *testing.T) {
 				t.Fatal(err)
 			}
 			notices := 0
-			err = checkLogseqAvailable(context.Background(), []run.Source{{Client: client, APIURL: srv.URL + "/api"}}, func(logseqProbeAttempt) {
+			err = checkLogseqAvailable(t.Context(), []run.Source{{Client: client, APIURL: srv.URL + "/api"}}, func(logseqProbeAttempt) {
 				notices++
 			})
 			if err == nil {

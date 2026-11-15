@@ -621,11 +621,7 @@ func canonicalGraphTokens(in map[string]LogseqGraphCredentials) map[string]Logse
 		return nil
 	}
 	out := make(map[string]LogseqGraphCredentials, len(in))
-	keys := make([]string, 0, len(in))
-	for k := range in {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
+	keys := slices.Sorted(maps.Keys(in))
 	for _, k := range keys {
 		slug := parse.Slugify(k)
 		if slug == "" {
@@ -713,11 +709,7 @@ func (c Credentials) WithCredentialOverrides(o CredentialOverrides) Credentials 
 		if merged == nil {
 			merged = map[string]LogseqGraphCredentials{}
 		}
-		keys := make([]string, 0, len(o.LogseqGraphTokens))
-		for k := range o.LogseqGraphTokens {
-			keys = append(keys, k)
-		}
-		slices.Sort(keys)
+		keys := slices.Sorted(maps.Keys(o.LogseqGraphTokens))
 		for _, k := range keys {
 			if vv := strings.TrimSpace(o.LogseqGraphTokens[k]); vv != "" {
 				if slug := parse.Slugify(k); slug != "" {

@@ -295,7 +295,7 @@ func pastedAddress(state, port string) string {
 func TestRunLoopbackFlow(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	res, err := gauth.Run(context.Background(), gauth.Inputs{
+	res, err := gauth.Run(t.Context(), gauth.Inputs{
 		Client:   credsPair(),
 		Endpoint: s.endpoint(t),
 		Raise:    c.raise(fireHappy(t, "code=auth-code")),
@@ -332,7 +332,7 @@ func TestRunLoopbackFlow(t *testing.T) {
 func TestRunLoopbackDeniesGrant(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	_, err := gauth.Run(context.Background(), gauth.Inputs{
+	_, err := gauth.Run(t.Context(), gauth.Inputs{
 		Client:   credsPair(),
 		Endpoint: s.endpoint(t),
 		Raise:    c.raise(fireRedirect("error=access_denied&error_description=no%20thanks")),
@@ -349,7 +349,7 @@ func TestRunLoopbackDeniesGrant(t *testing.T) {
 func TestRunLoopbackStateMismatchStops(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	_, err := gauth.Run(context.Background(), gauth.Inputs{
+	_, err := gauth.Run(t.Context(), gauth.Inputs{
 		Client:   credsPair(),
 		Endpoint: s.endpoint(t),
 		Raise:    c.raise(fireRedirect("code=auth-code&state=from-a-different-run")),
@@ -365,7 +365,7 @@ func TestRunLoopbackStateMismatchStops(t *testing.T) {
 func TestRunLoopbackExchangeFails(t *testing.T) {
 	s := &tokenExchanges{failCode: true}
 	c := &capture{t: t}
-	_, err := gauth.Run(context.Background(), gauth.Inputs{
+	_, err := gauth.Run(t.Context(), gauth.Inputs{
 		Client:   credsPair(),
 		Endpoint: s.endpoint(t),
 		Raise:    c.raise(fireRedirect("code=auth-code")),
@@ -384,7 +384,7 @@ func TestRunLoopbackExchangeFails(t *testing.T) {
 func TestRunLoopbackNoRefreshToken(t *testing.T) {
 	s := &tokenExchanges{omitRefresh: true}
 	c := &capture{t: t}
-	_, err := gauth.Run(context.Background(), gauth.Inputs{
+	_, err := gauth.Run(t.Context(), gauth.Inputs{
 		Client:   credsPair(),
 		Endpoint: s.endpoint(t),
 		Raise:    c.raise(fireRedirect("code=auth-code")),
@@ -397,7 +397,7 @@ func TestRunLoopbackNoRefreshToken(t *testing.T) {
 func TestRunLoopbackTimesOut(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
 	_, err := gauth.Run(ctx, gauth.Inputs{
 		Client:   credsPair(),
@@ -423,7 +423,7 @@ func TestRunLoopbackSkipsIdleConnections(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		fireRedirect("code=auth-code")(q, port)
 	}
-	res, err := gauth.Run(context.Background(), gauth.Inputs{
+	res, err := gauth.Run(t.Context(), gauth.Inputs{
 		Client:   credsPair(),
 		Endpoint: s.endpoint(t),
 		Raise:    c.raise(half),
@@ -444,20 +444,20 @@ func TestRunWantsItsInputs(t *testing.T) {
 	endpoint := s.endpoint(t)
 
 	// No way to raise the URL.
-	_, err := gauth.Run(context.Background(), gauth.Inputs{Client: credsPair(), Endpoint: endpoint})
+	_, err := gauth.Run(t.Context(), gauth.Inputs{Client: credsPair(), Endpoint: endpoint})
 	if err == nil || !strings.Contains(err.Error(), "no way to raise") {
 		t.Fatalf("Run err = %v, want the missing Raise", err)
 	}
 
 	// No pasted client pair.
 	c := &capture{t: t}
-	_, err = gauth.Run(context.Background(), gauth.Inputs{Endpoint: endpoint, Raise: c.raise(nil)})
+	_, err = gauth.Run(t.Context(), gauth.Inputs{Endpoint: endpoint, Raise: c.raise(nil)})
 	if err == nil || !strings.Contains(err.Error(), "client_id and client_secret are required") {
 		t.Fatalf("Run err = %v, want the client pair's refusal", err)
 	}
 
 	// Paste mode with nowhere to paste.
-	_, err = gauth.Run(context.Background(), gauth.Inputs{
+	_, err = gauth.Run(t.Context(), gauth.Inputs{
 		Client: credsPair(), Endpoint: endpoint, Raise: c.raise(nil), NoBrowser: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "paste mode needs") {
@@ -468,7 +468,7 @@ func TestRunWantsItsInputs(t *testing.T) {
 func TestRunNoBrowserPastedAddress(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	res, err := gauth.Run(context.Background(), pasteInputs(t, s, c, &bytes.Buffer{}, pastedAddress))
+	res, err := gauth.Run(t.Context(), pasteInputs(t, s, c, &bytes.Buffer{}, pastedAddress))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestRunNoBrowserPastedAddress(t *testing.T) {
 func TestRunNoBrowserBareCode(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	res, err := gauth.Run(context.Background(), pasteInputs(t, s, c, &bytes.Buffer{},
+	res, err := gauth.Run(t.Context(), pasteInputs(t, s, c, &bytes.Buffer{},
 		func(_, _ string) string { return "auth-code\n" }))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -509,7 +509,7 @@ func TestRunNoBrowserToleratesNoise(t *testing.T) {
 	c := &capture{t: t}
 	// Blank lines, prose before the paste, and an unparseable address are
 	// all skipped on the way to the code.
-	res, err := gauth.Run(context.Background(), pasteInputs(t, s, c, &bytes.Buffer{},
+	res, err := gauth.Run(t.Context(), pasteInputs(t, s, c, &bytes.Buffer{},
 		func(_, _ string) string {
 			return "\nstill working on it…\nhttp://not the address\n  auth-code  \n"
 		}))
@@ -532,7 +532,7 @@ func TestRunNoBrowserToleratesNoise(t *testing.T) {
 func TestRunNoBrowserDeniedPaste(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	_, err := gauth.Run(context.Background(), pasteInputs(t, s, c, &bytes.Buffer{},
+	_, err := gauth.Run(t.Context(), pasteInputs(t, s, c, &bytes.Buffer{},
 		func(state, port string) string {
 			return fmt.Sprintf("http://127.0.0.1:%s/?error=access_denied&state=%s\n", port, state)
 		}))
@@ -544,7 +544,7 @@ func TestRunNoBrowserDeniedPaste(t *testing.T) {
 func TestRunNoBrowserMismatchedPaste(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	_, err := gauth.Run(context.Background(), pasteInputs(t, s, c, &bytes.Buffer{},
+	_, err := gauth.Run(t.Context(), pasteInputs(t, s, c, &bytes.Buffer{},
 		func(_, port string) string {
 			return fmt.Sprintf("http://127.0.0.1:%s/?code=auth-code&state=stale-state\n", port)
 		}))
@@ -559,7 +559,7 @@ func TestRunNoBrowserMismatchedPaste(t *testing.T) {
 func TestRunNoBrowserNothingPasted(t *testing.T) {
 	s := &tokenExchanges{}
 	c := &capture{t: t}
-	_, err := gauth.Run(context.Background(), pasteInputs(t, s, c, &bytes.Buffer{},
+	_, err := gauth.Run(t.Context(), pasteInputs(t, s, c, &bytes.Buffer{},
 		func(_, _ string) string { return "" }))
 	if err == nil || !strings.Contains(err.Error(), "no authorization code was pasted") {
 		t.Fatalf("Run err = %v, want the empty paste", err)
@@ -668,7 +668,7 @@ func TestTokenSourceRefreshesTransparently(t *testing.T) {
 	}))
 	t.Cleanup(resource.Close)
 
-	src, err := gauth.TokenSource(context.Background(), endpoint, config.GoogleCredentials{
+	src, err := gauth.TokenSource(t.Context(), endpoint, config.GoogleCredentials{
 		ClientID:     testClientID,
 		ClientSecret: testClientSecret,
 		RefreshToken: "1//stored-refresh-token",
@@ -676,7 +676,7 @@ func TestTokenSourceRefreshesTransparently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TokenSource: %v", err)
 	}
-	hc := oauth2.NewClient(context.Background(), src)
+	hc := oauth2.NewClient(t.Context(), src)
 	for i := 0; i < 2; i++ {
 		resp, err := hc.Get(resource.URL)
 		if err != nil {
@@ -707,7 +707,7 @@ func TestTokenSourceRevokedIsAnError(t *testing.T) {
 	s := &tokenExchanges{revokedRefresh: true}
 	endpoint := s.endpoint(t)
 
-	src, err := gauth.TokenSource(context.Background(), endpoint, config.GoogleCredentials{
+	src, err := gauth.TokenSource(t.Context(), endpoint, config.GoogleCredentials{
 		ClientID:     testClientID,
 		ClientSecret: testClientSecret,
 		RefreshToken: "1//stored-refresh-token",
@@ -715,7 +715,7 @@ func TestTokenSourceRevokedIsAnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TokenSource: %v", err)
 	}
-	hc := oauth2.NewClient(context.Background(), src)
+	hc := oauth2.NewClient(t.Context(), src)
 	if _, err := hc.Get(endpoint.TokenURL); err == nil {
 		t.Fatal("a revoked grant must surface as an error, not a silently usable client")
 	}

@@ -189,7 +189,7 @@ func TestAuthGoogleJSONKeepsStdoutMachineReadable(t *testing.T) {
 // would give back.
 func newFeeder(t *testing.T, lines *bytes.Buffer) io.Writer {
 	return writeFunc(func(p []byte) (int, error) {
-		for _, line := range strings.Split(string(p), "\n") {
+		for line := range strings.SplitSeq(string(p), "\n") {
 			if !strings.HasPrefix(line, "http://") && !strings.HasPrefix(line, "https://") {
 				continue
 			}

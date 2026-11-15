@@ -127,7 +127,7 @@ func parsePO(content string) map[string]string {
 		inID = false
 		inStr = false
 	}
-	for _, raw := range strings.Split(content, "\n") {
+	for raw := range strings.SplitSeq(content, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			flush()

@@ -85,7 +85,7 @@ func TestInsertConflictFallsBackToPatch(t *testing.T) {
 	}
 	st := openTestStore(t)
 
-	outcome, err := run.Schedule(context.Background(), newStubClient(busyGraph()), cal, st, cfg, now)
+	outcome, err := run.Schedule(t.Context(), newStubClient(busyGraph()), cal, st, cfg, now)
 	if err != nil {
 		t.Fatalf("Schedule with 409 insert: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestPatchMissingFallsBackToInsert(t *testing.T) {
 	}
 	st := openTestStore(t)
 
-	if _, err := run.Schedule(context.Background(), newStubClient(busyGraph()), cal, st, cfg, now); err != nil {
+	if _, err := run.Schedule(t.Context(), newStubClient(busyGraph()), cal, st, cfg, now); err != nil {
 		t.Fatalf("Schedule with 404 patch: %v", err)
 	}
 	if len(cal.inserts) != 1 || cal.inserts[0] != eventID {

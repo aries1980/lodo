@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,7 +50,7 @@ func checkPathCases() []checkPathCase {
 }
 
 func TestPrepareRejectsUnknownCommand(t *testing.T) {
-	if _, err := prepare(context.Background(), &options{}, configOverrides{}, false, "nope"); err == nil {
+	if _, err := prepare(t.Context(), &options{}, configOverrides{}, false, "nope"); err == nil {
 		t.Fatal("a command with no declared needs must fail before any I/O")
 	}
 }

@@ -141,7 +141,7 @@ func TestEnsureExistingPageUntouched(t *testing.T) {
 	failingStdin(t)
 
 	errW := &strings.Builder{}
-	created, err := ensureTimeMapsPage(context.Background(), c, "Time Maps", false, errW, styler{})
+	created, err := ensureTimeMapsPage(t.Context(), c, "Time Maps", false, errW, styler{})
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestEnsurePromptYesCreatesDefaults(t *testing.T) {
 	withStdin(t, "y\n")
 
 	errW := &strings.Builder{}
-	created, err := ensureTimeMapsPage(context.Background(), c, "Time Maps", false, errW, styler{})
+	created, err := ensureTimeMapsPage(t.Context(), c, "Time Maps", false, errW, styler{})
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestEnsureYesFlagSkipsPrompt(t *testing.T) {
 	failingStdin(t)
 
 	errW := &strings.Builder{}
-	created, err := ensureTimeMapsPage(context.Background(), c, "Time Maps", true, errW, styler{})
+	created, err := ensureTimeMapsPage(t.Context(), c, "Time Maps", true, errW, styler{})
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestEnsurePromptNoLeavesGraphAlone(t *testing.T) {
 		withStdin(t, input)
 
 		errW := &strings.Builder{}
-		created, err := ensureTimeMapsPage(context.Background(), c, "Time Maps", false, errW, styler{})
+		created, err := ensureTimeMapsPage(t.Context(), c, "Time Maps", false, errW, styler{})
 		if err != nil {
 			t.Fatalf("ensure(%q): %v", input, err)
 		}

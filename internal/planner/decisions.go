@@ -298,9 +298,7 @@ func outcomeFor(plan *taskPlan, reported *TaskReport) Outcome {
 }
 
 func dispositionsFor(plan *taskPlan) []model.Disposition {
-	var disps []model.Disposition
-	disps = append(disps, plan.pinnedDisps...)
-	disps = append(disps, plan.stoodDownDisps...)
+	disps := slices.Concat(plan.pinnedDisps, plan.stoodDownDisps)
 	slices.SortFunc(disps, func(a, b model.Disposition) int {
 		return cmp.Or(cmp.Compare(a.BlockIndex, b.BlockIndex), cmp.Compare(a.Kind, b.Kind))
 	})

@@ -1,7 +1,6 @@
 package run_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -179,7 +178,7 @@ func TestIdempotenceGate(t *testing.T) {
 	st := openTestStore(t)
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	client := newStubClient(busyGraph())
 	first, err := run.Schedule(ctx, client, cal, st, cfg, now)
@@ -227,7 +226,7 @@ func TestOutOfWindowManagedEventIsPreserved(t *testing.T) {
 	st := openTestStore(t)
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if _, err := run.Schedule(ctx, newStubClient(busyGraph()), cal, st, cfg, now); err != nil {
 		t.Fatalf("first Schedule: %v", err)
@@ -318,7 +317,7 @@ func TestOutOfWindowEventWithMatchingBindingIsPinned(t *testing.T) {
 	st := openTestStore(t)
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if _, err := run.Schedule(ctx, newStubClient(busyGraph()), cal, st, cfg, now); err != nil {
 		t.Fatalf("first Schedule: %v", err)
@@ -383,7 +382,7 @@ func TestCancelledManagedEventStandsDown(t *testing.T) {
 	st := openTestStore(t)
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if _, err := run.Schedule(ctx, newStubClient(busyGraph()), cal, st, cfg, now); err != nil {
 		t.Fatalf("first Schedule: %v", err)
@@ -431,7 +430,7 @@ func TestFailedCommitAfterPatchDoesNotPin(t *testing.T) {
 	inner := openTestStore(t)
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if _, err := run.Schedule(ctx, newStubClient(busyGraph()), cal, inner, cfg, now); err != nil {
 		t.Fatalf("first Schedule: %v", err)
@@ -487,7 +486,7 @@ func TestCrashRecoveryAdoptThenNoOp(t *testing.T) {
 	st := openTestStore(t)
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// The event Lodo would have written: deterministic id for t-audit/0,
 	// 30m at Monday 11:00 (inside the default map, after the busyGraph task
@@ -562,7 +561,7 @@ func TestCalendarBeforeStoreAdoptsOnRecovery(t *testing.T) {
 	st := &failingStore{inner: inner, fail: true}
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// First schedule: the calendar insert happens, then the store commit
 	// fails (injected). The event exists with no local row.
@@ -611,7 +610,7 @@ func TestStoodDownPersistsUntilInputChange(t *testing.T) {
 	st := openTestStore(t)
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Schedule once so the event exists.
 	if _, err := run.Schedule(ctx, newStubClient(busyGraph()), cal, st, cfg, now); err != nil {

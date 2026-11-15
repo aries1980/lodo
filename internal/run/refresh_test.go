@@ -71,7 +71,7 @@ func TestRefreshReportsSharedOverlapAndChangesNothing(t *testing.T) {
 		t.Fatalf("seed Commit: %v", err)
 	}
 
-	outcome, err := run.Refresh(context.Background(), stubReader{mask: union, managed: managed, report: report}, st, cfg, now)
+	outcome, err := run.Refresh(t.Context(), stubReader{mask: union, managed: managed, report: report}, st, cfg, now)
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestRefreshNoConflictWhenDisjoint(t *testing.T) {
 		t.Fatalf("seed Commit: %v", err)
 	}
 
-	outcome, err := run.Refresh(context.Background(), stubReader{mask: shared, managed: managed, report: report}, st, cfg, now)
+	outcome, err := run.Refresh(t.Context(), stubReader{mask: shared, managed: managed, report: report}, st, cfg, now)
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}

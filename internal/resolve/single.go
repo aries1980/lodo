@@ -283,7 +283,7 @@ func (r *resolver) pageDefault(pageName, key, text string) string {
 // case-normalised slugs; empty and blank pieces vanish.
 func splitSlugs(text string) []string {
 	var out []string
-	for _, piece := range strings.Split(text, ",") {
+	for piece := range strings.SplitSeq(text, ",") {
 		if slug := parse.Slugify(piece); slug != "" {
 			out = append(out, slug)
 		}

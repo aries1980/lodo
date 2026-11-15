@@ -1,7 +1,6 @@
 package calendar
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -88,7 +87,7 @@ func TestMultiUnion(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	mask, managed, report, err := m.Busy(context.Background(), g, now)
+	mask, managed, report, err := m.Busy(t.Context(), g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v", err)
 	}
@@ -133,7 +132,7 @@ func TestMultiDedupesWriteID(t *testing.T) {
 		t.Fatalf("ReadIDs = %q, want only a@example.com", m.ReadIDs())
 	}
 	g, now, _ := busyFixture(t)
-	_, _, report, err := m.Busy(context.Background(), g, now)
+	_, _, report, err := m.Busy(t.Context(), g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v", err)
 	}
@@ -155,7 +154,7 @@ func TestLodoOnReadIsBusyWithWarning(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	mask, managed, report, err := m.Busy(context.Background(), g, now)
+	mask, managed, report, err := m.Busy(t.Context(), g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v", err)
 	}
@@ -187,7 +186,7 @@ func TestMulti403WarnsAndContinues(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	mask, _, report, err := m.Busy(context.Background(), g, now)
+	mask, _, report, err := m.Busy(t.Context(), g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v, 403 must warn and continue", err)
 	}
@@ -219,7 +218,7 @@ func TestMulti404WarnsAndContinues(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	if _, _, report, err := m.Busy(context.Background(), g, now); err != nil {
+	if _, _, report, err := m.Busy(t.Context(), g, now); err != nil {
 		t.Fatalf("Busy: %v, 404 must warn and continue", err)
 	} else if len(report.Sources) != 1 || report.Sources[0].Status != SourceSkipped404 {
 		t.Fatalf("sources = %+v", report.Sources)
@@ -241,7 +240,7 @@ func TestMultiAuthFailureFailsTheRun(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	if _, _, _, err := m.Busy(context.Background(), g, now); err == nil {
+	if _, _, _, err := m.Busy(t.Context(), g, now); err == nil {
 		t.Fatal("Busy succeeded, want the 500 to fail the run")
 	}
 }
@@ -253,7 +252,7 @@ func TestWriteFailureFailsTheRun(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	if _, _, _, err := m.Busy(context.Background(), g, now); err == nil {
+	if _, _, _, err := m.Busy(t.Context(), g, now); err == nil {
 		t.Fatal("Busy succeeded, want the write 403 to fail the run")
 	}
 }
@@ -265,7 +264,7 @@ func TestWrite401HintsReauth(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	_, _, _, err = m.Busy(context.Background(), g, now)
+	_, _, _, err = m.Busy(t.Context(), g, now)
 	if err == nil {
 		t.Fatal("Busy succeeded, want the write 401 to fail the run")
 	}
@@ -289,7 +288,7 @@ func TestRead401FailsWithCalendarName(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	_, _, _, err = m.Busy(context.Background(), g, now)
+	_, _, _, err = m.Busy(t.Context(), g, now)
 	if err == nil {
 		t.Fatal("Busy succeeded, want the read 401 to fail the run (only 403/404 warn)")
 	}
@@ -308,7 +307,7 @@ func TestWriteTransportInvalidGrantHintsReauth(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	_, _, _, err = m.Busy(context.Background(), g, now)
+	_, _, _, err = m.Busy(t.Context(), g, now)
 	if err == nil {
 		t.Fatal("Busy succeeded, want the revoked refresh to fail")
 	}
@@ -339,7 +338,7 @@ func TestReadRulesMatchWrite(t *testing.T) {
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	mask, _, _, err := m.Busy(context.Background(), g, now)
+	mask, _, _, err := m.Busy(t.Context(), g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v", err)
 	}
@@ -407,7 +406,7 @@ func readMask(t *testing.T, fa *multiFake, opt ReadOptions) (*grid.Grid, grid.Ma
 		t.Fatalf("NewMultiClient: %v", err)
 	}
 	g, now, _ := busyFixture(t)
-	mask, _, report, err := m.Busy(context.Background(), g, now)
+	mask, _, report, err := m.Busy(t.Context(), g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v", err)
 	}

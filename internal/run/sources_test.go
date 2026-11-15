@@ -1,7 +1,6 @@
 package run_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +45,7 @@ func TestReadSourcesMerges(t *testing.T) {
 		graphSource("work", 0, primary, "deep-work"),
 		graphSource("family", 1, secondary, ""),
 	}
-	res, err := run.ReadSources(context.Background(), sources, "Time Maps", london)
+	res, err := run.ReadSources(t.Context(), sources, "Time Maps", london)
 	if err != nil {
 		t.Fatalf("ReadSources: %v", err)
 	}
@@ -84,7 +83,7 @@ func TestReadSourcesRefusesDuplicateTaskIDs(t *testing.T) {
 			},
 		},
 	}
-	_, err := run.ReadSources(context.Background(), []run.Source{
+	_, err := run.ReadSources(t.Context(), []run.Source{
 		graphSource("work", 0, primary, "deep-work"),
 		graphSource("family", 1, secondary, ""),
 	}, "Time Maps", london)
@@ -114,7 +113,7 @@ func TestForecastPlansAcrossGraphs(t *testing.T) {
 	}
 	cfg := testConfig()
 	now := at(9, 8, 0)
-	outcome, err := run.ForecastSources(context.Background(), []run.Source{
+	outcome, err := run.ForecastSources(t.Context(), []run.Source{
 		graphSource("work", 0, primary, "deep-work"),
 		graphSource("family", 1, secondary, "deep-work"),
 	}, nil, cfg, now)

@@ -1,7 +1,6 @@
 package calendar
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -78,7 +77,7 @@ func TestInsertPatchDeleteRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	loc := london(t)
 	start := at(9, 9, 0, loc)
 	end := at(9, 9, 30, loc)
@@ -137,7 +136,7 @@ func TestWriteErrorSurfacesMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.Insert(context.Background(), Event{ID: "x"}); err == nil ||
+	if _, err := c.Insert(t.Context(), Event{ID: "x"}); err == nil ||
 		!strings.Contains(err.Error(), "calendar is read-only") {
 		t.Fatalf("Insert err = %v, want the API message", err)
 	}

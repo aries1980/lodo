@@ -140,3 +140,36 @@ func TestResolveMissingPathFallsBack(t *testing.T) {
 		t.Fatalf("warn = %q", warn)
 	}
 }
+
+func TestResolveThemeByName(t *testing.T) {
+	cfg := t.TempDir()
+	dir := filepath.Join(cfg, "lodo", "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: acme\ncli:\n  green: \"#00FF00\"\ntui:\n  ok: \"#00FF00\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "acme.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("HOME", cfg)
+
+	th, warn := theme.Resolve("acme", cfg)
+	if warn != "" {
+		t.Fatalf("warn = %q", warn)
+	}
+	if th.Name != "acme" {
+		t.Fatalf("name = %q, want acme", th.Name)
+	}
+	if th.Palette.Ok != "#00FF00" {
+		t.Fatalf("ok = %q", th.Palette.Ok)
+	}
+
+	th, warn = theme.Resolve("..", cfg)
+	if !th.Concrete {
+		t.Fatal("a bare .. must not resolve")
+	}
+	if !strings.Contains(warn, "unknown theme") {
+		t.Fatalf("warn = %q", warn)
+	}
+}

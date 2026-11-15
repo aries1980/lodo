@@ -21,6 +21,7 @@ import (
 )
 
 type tuiWorld struct {
+	ctx  context.Context
 	srv  *httptest.Server
 	conf string
 
@@ -188,7 +189,7 @@ func (w *tuiWorld) loadData() (tui.Data, error) {
 	if err != nil {
 		return tui.Data{}, err
 	}
-	return tui.Load(context.Background(), cfg, sources)
+	return tui.Load(w.ctx, cfg, sources)
 }
 
 func (w *tuiWorld) saveEdit(content string) error {
@@ -213,7 +214,7 @@ func (w *tuiWorld) saveEdit(content string) error {
 	}
 	for _, s := range data.Sources {
 		if s.Name == data.GraphOf[id] {
-			return s.Client.UpdateBlock(context.Background(), id, content)
+			return s.Client.UpdateBlock(w.ctx, id, content)
 		}
 	}
 	return fmt.Errorf("no source for graph")
@@ -343,7 +344,7 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 		}
 		for _, s := range data.Sources {
 			if s.Name == data.GraphOf[w.editUUID] {
-				if err := s.Client.UpdateBlock(context.Background(), w.editUUID, w.editContent); err != nil {
+				if err := s.Client.UpdateBlock(w.ctx, w.editUUID, w.editContent); err != nil {
 					return err
 				}
 			}
@@ -378,7 +379,7 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 }
 
 func TestTUIBehavior(t *testing.T) {
-	w := &tuiWorld{}
+	w := &tuiWorld{ctx: t.Context()}
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(s *godog.ScenarioContext) {
 			registerTUISteps(s, w)

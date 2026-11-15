@@ -36,7 +36,7 @@ func highlightInline(s string, st styles) string {
 func Highlight(content string, th theme.Theme) string {
 	st := stylesFor(th)
 	var b strings.Builder
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		if strings.HasPrefix(line, "# lodo-tui:") {
 			b.WriteString(st.hint.Render(line))
 			b.WriteByte('\n')

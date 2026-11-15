@@ -1,7 +1,6 @@
 package logseq_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -81,7 +80,7 @@ func TestPages(t *testing.T) {
 		return testdataBody(t, "pages.json"), http.StatusOK
 	})
 
-	pages, err := client.Pages(context.Background())
+	pages, err := client.Pages(t.Context())
 	if err != nil {
 		t.Fatalf("Pages: %v", err)
 	}
@@ -111,7 +110,7 @@ func TestPageFoundAndMissing(t *testing.T) {
 		return testdataBody(t, "page-journal.json"), http.StatusOK
 	})
 
-	page, err := client.Page(context.Background(), "2026-10-15")
+	page, err := client.Page(t.Context(), "2026-10-15")
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -119,7 +118,7 @@ func TestPageFoundAndMissing(t *testing.T) {
 		t.Fatalf("page = %+v, want the captured shape with nil properties", page)
 	}
 
-	page, err = client.Page(context.Background(), "ghost")
+	page, err = client.Page(t.Context(), "ghost")
 	if err != nil {
 		t.Fatalf("Page(ghost): %v", err)
 	}
@@ -144,7 +143,7 @@ func TestTree(t *testing.T) {
 		}
 	})
 
-	tree, err := client.Tree(context.Background(), "2026-10-15")
+	tree, err := client.Tree(t.Context(), "2026-10-15")
 	if err != nil {
 		t.Fatalf("Tree: %v", err)
 	}
@@ -185,10 +184,10 @@ func TestTree(t *testing.T) {
 		t.Fatalf("Tree mismatch (-want +got):\n%s", diff)
 	}
 
-	if tree, _ := client.Tree(context.Background(), "empty"); tree != nil {
+	if tree, _ := client.Tree(t.Context(), "empty"); tree != nil {
 		t.Fatalf("Tree(empty) = %+v, want nil", tree)
 	}
-	if tree, _ := client.Tree(context.Background(), "missing"); tree != nil {
+	if tree, _ := client.Tree(t.Context(), "missing"); tree != nil {
 		t.Fatalf("Tree(missing) = %+v, want nil", tree)
 	}
 }
@@ -198,7 +197,7 @@ func TestAppErrorSurfaces(t *testing.T) {
 		return `{"error": "Access Denied"}`, http.StatusInternalServerError
 	})
 
-	_, err := client.Pages(context.Background())
+	_, err := client.Pages(t.Context())
 	if err == nil {
 		t.Fatal("Pages succeeded against an erroring app")
 	}
@@ -212,7 +211,7 @@ func TestHTTPErrorSurfacesBody(t *testing.T) {
 		return "the graph is closed", http.StatusBadGateway
 	})
 
-	_, err := client.Pages(context.Background())
+	_, err := client.Pages(t.Context())
 	if err == nil {
 		t.Fatal("Pages succeeded against a broken app")
 	}
@@ -238,14 +237,14 @@ func TestUnreachableApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Pages(context.Background())
+	_, err = client.Pages(t.Context())
 	if err == nil {
 		t.Fatal("Pages succeeded against a dead app")
 	}
 	if !strings.Contains(err.Error(), "logseq api") {
 		t.Fatalf("error = %q, want the logseq api prefix", err.Error())
 	}
-	if err := client.Ping(context.Background()); err == nil {
+	if err := client.Ping(t.Context()); err == nil {
 		t.Fatal("Ping succeeded against a dead app")
 	} else if !strings.Contains(err.Error(), "logseq api") {
 		t.Fatalf("Ping error = %q, want the logseq api prefix", err.Error())
@@ -257,7 +256,7 @@ func TestPing(t *testing.T) {
 		return `[{"name":"Time Maps","uuid":"tm"}]`, http.StatusOK
 	})
 
-	if err := client.Ping(context.Background()); err != nil {
+	if err := client.Ping(t.Context()); err != nil {
 		t.Fatalf("Ping: %v", err)
 	}
 	if len(*calls) != 1 || (*calls)[0].Method != "logseq.Editor.get_all_pages" {
@@ -281,7 +280,7 @@ func TestAccessTokenRequired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Pages(context.Background()); err == nil || !denied {
+	if _, err := client.Pages(t.Context()); err == nil || !denied {
 		t.Fatalf("Pages err = %v, denied=%v; a missing token must reach the app as no token", err, denied)
 	}
 }
@@ -304,7 +303,7 @@ func TestTLSUnknownAuthorityHintsAtInsecure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Pages(context.Background())
+	_, err = client.Pages(t.Context())
 	if err == nil {
 		t.Fatal("Pages succeeded against a self-signed TLS server with verification on")
 	}
@@ -342,7 +341,7 @@ func TestInsecureTransportSkipsVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pages, err := client.Pages(context.Background())
+	pages, err := client.Pages(t.Context())
 	if err != nil {
 		t.Fatalf("Pages with skipped verification: %v", err)
 	}
@@ -368,7 +367,7 @@ func TestWriteMethodsShapeAndDecode(t *testing.T) {
 			return "unexpected method", http.StatusNotFound
 		}
 	})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	p, err := client.CreatePage(ctx, "Time Maps")
 	if err != nil {

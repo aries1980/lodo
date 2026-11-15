@@ -1,7 +1,6 @@
 package calendar
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -114,7 +113,7 @@ func TestListPaginatesAndEscapesTheCalendarID(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	events, err := c.List(context.Background(), at(9, 8, 0, loc), at(11, 0, 0, loc))
+	events, err := c.List(t.Context(), at(9, 8, 0, loc), at(11, 0, 0, loc))
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -172,14 +171,14 @@ func TestGetByIDAndNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	e, err := c.Get(context.Background(), "e-one")
+	e, err := c.Get(t.Context(), "e-one")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	if e.ID != "e-one" {
 		t.Fatalf("Get id = %q", e.ID)
 	}
-	if _, err := c.Get(context.Background(), "absent"); err == nil ||
+	if _, err := c.Get(t.Context(), "absent"); err == nil ||
 		!strings.Contains(err.Error(), "no such event") {
 		t.Fatalf("Get(absent) = %v, want the 404's message", err)
 	}
@@ -191,7 +190,7 @@ func TestAPIErrorSurfacesTheMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.List(context.Background(), london32(t), london32(t).Add(time.Hour)); err == nil ||
+	if _, err := c.List(t.Context(), london32(t), london32(t).Add(time.Hour)); err == nil ||
 		!strings.Contains(err.Error(), "your calendar is not shared") ||
 		!strings.Contains(err.Error(), "403") {
 		t.Fatalf("List err = %v, want the calendar's own message", err)
@@ -333,7 +332,7 @@ func TestBusyProjectsTheGoldenMask(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	mask, managed, report, err := c.Busy(context.Background(), g, now)
+	mask, managed, report, err := c.Busy(t.Context(), g, now)
 	if err != nil {
 		t.Fatalf("Busy: %v", err)
 	}
@@ -379,7 +378,7 @@ func TestBusyRefusesAnUntruthfulCalendar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, _, _, err := c.Busy(context.Background(), g, now); err == nil ||
+	if _, _, _, err := c.Busy(t.Context(), g, now); err == nil ||
 		!strings.Contains(err.Error(), "broken") {
 		t.Fatalf("Busy = %v, want a time-parse refusal, not a silent hole", err)
 	}
@@ -402,7 +401,7 @@ func TestTransportInvalidGrantHintsReauth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	_, err = c.List(context.Background(), london32(t), london32(t).Add(time.Hour))
+	_, err = c.List(t.Context(), london32(t), london32(t).Add(time.Hour))
 	if err == nil {
 		t.Fatal("List succeeded, want the revoked refresh to fail")
 	}
@@ -425,7 +424,7 @@ func TestAPI401HintsReauth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	_, err = c.List(context.Background(), london32(t), london32(t).Add(time.Hour))
+	_, err = c.List(t.Context(), london32(t), london32(t).Add(time.Hour))
 	if err == nil {
 		t.Fatal("List succeeded, want the 401 to fail")
 	}

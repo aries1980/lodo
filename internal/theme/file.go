@@ -2,7 +2,9 @@ package theme
 
 import (
 	"embed"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -161,6 +163,18 @@ func ParseFile(path string) (Theme, error) {
 	return th, nil
 }
 
+func parseRootFile(root *os.Root, name string) (Theme, error) {
+	data, err := root.ReadFile(name)
+	if err != nil {
+		return Theme{}, err
+	}
+	th, err := ParseBytes(data)
+	if err != nil {
+		return Theme{}, fmt.Errorf("%s: %w", filepath.Join(root.Name(), name), err)
+	}
+	return th, nil
+}
+
 func cliSpecToSGR(spec string, isAttr bool) (string, error) {
 	s := strings.TrimSpace(spec)
 	if s == "" {
@@ -283,18 +297,23 @@ func Resolve(value, configDir string) (Theme, string) {
 		return For(Concrete), ""
 	}
 	if !looksLikePath(v) {
-		if th, ok := shipped(Normalize(v)); ok {
+		name := Normalize(v)
+		if th, ok := shipped(name); ok {
 			return th, ""
 		}
 		for _, dir := range themeDirs() {
-			p := filepath.Join(dir, Normalize(v)+".yaml")
-			if _, err := os.Stat(p); err == nil {
-				if th, err := ParseFile(p); err == nil {
-					th.Name = Normalize(v)
-					return th, ""
-				} else {
-					return For(Concrete), fmt.Sprintf("ui.theme %q: %s; falling back to concrete", v, strings.TrimSpace(err.Error()))
-				}
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				continue
+			}
+			th, err := parseRootFile(root, name+".yaml")
+			_ = root.Close()
+			if err == nil {
+				th.Name = name
+				return th, ""
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
+				return For(Concrete), fmt.Sprintf("ui.theme %q: %s; falling back to concrete", v, strings.TrimSpace(err.Error()))
 			}
 		}
 		return For(Concrete), fmt.Sprintf("ui.theme %q: unknown theme; falling back to concrete", v)
