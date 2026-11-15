@@ -92,7 +92,7 @@ jobs:
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          path: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          file: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
           format: spdx-json
           output-file: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
           upload-artifact: false
