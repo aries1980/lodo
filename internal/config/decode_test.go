@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -260,7 +261,11 @@ func TestEmptyFileReportsConfigPath(t *testing.T) {
 	}
 }
 
-func TestConfigSectionsHaveYAMLTags(t *testing.T) {
+// yamlTagProblems reports every field the decoder would silently ignore: a
+// missing tag, a duplicate tag within one struct, or a section that is not a
+// struct. An explicit yaml:"-" opts a field and its nested types out.
+func yamlTagProblems(root reflect.Type) []string {
+	var problems []string
 	seen := map[reflect.Type]bool{}
 
 	var walk func(reflect.Type)
@@ -270,18 +275,21 @@ func TestConfigSectionsHaveYAMLTags(t *testing.T) {
 		}
 		seen[typ] = true
 		if typ.Kind() != reflect.Struct {
-			t.Errorf("%s: want a struct", typ)
+			problems = append(problems, fmt.Sprintf("%s: want a struct", typ))
 			return
 		}
 		tags := map[string]string{}
 		for f := range typ.Fields() {
 			tag, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
-			if tag == "" || tag == "-" {
-				t.Errorf("%s.%s: missing yaml tag", typ.Name(), f.Name)
+			switch tag {
+			case "":
+				problems = append(problems, fmt.Sprintf("%s.%s: missing yaml tag", typ.Name(), f.Name))
+				continue
+			case "-":
 				continue
 			}
 			if prev, ok := tags[tag]; ok {
-				t.Errorf("%s: yaml tag %q is used by both %s and %s", typ.Name(), tag, prev, f.Name)
+				problems = append(problems, fmt.Sprintf("%s: yaml tag %q is used by both %s and %s", typ.Name(), tag, prev, f.Name))
 			}
 			tags[tag] = f.Name
 
@@ -295,5 +303,45 @@ func TestConfigSectionsHaveYAMLTags(t *testing.T) {
 		}
 	}
 
-	walk(reflect.TypeOf(config.Config{}))
+	walk(root)
+	return problems
+}
+
+func TestConfigSectionsHaveYAMLTags(t *testing.T) {
+	if problems := yamlTagProblems(reflect.TypeOf(config.Config{})); len(problems) > 0 {
+		t.Fatalf("yaml tags:\n%s", strings.Join(problems, "\n"))
+	}
+}
+
+func TestYAMLTagsAllowExplicitExclusion(t *testing.T) {
+	type unkeyed struct {
+		Value string
+	}
+	type fixture struct {
+		Keyed    string  `yaml:"keyed"`
+		Excluded unkeyed `yaml:"-"`
+	}
+	if problems := yamlTagProblems(reflect.TypeOf(fixture{})); len(problems) > 0 {
+		t.Fatalf("yaml tags:\n%s", strings.Join(problems, "\n"))
+	}
+}
+
+func TestYAMLTagsRejectBadFields(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  reflect.Type
+	}{
+		{"missing tag", reflect.TypeOf(struct{ Value string }{})},
+		{"duplicate tag", reflect.TypeOf(struct {
+			One string `yaml:"value"`
+			Two string `yaml:"value"`
+		}{})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if problems := yamlTagProblems(tt.typ); len(problems) == 0 {
+				t.Fatalf("yamlTagProblems(%s) accepted the fixture", tt.typ)
+			}
+		})
+	}
 }
