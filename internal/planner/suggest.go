@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/set"
 )
@@ -50,32 +51,39 @@ const (
 	thinDayMinutes = 240
 	// thinDaysToName is how many weekdays the advice names.
 	thinDaysToName = 2
+	// weeklyDays is the span the capacity estimate averages over. It is fixed
+	// rather than WindowDays because the advice quotes a weekly rate.
+	weeklyDays = 7
 )
 
-// suggestInput is the planner input plus the report and cycle set that
-// suggestions are derived from.
+// suggestInput is the planner input plus the report, cycle set and derived
+// lookups that suggestions are computed from.
 type suggestInput struct {
 	Input
-	report   Report
-	cycleSet set.Set[string]
+	report     Report
+	cycleSet   set.Set[string]
+	maps       map[string]model.TimeMap
+	capacity   *grid.Grid
+	today      model.CivilDate
+	horizonEnd model.CivilDate
 }
 
 func Suggest(in Input, schedule Schedule, cycleSet set.Set[string]) []Suggestion {
-	s := suggestInput{Input: in, report: schedule.Report, cycleSet: cycleSet}
+	s := suggestInput{
+		Input:    in,
+		report:   schedule.Report,
+		cycleSet: cycleSet,
+		maps:     indexTimeMaps(in.TimeMaps),
+	}
+	s.today = model.CivilDateOf(s.Now.In(s.Location))
+	s.horizonEnd = s.today.AddDays(s.WindowDays)
+	// Capacity is a nominal week of authored hours, not free time from Now:
+	// busy time and the current day's elapsed hours are placement concerns.
+	s.capacity = grid.Build(s.Now, s.Location, s.Granularity, weeklyDays)
 	byID := make(map[string]model.Task, len(s.Tasks))
 	for _, t := range s.Tasks {
 		byID[t.ID] = t
 	}
-	mapsBySlug := make(map[string]model.TimeMap, len(s.TimeMaps))
-	var defaults []model.TimeMap
-	for _, m := range s.TimeMaps {
-		mapsBySlug[m.Slug] = m
-		if m.Default {
-			defaults = append(defaults, m)
-		}
-	}
-	today := model.CivilDateOf(s.Now.In(s.Location))
-	horizonEnd := today.AddDays(s.WindowDays)
 	var out []Suggestion
 	for _, r := range s.report.Tasks {
 		if r.Shortfall <= 0 {
@@ -101,11 +109,11 @@ func Suggest(in Input, schedule Schedule, cycleSet set.Set[string]) []Suggestion
 				Change: "restore stood-down block(s)", Impact: "reclaims user-deleted time",
 			})
 		}
-		if authoring, done := suggestAuthoring(r, task, mapsBySlug); done {
+		if authoring, done := suggestAuthoring(r, task, s.maps); done {
 			out = append(out, authoring...)
 			continue
 		}
-		out = append(out, suggestCapacity(r, task, s, mapsBySlug, defaults, today, horizonEnd)...)
+		out = append(out, suggestCapacity(r, task, s)...)
 	}
 	slices.SortFunc(out, func(a, b Suggestion) int {
 		return cmp.Or(cmp.Compare(a.TaskID, b.TaskID), cmp.Compare(a.Reason, b.Reason))
@@ -167,8 +175,8 @@ func suggestBlocked(r TaskReport, task model.Task, byID map[string]model.Task, c
 
 // suggestAuthoring handles map/plan authoring issues that mask capacity.
 // It reports done=true when capacity relief must not also be suggested.
-func suggestAuthoring(r TaskReport, task model.Task, mapsBySlug map[string]model.TimeMap) ([]Suggestion, bool) {
-	if unknowns := unknownMapSlugs(task, mapsBySlug); len(unknowns) > 0 {
+func suggestAuthoring(r TaskReport, task model.Task, maps map[string]model.TimeMap) ([]Suggestion, bool) {
+	if unknowns := unknownMapSlugs(task, maps); len(unknowns) > 0 {
 		return []Suggestion{{
 			TaskID: r.TaskID, Reason: SuggestFixTimeMap,
 			Change: fmt.Sprintf("fix time-map:: %s (unknown)", strings.Join(unknowns, ", ")),
@@ -181,7 +189,8 @@ func suggestAuthoring(r TaskReport, task model.Task, mapsBySlug map[string]model
 // suggestCapacity emits the capacity-relief advice for a task whose blockers
 // and authoring are already resolved: optional spill, optional plan-end
 // extension, plus duration and Time Map hour relief.
-func suggestCapacity(r TaskReport, task model.Task, in suggestInput, mapsBySlug map[string]model.TimeMap, defaults []model.TimeMap, today, horizonEnd model.CivilDate) []Suggestion {
+func suggestCapacity(r TaskReport, task model.Task, in suggestInput) []Suggestion {
+	sets := newTimeMapSets(task, in.maps)
 	var out []Suggestion
 	if task.Deadline != nil && task.PlanStart == nil && task.PlanEnd == nil {
 		out = append(out, Suggestion{
@@ -192,20 +201,20 @@ func suggestCapacity(r TaskReport, task model.Task, in suggestInput, mapsBySlug 
 		// Fall through: deadline task is flexible, so extend is skipped
 		// below, but spill/reduce/hours may still apply.
 	}
-	if task.PlanEnd != nil && task.PlanEnd.Before(today) {
-		out = append(out, addHoursSuggestion(task, mapsBySlug, defaults, "adds capacity for overdue task", r.TaskID))
+	if task.PlanEnd != nil && task.PlanEnd.Before(in.today) {
+		out = append(out, addHoursSuggestion(sets, "adds capacity for overdue task", r.TaskID))
 		out = append(out, reduceDurationSuggestion(r, task, in.Granularity))
 		return out
 	}
-	if spill := spillSuggestion(task, mapsBySlug, defaults); spill != nil {
+	if spill := spillSuggestion(sets); spill != nil {
 		spill.TaskID = r.TaskID
 		out = append(out, *spill)
 	}
-	if task.PlanEnd != nil && planEndBoundsPlacement(*task.PlanEnd, horizonEnd) {
-		out = append(out, extendPlanEndSuggestion(r, task, in, mapsBySlug, defaults))
+	if task.PlanEnd != nil && planEndBoundsPlacement(*task.PlanEnd, in.horizonEnd) {
+		out = append(out, extendPlanEndSuggestion(r, task, in, sets))
 	}
 	out = append(out, reduceDurationSuggestion(r, task, in.Granularity))
-	out = append(out, addHoursSuggestion(task, mapsBySlug, defaults, "adds capacity", r.TaskID))
+	out = append(out, addHoursSuggestion(sets, "adds capacity", r.TaskID))
 	return out
 }
 
@@ -258,101 +267,17 @@ func reduceDurationSuggestion(r TaskReport, task model.Task, granularity time.Du
 	}
 }
 
-func primaryMaps(task model.Task, mapsBySlug map[string]model.TimeMap) []model.TimeMap {
-	if len(task.TimeMaps) == 0 {
-		return nil
-	}
-	var out []model.TimeMap
-	for _, slug := range task.TimeMaps {
-		if m, ok := mapsBySlug[slug]; ok {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
-func fallbackMaps(task model.Task, mapsBySlug map[string]model.TimeMap, defaults []model.TimeMap) []model.TimeMap {
-	if len(defaults) == 0 {
-		return nil
-	}
-	primarySlugs := set.New[string]()
-	for _, slug := range task.TimeMaps {
-		if _, ok := mapsBySlug[slug]; ok {
-			primarySlugs.Add(slug)
-		}
-	}
-	var out []model.TimeMap
-	for _, d := range defaults {
-		if !primarySlugs.Has(d.Slug) {
-			out = append(out, d)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// eligibleWeeklyMinutes sums minutes the task may actually use: all primary
-// windows plus fallback windows at the same tier or worse (never upward).
-func eligibleWeeklyMinutes(task model.Task, mapsBySlug map[string]model.TimeMap, defaults []model.TimeMap) int {
-	primary := primaryMaps(task, mapsBySlug)
-	if len(task.TimeMaps) == 0 {
-		// No explicit map: primary is the default set.
-		return weeklyMinutesFor(defaults, -1)
-	}
-	if len(primary) == 0 {
-		return 0
-	}
-	best := bestTierRank(primary)
-	total := weeklyMinutesFor(primary, -1)
-	fallback := fallbackMaps(task, mapsBySlug, defaults)
-	total += weeklyMinutesFor(fallback, best)
-	return total
-}
-
-func weeklyMinutesFor(maps []model.TimeMap, minRank int) int {
-	total := 0
-	for _, m := range maps {
-		for _, w := range m.Windows {
-			if minRank >= 0 && tierRank(windowTier(w)) < minRank {
-				continue
-			}
-			days := len(w.Days)
-			if days == 0 {
-				continue
-			}
-			total += days * (w.EndMinute - w.StartMinute)
-		}
-	}
-	return total
-}
-
-func extendPlanEndSuggestion(r TaskReport, task model.Task, in suggestInput, mapsBySlug map[string]model.TimeMap, defaults []model.TimeMap) Suggestion {
+func extendPlanEndSuggestion(r TaskReport, task model.Task, in suggestInput, sets timeMapSets) Suggestion {
 	days := suggestMinExtendDays
 	if r.Shortfall > suggestExtendShortfallThreshold {
-		eligibleMin := eligibleWeeklyMinutes(task, mapsBySlug, defaults)
-		if eligibleMin > 0 {
-			shortMin := float64(r.Shortfall) * in.Granularity.Minutes()
-			dailyAvg := float64(eligibleMin) / 7.0
-			if dailyAvg > 0 {
-				need := int((shortMin + dailyAvg - 1) / dailyAvg)
-				if need < suggestMinExtendDays {
-					need = suggestMinExtendDays
-				}
-				if need > suggestMaxExtendDays {
-					need = suggestMaxExtendDays
-				}
-				days = need
-			}
+		if weekly := sets.eligibleSlots(in.capacity); weekly > 0 {
+			need := (r.Shortfall*weeklyDays + weekly - 1) / weekly
+			days = min(max(need, suggestMinExtendDays), suggestMaxExtendDays)
 		}
 	}
 	tier := "green"
-	if len(task.TimeMaps) > 0 {
-		primary := primaryMaps(task, mapsBySlug)
-		if len(primary) > 0 {
-			tier = string(tierByRank(bestTierRank(primary)))
-		}
+	if len(task.TimeMaps) > 0 && len(sets.primary) > 0 {
+		tier = string(tierByRank(sets.best))
 	}
 	return Suggestion{
 		TaskID: r.TaskID, Reason: SuggestExtendPlanEnd,
@@ -365,10 +290,9 @@ func extendPlanEndSuggestion(r TaskReport, task model.Task, in suggestInput, map
 // addHoursSuggestion names the thinnest weekdays in the eligible set so the
 // advice is actionable (issue #3: add/shift hours on specific days).
 // Only windows the task may use count: primaries in full plus fallback
-// windows at the same tier or worse, matching eligibleWeeklyMinutes.
-func addHoursSuggestion(task model.Task, mapsBySlug map[string]model.TimeMap, defaults []model.TimeMap, impact, taskID string) Suggestion {
-	eligible := eligibleMapsForHours(task, mapsBySlug, defaults)
-	days := thinnestWeekdays(eligible, thinDaysToName)
+// windows at the same tier or worse, the set timeMapSets owns.
+func addHoursSuggestion(sets timeMapSets, impact, taskID string) Suggestion {
+	days := thinnestWeekdays(sets.mapsForHours(), thinDaysToName)
 	var change string
 	if len(days) == 0 {
 		change = "add Time Map hours on free days"
@@ -383,38 +307,6 @@ func addHoursSuggestion(task model.Task, mapsBySlug map[string]model.TimeMap, de
 		TaskID: taskID, Reason: SuggestAddTimeMapHours,
 		Change: change, Impact: impact,
 	}
-}
-
-// eligibleMapsForHours returns the maps (with windows already filtered to
-// usable tiers) that thinnestWeekdays should consider.
-func eligibleMapsForHours(task model.Task, mapsBySlug map[string]model.TimeMap, defaults []model.TimeMap) []model.TimeMap {
-	if len(task.TimeMaps) == 0 {
-		return defaults
-	}
-	primary := primaryMaps(task, mapsBySlug)
-	if len(primary) == 0 {
-		return defaults
-	}
-	best := bestTierRank(primary)
-	out := append([]model.TimeMap(nil), primary...)
-	for _, fb := range fallbackMaps(task, mapsBySlug, defaults) {
-		filtered := filterWindowsByMinRank(fb, best)
-		if len(filtered.Windows) > 0 {
-			out = append(out, filtered)
-		}
-	}
-	return out
-}
-
-func filterWindowsByMinRank(m model.TimeMap, minRank int) model.TimeMap {
-	out := model.TimeMap{Slug: m.Slug, Default: m.Default}
-	for _, w := range m.Windows {
-		if tierRank(windowTier(w)) < minRank {
-			continue
-		}
-		out.Windows = append(out.Windows, w)
-	}
-	return out
 }
 
 func thinnestWeekdays(maps []model.TimeMap, n int) []time.Weekday {
@@ -460,28 +352,12 @@ func thinnestWeekdays(maps []model.TimeMap, n int) []time.Weekday {
 	return ordered[:n]
 }
 
-func spillSuggestion(task model.Task, maps map[string]model.TimeMap, defaults []model.TimeMap) *Suggestion {
-	if len(task.TimeMaps) == 0 || len(defaults) == 0 {
+func spillSuggestion(sets timeMapSets) *Suggestion {
+	if len(sets.fallback) == 0 {
 		return nil
 	}
-	primary := primaryMaps(task, maps)
-	if len(primary) == 0 {
-		return nil
-	}
-	best := bestTierRank(primary)
 	hasGreen, hasYellow, hasRed := false, false, false
-	for _, d := range defaults {
-		// Skip the primary itself if it is also marked default.
-		isPrimary := false
-		for _, p := range primary {
-			if p.Slug == d.Slug {
-				isPrimary = true
-				break
-			}
-		}
-		if isPrimary {
-			continue
-		}
+	for _, d := range sets.fallback {
 		for _, w := range d.Windows {
 			switch windowTier(w) {
 			case model.TierGreen:
@@ -495,7 +371,7 @@ func spillSuggestion(task model.Task, maps map[string]model.TimeMap, defaults []
 	}
 	// Spill is a heuristic over configured default tiers, not a placement
 	// guarantee: busy time or occupancy may still block it, hence "if free".
-	switch best {
+	switch sets.best {
 	case 0: // green task: same or worse
 		if hasGreen {
 			return &Suggestion{Reason: SuggestSpillToDefaultGreen, Change: "spill to default green", Impact: "uses default green hours if free", Tier: "green"}

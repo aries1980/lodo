@@ -9,6 +9,7 @@
 //   - run.go — planRun, the state one Plan call threads through its phases
 //   - taskplan.go — one Task's placement state and explain facts
 //   - order.go — dependency order (topoOrder)
+//   - timemapsets.go — which Time Maps a Task may use, and their tier masks
 //   - search.go — free-run search and Block emission
 //   - comparator.go — the ADR 0010 placement comparator
 //   - report.go — the dependency gate (placeOrdered) and the shortfall report

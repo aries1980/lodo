@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -313,6 +314,79 @@ func TestSuggestStoodDownSuppressedWhenBlocked(t *testing.T) {
 	}
 	if !hasReason(got, SuggestCompleteDependency) {
 		t.Fatalf("blocked task still wants blocker fix, got %+v", got)
+	}
+}
+
+// TestSuggestExtendDaysFromCapacity pins the day estimate to the weekly slots
+// placement may use. The sub-granularity row is the deliberate change: the old
+// minute arithmetic proposed a maximal extension for hours no Block can use.
+func TestSuggestExtendDaysFromCapacity(t *testing.T) {
+	tests := []struct {
+		name     string
+		maps     []model.TimeMap
+		wantDays int
+	}{
+		{
+			name: "one hour weekdays",
+			maps: []model.TimeMap{deepMap(
+				on(time.Monday, 9, 0, 10, 0),
+				on(time.Tuesday, 9, 0, 10, 0),
+				on(time.Wednesday, 9, 0, 10, 0),
+				on(time.Thursday, 9, 0, 10, 0),
+				on(time.Friday, 9, 0, 10, 0),
+			)},
+			wantDays: 5,
+		},
+		{
+			name: "two hour weekdays",
+			maps: []model.TimeMap{deepMap(
+				on(time.Monday, 9, 0, 11, 0),
+				on(time.Tuesday, 9, 0, 11, 0),
+				on(time.Wednesday, 9, 0, 11, 0),
+				on(time.Thursday, 9, 0, 11, 0),
+				on(time.Friday, 9, 0, 11, 0),
+			)},
+			wantDays: 3,
+		},
+		{
+			name:     "one hour monday",
+			maps:     []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))},
+			wantDays: 21,
+		},
+		{
+			name:     "single slot monday",
+			maps:     []model.TimeMap{deepMap(on(time.Monday, 9, 0, 9, 15))},
+			wantDays: suggestMaxExtendDays,
+		},
+		{
+			name:     "sub granularity window",
+			maps:     []model.TimeMap{deepMap(on(time.Monday, 9, 0, 9, 10))},
+			wantDays: suggestMinExtendDays,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			task := model.Task{ID: "t1", Text: "T", Marker: model.MarkerTODO, Duration: duration(240), TimeMaps: []string{"deep"}}
+			end := civil(9)
+			task.PlanEnd = &end
+			report := Report{Tasks: []TaskReport{{TaskID: "t1", Required: 16, Placed: 4, Shortfall: 12, Reason: ReasonPartialFit}}}
+			in, schedule := makeSuggestFixture([]model.Task{task}, tc.maps, report)
+			got := Suggest(in, schedule, nil)
+			for _, s := range got {
+				if s.Reason != SuggestExtendPlanEnd {
+					continue
+				}
+				if want := fmt.Sprintf("move plan-end by %d days", tc.wantDays); s.Change != want {
+					t.Fatalf("change = %q, want %q", s.Change, want)
+				}
+				if s.Tier != "green" {
+					t.Fatalf("tier = %q, want green", s.Tier)
+				}
+				return
+			}
+			t.Fatalf("want extend-plan-end, got %+v", got)
+		})
 	}
 }
 

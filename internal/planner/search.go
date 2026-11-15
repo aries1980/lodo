@@ -7,7 +7,6 @@ import (
 
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/model"
-	"github.com/aries1980/lodo/internal/set"
 )
 
 // builder accumulates Blocks while blocking their slots on busy.
@@ -95,28 +94,21 @@ func (b *builder) placeWithBound(plan *taskPlan, maps map[string]model.TimeMap, 
 
 	left := plan.required()
 	next := 0
-	primary, fallback := b.splitMaps(plan.task, maps)
-	best := bestTierRank(primary)
-	trace := TimeMaps{
-		Requested:     append([]string(nil), plan.task.TimeMaps...),
-		Primary:       mapSlugs(primary),
-		Fallback:      mapSlugs(fallback),
-		BestTier:      string(tierByRank(best)),
-		NoUpwardSpill: len(plan.task.TimeMaps) > 0 && len(primary) > 0 && fallback != nil,
-	}
+	sets := newTimeMapSets(plan.task, maps)
+	trace := sets.trace(plan.task.TimeMaps)
 	state := &tierState{
 		left: &left, next: &next, trace: &trace, window: window,
 		inside: insideMask(b.g, win.from, win.to), notBefore: b.g.NotBefore(win.bound),
 		floor: floor,
 	}
 
-	for _, tier := range []model.Tier{model.TierGreen, model.TierYellow, model.TierRed} {
+	for _, tier := range preferenceTiers {
 		if left == 0 {
 			break
 		}
-		b.placeTier(plan, state, b.eligibilityFor(primary, tier), tier, true, false)
-		if fallback != nil && tierRank(tier) >= best {
-			b.placeTier(plan, state, b.eligibilityFor(fallback, tier), tier, false, true)
+		b.placeTier(plan, state, sets.primaryMask(b.g, tier), tier, true, false)
+		if sets.fallbackAllowed(tier) {
+			b.placeTier(plan, state, sets.fallbackMask(b.g, tier), tier, false, true)
 		}
 	}
 	plan.shortfall = left
@@ -234,144 +226,6 @@ func eligibleRuns(g *grid.Grid, free grid.Mask, floor int) (runs []placementRun,
 		}
 	}
 	return runs, belowFloorRuns, belowFloorSlots
-}
-
-func mapSlugs(maps []model.TimeMap) []string {
-	if len(maps) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(maps))
-	for _, timeMap := range maps {
-		out = append(out, timeMap.Slug)
-	}
-	return out
-}
-
-func tierByRank(rank int) model.Tier {
-	switch rank {
-	case 1:
-		return model.TierYellow
-	case 2:
-		return model.TierRed
-	default:
-		return model.TierGreen
-	}
-}
-
-// splitMaps partitions the Time Maps a Task may use into its primary set and
-// its default fallback. A Task with no explicit time-map:: uses the default
-// maps with no fallback. A Task naming its own maps keeps those as primary
-// and spills into the default maps; unknown-only names resolve to nothing
-// and stay strict so the unknown-time-map issue is not masked.
-func (b *builder) splitMaps(t model.Task, maps map[string]model.TimeMap) (primary, fallback []model.TimeMap) {
-	var defaults []model.TimeMap
-	for _, timeMap := range maps {
-		if timeMap.Default {
-			defaults = append(defaults, timeMap)
-		}
-	}
-	if len(t.TimeMaps) == 0 {
-		return defaults, nil
-	}
-	primarySlugs := set.New[string]()
-	for _, slug := range t.TimeMaps {
-		if timeMap, ok := maps[slug]; ok {
-			primary = append(primary, timeMap)
-			primarySlugs.Add(timeMap.Slug)
-		}
-	}
-	if len(primary) == 0 {
-		return nil, nil
-	}
-	for _, timeMap := range defaults {
-		if !primarySlugs.Has(timeMap.Slug) {
-			fallback = append(fallback, timeMap)
-		}
-	}
-	if len(fallback) == 0 {
-		fallback = nil
-	}
-	return primary, fallback
-}
-
-// eligibilityFor returns the slots of one preference tier in the given map
-// set. A slot covered by two tiers takes the better one: yellow excludes
-// green, red excludes both.
-func (b *builder) eligibilityFor(selected []model.TimeMap, tier model.Tier) grid.Mask {
-	green := tierMask(b.g, selected, model.TierGreen)
-	switch tier {
-	case model.TierYellow:
-		return tierMask(b.g, selected, model.TierYellow).AndNot(green)
-	case model.TierRed:
-		return tierMask(b.g, selected, model.TierRed).AndNot(green).AndNot(tierMask(b.g, selected, model.TierYellow))
-	default:
-		return green
-	}
-}
-
-// tierMask is the union of windows of one tier. An empty or unknown tier
-// word counts as green, matching the parser's default.
-func tierMask(g *grid.Grid, maps []model.TimeMap, tier model.Tier) grid.Mask {
-	m := grid.NewMask(g.Len())
-	for _, timeMap := range maps {
-		filtered := model.TimeMap{Windows: windowsOfTier(timeMap.Windows, tier)}
-		if len(filtered.Windows) == 0 {
-			continue
-		}
-		m.OrInto(g.TimeMapMask(filtered))
-	}
-	return m
-}
-
-func windowsOfTier(windows []model.Window, tier model.Tier) []model.Window {
-	var out []model.Window
-	for _, w := range windows {
-		if windowTier(w) == tier {
-			out = append(out, w)
-		}
-	}
-	return out
-}
-
-func windowTier(w model.Window) model.Tier {
-	switch w.Tier {
-	case model.TierYellow, model.TierRed:
-		return w.Tier
-	default:
-		return model.TierGreen
-	}
-}
-
-// tierRank orders tiers by preference: green first, then yellow, then red.
-func tierRank(t model.Tier) int {
-	switch t {
-	case model.TierYellow:
-		return 1
-	case model.TierRed:
-		return 2
-	default:
-		return 0
-	}
-}
-
-// bestTierRank is the best (lowest-rank) tier in the given maps. A set with
-// no windows at all ranks green, so an empty project map tries the default
-// map from its green tier instead of shortfalling.
-func bestTierRank(maps []model.TimeMap) int {
-	best := 2
-	found := false
-	for _, timeMap := range maps {
-		for _, w := range timeMap.Windows {
-			if rank := tierRank(windowTier(w)); !found || rank < best {
-				best = rank
-				found = true
-			}
-		}
-	}
-	if !found {
-		return 0 // empty set: try the fallback from its best tier
-	}
-	return best
 }
 
 // sorted returns the blocks and explanations in chronological order; ties are
