@@ -1,14 +1,9 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,17 +11,15 @@ import (
 	"time"
 
 	"github.com/cucumber/godog"
-	"golang.org/x/oauth2"
 
 	"github.com/aries1980/lodo/internal/logseq"
 )
 
 type suggestionWorld struct {
-	logseqSrv *httptest.Server
-	calSrv    *httptest.Server
-	writes    []string
-	conf      string
-	fixture   string
+	t testing.TB
+
+	env     *e2e
+	fixture string
 
 	lastCode   int
 	lastStdout string
@@ -35,139 +28,43 @@ type suggestionWorld struct {
 }
 
 func (w *suggestionWorld) reset() {
-	if w.logseqSrv != nil {
-		w.logseqSrv.Close()
-		w.logseqSrv = nil
-	}
-	if w.calSrv != nil {
-		w.calSrv.Close()
-		w.calSrv = nil
+	if w.env != nil {
+		w.env.Close()
+		w.env = nil
 	}
 	w.lastCode = 0
 	w.lastStdout = ""
 	w.lastStderr = ""
 	w.secondOut = ""
-	w.writes = nil
-	w.conf = ""
 	w.fixture = ""
 }
 
-func nextFriday() string {
-	return dateOffset(1, time.Friday)
-}
-
-func yesterday() string {
-	loc, err := time.LoadLocation("Europe/London")
-	if err != nil {
-		loc = time.UTC
-	}
-	return time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
-}
-
-func plus30days() string {
-	loc, err := time.LoadLocation("Europe/London")
-	if err != nil {
-		loc = time.UTC
-	}
-	return time.Now().In(loc).AddDate(0, 0, 30).Format("2006-01-02")
-}
-
-func dateOffset(minAhead int, weekday time.Weekday) string {
-	loc, err := time.LoadLocation("Europe/London")
-	if err != nil {
-		loc = time.UTC
-	}
-	now := time.Now().In(loc)
-	d := now
-	for i := 0; i < 14; i++ {
-		d = d.AddDate(0, 0, 1)
-		if d.Weekday() == weekday && i+1 >= minAhead {
-			break
-		}
-	}
-	return d.Format("2006-01-02")
-}
-
 func (w *suggestionWorld) ensureHarness() error {
-	if w.conf != "" {
+	if w.env != nil {
 		return nil
 	}
 	tasks, maps := w.fixtureBlocks()
-	w.logseqSrv = newSuggestionLogseqServer(tasks, maps)
-	w.calSrv = httptest.NewServer(http.HandlerFunc(func(wr http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/token":
-			wr.Header().Set("Content-Type", "application/json")
-			_, _ = wr.Write([]byte(`{"access_token":"fake","token_type":"Bearer","expires_in":3600}`))
-			return
-		case strings.Contains(r.URL.Path, "/events"):
-			if r.Method == http.MethodGet {
-				wr.Header().Set("Content-Type", "application/json")
-				if w.fixture == "busy" {
-					_, _ = wr.Write([]byte(w.busyPayload()))
-					return
-				}
-				_, _ = wr.Write([]byte(`{"items":[]}`))
-				return
-			}
-			w.writes = append(w.writes, r.Method+" "+r.URL.Path)
-			wr.Header().Set("Content-Type", "application/json")
-			wr.WriteHeader(http.StatusCreated)
-			_, _ = wr.Write([]byte(`{}`))
-		default:
-			http.Error(wr, "unexpected path "+r.URL.Path, http.StatusNotFound)
-		}
-	}))
-	dir, err := os.MkdirTemp("", "lodo-godog")
+	env, err := newE2E(w.t, e2eOptions{Tasks: tasks, Maps: maps, Google: true})
 	if err != nil {
 		return err
 	}
-	conf := filepath.Join(dir, "lodo", "config.yaml")
-	if err := os.MkdirAll(filepath.Dir(conf), 0o700); err != nil {
-		return err
+	if w.fixture == "busy" {
+		env.Calendar.AddEvent(calendarEvent("busy-whole-window", "busy", e2eAt(-1, 0, 0), e2eAt(8, 0, 0), false))
 	}
-	body := fmt.Sprintf(`logseq:
-  api_url: %s/api
-  time_maps_page: Time Maps
-scheduling:
-  granularity: 15m
-  window_days: 7
-  timezone: Europe/London
-calendar:
-  provider: google
-  id: primary
-`, w.logseqSrv.URL)
-	if err := os.WriteFile(conf, []byte(body), 0o644); err != nil {
-		return err
-	}
-	cred := filepath.Join(dir, "lodo", "credentials.json")
-	if err := os.WriteFile(cred, []byte(
-		`{"logseq":{"token":"st-token"},"google":{"client_id":"cid","client_secret":"secret","refresh_token":"1//stored-refresh-token"}}`), 0o600); err != nil {
-		return err
-	}
-	if err := os.Setenv("XDG_CONFIG_HOME", dir); err != nil {
-		return err
-	}
-	if err := os.Setenv("XDG_STATE_HOME", dir); err != nil {
-		return err
-	}
-	if err := os.Setenv("HOME", dir); err != nil {
-		return err
-	}
-	googleEndpoint = oauth2.Endpoint{AuthURL: w.calSrv.URL + "/authorize", TokenURL: w.calSrv.URL + "/token"}
-	googleCalendarBase = w.calSrv.URL
-	w.conf = conf
+	w.env = env
 	return nil
 }
 
 func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
+	// deepThin is the shared thin map: one Friday hour, inside the Friday
+	// plan-end every thin fixture uses, so the Task is eligible but short.
 	deepThin := []*logseq.Block{
 		{
 			UUID:       "map-deep-uuid",
 			Content:    "Deep Work",
 			Properties: map[string]any{"default": true},
 			Children: []*logseq.Block{
-				{UUID: "w-uuid", Content: "Mon 09:00-10:00"},
+				{UUID: "w-uuid", Content: "Fri 09:00-10:00"},
 			},
 		},
 	}
@@ -179,7 +76,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "4h",
-					"plan-end": nextFriday(),
+					"plan-end": e2eFutureWeekday(time.Friday),
 					"time-map": "deep-work",
 				},
 			},
@@ -221,7 +118,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration":   "1h",
-					"plan-start": plus30days(),
+					"plan-start": e2eDay(30),
 				},
 			},
 		}
@@ -234,7 +131,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "4h",
-					"plan-end": yesterday(),
+					"plan-end": e2eDay(-1),
 					"time-map": "deep-work",
 				},
 			},
@@ -261,7 +158,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "4h",
-					"plan-end": nextFriday(),
+					"plan-end": e2eFutureWeekday(time.Friday),
 					"time-map": "deep-work",
 				},
 			},
@@ -271,7 +168,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "1h",
-					"plan-end": nextFriday(),
+					"plan-end": e2eFutureWeekday(time.Friday),
 					"time-map": "deep-work",
 					"depends":  "((11111111-1111-4111-8111-111111111111))",
 				},
@@ -286,7 +183,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "4h",
-					"plan-end": nextFriday(),
+					"plan-end": e2eFutureWeekday(time.Friday),
 					"time-map": "proj",
 				},
 			},
@@ -347,7 +244,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "4h",
-					"deadline": nextFriday(),
+					"deadline": e2eFutureWeekday(time.Friday),
 					"time-map": "deep-work",
 				},
 			},
@@ -361,7 +258,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "4h",
-					"plan-end": nextFriday(),
+					"plan-end": e2eFutureWeekday(time.Friday),
 					"time-map": "deep-work",
 				},
 			},
@@ -371,7 +268,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration":  "1h",
-					"scheduled": "<2026-11-09 Mon 09:30>",
+					"scheduled": e2ePin(1, 9, 30),
 					"depends":   "((11111111-1111-4111-8111-111111111111))",
 				},
 			},
@@ -385,7 +282,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "4h",
-					"plan-end": nextFriday(),
+					"plan-end": e2eFutureWeekday(time.Friday),
 					"time-map": "proj",
 				},
 			},
@@ -527,13 +424,13 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "2h",
-					"plan-end": nextFriday(),
+					"plan-end": e2eFutureWeekday(time.Friday),
 					"time-map": "deep-work",
 				},
 			},
 		}
 		// Without busy this map fits the 2h task (Mon-Fri 09:00-12:00);
-		// busyPayload blocks the whole window so the shortfall is
+		// the busy event blocks the whole window so the shortfall is
 		// genuinely busy-caused.
 		maps := []*logseq.Block{
 			{
@@ -554,7 +451,7 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 				Marker:  "TODO",
 				Properties: map[string]any{
 					"duration": "2h",
-					"plan-end": nextFriday(),
+					"plan-end": e2eFutureWeekday(time.Friday),
 					"time-map": "deep-work",
 				},
 			},
@@ -575,16 +472,6 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 	}
 }
 
-// busyPayload blocks the whole forecast window so the busy scenario's
-// shortfall is genuinely busy-caused: without these events the busy
-// fixture's Mon-Fri 09:00-12:00 map fits its 2h task.
-func (w *suggestionWorld) busyPayload() string {
-	now := time.Now()
-	start := now.AddDate(0, 0, -1).Format(time.RFC3339)
-	end := now.AddDate(0, 0, 8).Format(time.RFC3339)
-	return fmt.Sprintf(`{"items": [{"id":"busy-whole-window","status":"confirmed","start":{"dateTime":%q},"end":{"dateTime":%q}}]}`, start, end)
-}
-
 // wideDefaultMap is the day-independent default map for explain scenarios:
 // every weekday morning in the window, so the result does not depend on when
 // the suite runs.
@@ -601,54 +488,11 @@ func wideDefaultMap() []*logseq.Block {
 	}
 }
 
-func newSuggestionLogseqServer(tasks, maps []*logseq.Block) *httptest.Server {
-	taskRaw, _ := json.Marshal(tasks)
-	tmRaw, _ := json.Marshal(maps)
-	return httptest.NewServer(http.HandlerFunc(func(wr http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(wr, "POST", http.StatusMethodNotAllowed)
-			return
-		}
-		var req struct {
-			Method string `json:"method"`
-			Args   []any  `json:"args"`
-		}
-		var buf bytes.Buffer
-		_, _ = buf.ReadFrom(r.Body)
-		if err := json.Unmarshal(buf.Bytes(), &req); err != nil {
-			http.Error(wr, "bad stub request", http.StatusBadRequest)
-			return
-		}
-		switch req.Method {
-		case "logseq.Editor.get_all_pages":
-			_, _ = wr.Write([]byte(`[{"name":"2026-01-01","uuid":"d"},{"name":"Time Maps","uuid":"tm"}]`))
-		case "logseq.Editor.get_page_blocks_tree":
-			if len(req.Args) > 0 && req.Args[0] == "Time Maps" {
-				_, _ = wr.Write(tmRaw)
-				return
-			}
-			_, _ = wr.Write(taskRaw)
-		case "logseq.Editor.get_page":
-			name := ""
-			if len(req.Args) > 0 {
-				name, _ = req.Args[0].(string)
-			}
-			_, _ = wr.Write([]byte(`{"name":"` + name + `","uuid":"x","properties":null}`))
-		default:
-			http.Error(wr, "unexpected method", http.StatusNotFound)
-		}
-	}))
-}
-
 func (w *suggestionWorld) runCLI(args ...string) error {
 	if err := w.ensureHarness(); err != nil {
 		return err
 	}
-	stdout := &bytes.Buffer{}
-	stderr := &strings.Builder{}
-	w.lastCode = Run(append([]string{"--config", w.conf}, args...), stdout, stderr)
-	w.lastStdout = stdout.String()
-	w.lastStderr = stderr.String()
+	w.lastCode, w.lastStdout, w.lastStderr = w.env.Run(args...)
 	return nil
 }
 
@@ -1459,8 +1303,11 @@ func registerSuggestionSteps(s *godog.ScenarioContext, w *suggestionWorld) {
 		return nil
 	})
 	s.Step(`^no calendar writes occur$`, func() error {
-		if len(w.writes) != 0 {
-			return fmt.Errorf("writes = %v, want none", w.writes)
+		if w.env == nil {
+			return nil
+		}
+		if writes := w.env.Calendar.Writes(); len(writes) != 0 {
+			return fmt.Errorf("writes = %v, want none", writes)
 		}
 		return nil
 	})
@@ -1473,7 +1320,7 @@ func registerSuggestionSteps(s *godog.ScenarioContext, w *suggestionWorld) {
 }
 
 func TestSuggestions(t *testing.T) {
-	w := &suggestionWorld{}
+	w := &suggestionWorld{t: t}
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(s *godog.ScenarioContext) {
 			registerSuggestionSteps(s, w)
@@ -1484,8 +1331,6 @@ func TestSuggestions(t *testing.T) {
 			TestingT: t,
 		},
 	}
-	oldEndpoint, oldBase := googleEndpoint, googleCalendarBase
-	t.Cleanup(func() { googleEndpoint, googleCalendarBase = oldEndpoint, oldBase })
 	if suite.Run() != 0 {
 		t.Fatal("godog suggestions suite failed")
 	}

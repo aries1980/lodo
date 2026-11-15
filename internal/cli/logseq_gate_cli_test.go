@@ -1,11 +1,8 @@
-package cli_test
+package cli
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,46 +10,27 @@ import (
 // deadSetup writes a config pointing at a closed port (connection refused
 // is immediate, unlike a timeout) and a credentials file with a token, so
 // prepare succeeds and the Logseq gate is what fails.
-func deadSetup(t *testing.T) (confPath, credPath, deadURL string) {
+func deadSetup(t *testing.T) (conf string, deadURL string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	deadURL = srv.URL + "/api"
 	srv.Close()
 
-	confPath = filepath.Join(t.TempDir(), "lodo", "config.yaml")
-	if err := os.MkdirAll(filepath.Dir(confPath), 0o700); err != nil {
+	dir := t.TempDir()
+	conf, err := writeConfig(t, dir, srv.URL, "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	body := fmt.Sprintf(`
-logseq:
-  api_url: %s
-  time_maps_page: Time Maps
-scheduling:
-  granularity: 15m
-  window_days: 7
-  timezone: Europe/London
-calendar:
-  provider: google
-  id: primary
-`, deadURL)
-	if err := os.WriteFile(confPath, []byte(body), 0o644); err != nil {
+	if _, err := writeCredentials(t, dir, e2eLogseqCreds); err != nil {
 		t.Fatal(err)
 	}
-
-	credPath = filepath.Join(t.TempDir(), "state", "lodo", "credentials.json")
-	if err := os.MkdirAll(filepath.Dir(credPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(credPath, []byte(`{"logseq":{"token":"st-token"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return confPath, credPath, deadURL
+	return conf, deadURL
 }
 
 func TestCheckFailsEarlyWhenLogseqDown(t *testing.T) {
-	conf, cred, deadURL := deadSetup(t)
+	conf, deadURL := deadSetup(t)
 
-	code, out, errOut := runCLI(t, conf, cred, "check")
+	code, out, errOut := runCLI(t, conf, "check")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 when Logseq is down (stdout %q stderr %q)", code, out, errOut)
 	}
@@ -68,9 +46,9 @@ func TestCheckFailsEarlyWhenLogseqDown(t *testing.T) {
 }
 
 func TestForecastFailsEarlyWhenLogseqDown(t *testing.T) {
-	conf, cred, _ := deadSetup(t)
+	conf, _ := deadSetup(t)
 
-	code, _, errOut := runCLI(t, conf, cred, "forecast")
+	code, _, errOut := runCLI(t, conf, "forecast")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 when Logseq is down", code)
 	}
@@ -80,9 +58,9 @@ func TestForecastFailsEarlyWhenLogseqDown(t *testing.T) {
 }
 
 func TestScheduleFailsEarlyWhenLogseqDown(t *testing.T) {
-	conf, cred, _ := deadSetup(t)
+	conf, _ := deadSetup(t)
 
-	code, _, errOut := runCLI(t, conf, cred, "schedule")
+	code, _, errOut := runCLI(t, conf, "schedule")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 when Logseq is down", code)
 	}
@@ -92,9 +70,9 @@ func TestScheduleFailsEarlyWhenLogseqDown(t *testing.T) {
 }
 
 func TestExplainFailsEarlyWhenLogseqDown(t *testing.T) {
-	conf, cred, _ := deadSetup(t)
+	conf, _ := deadSetup(t)
 
-	code, _, errOut := runCLI(t, conf, cred, "explain", "foo")
+	code, _, errOut := runCLI(t, conf, "explain", "foo")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 when Logseq is down", code)
 	}
@@ -104,12 +82,12 @@ func TestExplainFailsEarlyWhenLogseqDown(t *testing.T) {
 }
 
 func TestRefreshDoesNotRequireLogseq(t *testing.T) {
-	conf, cred, _ := deadSetup(t)
+	conf, _ := deadSetup(t)
 
 	// Refresh never reads the graph: a dead Logseq endpoint must not
 	// surface here. With no google section the failure is the calendar
 	// hint, proving the gate was skipped.
-	code, _, errOut := runCLI(t, conf, cred, "refresh")
+	code, _, errOut := runCLI(t, conf, "refresh")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 without google credentials", code)
 	}
@@ -126,10 +104,18 @@ func TestCheckHintsTokenOnAuthFailure(t *testing.T) {
 		http.Error(w, "Access Denied", http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
-	conf, cred := testSetup(t, srv)
-	// The config already points at the denying server, so Ping gets the 401.
 
-	code, _, errOut := runCLI(t, conf, cred, "check")
+	dir := t.TempDir()
+	conf, err := writeConfig(t, dir, srv.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeCredentials(t, dir, e2eLogseqCreds); err != nil {
+		t.Fatal(err)
+	}
+
+	// The config already points at the denying server, so Ping gets the 401.
+	code, _, errOut := runCLI(t, conf, "check")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 on denied access", code)
 	}

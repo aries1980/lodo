@@ -1,14 +1,8 @@
 package cli
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,11 +15,9 @@ import (
 )
 
 type tuiWorld struct {
-	ctx  context.Context
-	srv  *httptest.Server
-	conf string
-
-	writes []string
+	ctx context.Context
+	t   testing.TB
+	env *e2e
 
 	lastCode   int
 	lastStdout string
@@ -44,16 +36,14 @@ type tuiWorld struct {
 }
 
 func (w *tuiWorld) reset() {
-	if w.srv != nil {
-		w.srv.Close()
-		w.srv = nil
+	if w.env != nil {
+		w.env.Close()
+		w.env = nil
 	}
 	if w.ttyOld != nil {
 		ttyCheck = w.ttyOld
 		w.ttyOld = nil
 	}
-	w.conf = ""
-	w.writes = nil
 	w.lastCode = 0
 	w.lastStdout = ""
 	w.lastStderr = ""
@@ -84,95 +74,14 @@ func (w *tuiWorld) taskBlocks() []*logseq.Block {
 }
 
 func (w *tuiWorld) ensureHarness() error {
-	if w.conf != "" {
+	if w.env != nil {
 		return nil
 	}
-	tasks := w.taskBlocks()
-	maps := []*logseq.Block{{
-		UUID:       "map-deep-uuid",
-		Content:    "Deep Work",
-		Properties: map[string]any{"default": true},
-		Children:   []*logseq.Block{{UUID: "w-uuid", Content: "Mon-Fri 09:00-12:00"}},
-	}}
-	taskRaw, _ := json.Marshal(tasks)
-	tmRaw, _ := json.Marshal(maps)
-	w.srv = httptest.NewServer(http.HandlerFunc(func(wr http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(wr, "POST", http.StatusMethodNotAllowed)
-			return
-		}
-		var req struct {
-			Method string `json:"method"`
-			Args   []any  `json:"args"`
-		}
-		var buf bytes.Buffer
-		_, _ = buf.ReadFrom(r.Body)
-		if err := json.Unmarshal(buf.Bytes(), &req); err != nil {
-			http.Error(wr, "bad stub request", http.StatusBadRequest)
-			return
-		}
-		switch req.Method {
-		case "logseq.Editor.get_all_pages":
-			_, _ = wr.Write([]byte(`[{"name":"2026-01-01","uuid":"d"},{"name":"Time Maps","uuid":"tm"}]`))
-		case "logseq.Editor.get_page_blocks_tree":
-			if len(req.Args) > 0 && req.Args[0] == "Time Maps" {
-				_, _ = wr.Write(tmRaw)
-				return
-			}
-			_, _ = wr.Write(taskRaw)
-		case "logseq.Editor.get_page":
-			name := ""
-			if len(req.Args) > 0 {
-				name, _ = req.Args[0].(string)
-			}
-			_, _ = wr.Write([]byte(`{"name":"` + name + `","uuid":"x","properties":null}`))
-		case "logseq.Editor.update_block":
-			uuid := ""
-			if len(req.Args) > 0 {
-				uuid, _ = req.Args[0].(string)
-			}
-			w.writes = append(w.writes, "update_block "+uuid)
-			_, _ = wr.Write([]byte(`{}`))
-		default:
-			http.Error(wr, "unexpected method", http.StatusNotFound)
-		}
-	}))
-	dir, err := os.MkdirTemp("", "lodo-tui-godog")
+	env, err := newE2E(w.t, e2eOptions{Tasks: w.taskBlocks(), Maps: e2eMaps()})
 	if err != nil {
 		return err
 	}
-	conf := filepath.Join(dir, "lodo", "config.yaml")
-	if err := os.MkdirAll(filepath.Dir(conf), 0o700); err != nil {
-		return err
-	}
-	body := fmt.Sprintf(`logseq:
-  api_url: %s/api
-  time_maps_page: Time Maps
-scheduling:
-  granularity: 15m
-  window_days: 7
-  timezone: Europe/London
-calendar:
-  provider: google
-  id: primary
-`, w.srv.URL)
-	if err := os.WriteFile(conf, []byte(body), 0o644); err != nil {
-		return err
-	}
-	cred := filepath.Join(dir, "lodo", "credentials.json")
-	if err := os.WriteFile(cred, []byte(`{"logseq":{"token":"st-token"}}`), 0o600); err != nil {
-		return err
-	}
-	if err := os.Setenv("XDG_CONFIG_HOME", dir); err != nil {
-		return err
-	}
-	if err := os.Setenv("XDG_STATE_HOME", dir); err != nil {
-		return err
-	}
-	if err := os.Setenv("HOME", dir); err != nil {
-		return err
-	}
-	w.conf = conf
+	w.env = env
 	return nil
 }
 
@@ -180,7 +89,7 @@ func (w *tuiWorld) loadData() (tui.Data, error) {
 	if err := w.ensureHarness(); err != nil {
 		return tui.Data{}, err
 	}
-	opts := &options{config: w.conf}
+	opts := &options{config: w.env.Conf}
 	cfg, creds, err := loadConfig(opts, configOverrides{})
 	if err != nil {
 		return tui.Data{}, err
@@ -253,9 +162,7 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 			w.ttyOld = ttyCheck
 		}
 		ttyCheck = func() bool { return false }
-		stdout, stderr := &strings.Builder{}, &strings.Builder{}
-		w.lastCode = Run([]string{"--config", w.conf}, stdout, stderr)
-		w.lastStdout, w.lastStderr = stdout.String(), stderr.String()
+		w.lastCode, w.lastStdout, w.lastStderr = w.env.Run()
 		return nil
 	})
 	s.Step(`^I run bare "lodo --json"$`, func() error {
@@ -266,9 +173,7 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 			w.ttyOld = ttyCheck
 		}
 		ttyCheck = func() bool { return true }
-		stdout, stderr := &strings.Builder{}, &strings.Builder{}
-		w.lastCode = Run([]string{"--config", w.conf, "--json"}, stdout, stderr)
-		w.lastStdout, w.lastStderr = stdout.String(), stderr.String()
+		w.lastCode, w.lastStdout, w.lastStderr = w.env.Run("--json")
 		return nil
 	})
 	s.Step(`^exit code is 0$`, func() error {
@@ -278,8 +183,8 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 		return nil
 	})
 	s.Step(`^no Logseq writes occur$`, func() error {
-		if len(w.writes) != 0 {
-			return fmt.Errorf("writes = %v, want none", w.writes)
+		if writes := w.env.Logseq.Writes(); len(writes) != 0 {
+			return fmt.Errorf("writes = %v, want none", writes)
 		}
 		return nil
 	})
@@ -312,8 +217,9 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 		return fmt.Errorf("kinds = %v, want %q", w.editKinds, kind)
 	})
 	s.Step(`^Logseq received one update_block$`, func() error {
-		if len(w.writes) != 1 || !strings.HasPrefix(w.writes[0], "update_block") {
-			return fmt.Errorf("writes = %v, want one update_block", w.writes)
+		writes := w.env.Logseq.Writes()
+		if len(writes) != 1 || !strings.HasPrefix(writes[0], "update_block") {
+			return fmt.Errorf("writes = %v, want one update_block", writes)
 		}
 		return nil
 	})
@@ -349,8 +255,8 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 				}
 			}
 		}
-		if len(w.writes) != 1 {
-			return fmt.Errorf("writes = %v, want one update_block", w.writes)
+		if writes := w.env.Logseq.Writes(); len(writes) != 1 {
+			return fmt.Errorf("writes = %v, want one update_block", writes)
 		}
 		return nil
 	})
@@ -379,7 +285,7 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 }
 
 func TestTUIBehavior(t *testing.T) {
-	w := &tuiWorld{ctx: t.Context()}
+	w := &tuiWorld{ctx: t.Context(), t: t}
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(s *godog.ScenarioContext) {
 			registerTUISteps(s, w)

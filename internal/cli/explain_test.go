@@ -3,36 +3,25 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
-
 	"github.com/aries1980/lodo/internal/jsonx"
+	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/store"
 	"github.com/aries1980/lodo/internal/wire"
 )
 
 func TestExplainTextShowsFullReasoning(t *testing.T) {
-	fg := &fakeGoogle{}
-	api := miniApp(t)
-	conf, _ := writeTestSetup(t, api)
-	base := fg.mount(t, `{"items":[]}`)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+	e := mustE2E(t, e2eOptions{Google: true})
 
-	stdout := &strings.Builder{}
-	stderr := &strings.Builder{}
-	code := Run([]string{"--config", conf, "explain", "milestone"}, stdout, stderr)
+	code, out, errOut := e.Run("explain", "milestone")
 	if code != 0 {
-		t.Fatalf("exit = %d, stderr %q", code, stderr.String())
+		t.Fatalf("exit = %d, stderr %q", code, errOut)
 	}
-	out := stdout.String()
 	for _, want := range []string{
 		"Explain:",
 		"Eligibility:",
@@ -57,17 +46,11 @@ func TestExplainTextShowsFullReasoning(t *testing.T) {
 }
 
 func TestExplainJSONSchemaV2(t *testing.T) {
-	fg := &fakeGoogle{}
-	api := miniApp(t)
-	conf, _ := writeTestSetup(t, api)
-	base := fg.mount(t, `{"items":[]}`)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+	e := mustE2E(t, e2eOptions{Google: true})
 
-	stdout := &bytes.Buffer{}
-	stderr := &strings.Builder{}
-	code := Run([]string{"--config", conf, "--json", "explain", "t-task-uuid"}, stdout, stderr)
+	code, out, errOut := e.Run("--json", "explain", "t-task-uuid")
 	if code != 0 {
-		t.Fatalf("exit = %d, stderr %q", code, stderr.String())
+		t.Fatalf("exit = %d, stderr %q", code, errOut)
 	}
 	var view struct {
 		SchemaVersion int `json:"schema_version"`
@@ -98,8 +81,8 @@ func TestExplainJSONSchemaV2(t *testing.T) {
 			Summary string `json:"summary"`
 		} `json:"spillover"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
-		t.Fatalf("stdout is not explain JSON: %v\n%s", err, stdout.String())
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		t.Fatalf("stdout is not explain JSON: %v\n%s", err, out)
 	}
 	if view.SchemaVersion != wire.ExplainVersion {
 		t.Fatalf("schema_version=%d, want %d", view.SchemaVersion, wire.ExplainVersion)
@@ -156,25 +139,19 @@ func TestExplainJSONBusySourcesAlwaysPresent(t *testing.T) {
 }
 
 func TestExplainNoMatchJSON(t *testing.T) {
-	fg := &fakeGoogle{}
-	api := miniApp(t)
-	conf, _ := writeTestSetup(t, api)
-	base := fg.mount(t, `{"items":[]}`)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+	e := mustE2E(t, e2eOptions{Google: true})
 
-	stdout := &bytes.Buffer{}
-	stderr := &strings.Builder{}
-	code := Run([]string{"--config", conf, "--json", "explain", "no-such-task"}, stdout, stderr)
+	code, out, errOut := e.Run("--json", "explain", "no-such-task")
 	if code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
+		t.Fatalf("exit = %d, want 1 (stderr %q)", code, errOut)
 	}
 	var view struct {
 		SchemaVersion int    `json:"schema_version"`
 		Error         string `json:"error"`
 		Query         string `json:"query"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
-		t.Fatalf("stdout is not error JSON: %v\n%s", err, stdout.String())
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		t.Fatalf("stdout is not error JSON: %v\n%s", err, out)
 	}
 	if view.SchemaVersion != wire.ExplainVersion {
 		t.Fatalf("schema_version=%d", view.SchemaVersion)
@@ -219,29 +196,24 @@ func seedExplainDisposition(t *testing.T, credPath string, d model.Disposition) 
 		t.Fatalf("open store: %v", err)
 	}
 	defer func() { _ = st.Close() }()
-	if err := st.Commit(nil, nil, []store.TimedDisposition{{Disposition: d, RecordedAt: time.Now()}}, nil); err != nil {
+	if err := st.Commit(nil, nil, []store.TimedDisposition{{Disposition: d, RecordedAt: e2eNow}}, nil); err != nil {
 		t.Fatalf("seed disposition: %v", err)
 	}
 }
 
 func TestExplainJSONPinnedDisposition(t *testing.T) {
-	fg := &fakeGoogle{}
-	api := miniApp(t)
-	conf, cred := writeTestSetup(t, api)
-	base := fg.mount(t, `{"items":[]}`)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+	e := mustE2E(t, e2eOptions{Google: true})
 
-	start := time.Now().UTC().Add(24 * time.Hour).Truncate(15 * time.Minute)
+	start := e2eAt(1, 9, 0)
 	end := start.Add(30 * time.Minute)
-	seedExplainDisposition(t, cred, model.Disposition{
+	seedExplainDisposition(t, e.Cred, model.Disposition{
 		TaskID: "t-task-uuid", BlockIndex: 0, Kind: model.DispositionPinned,
 		Start: start, End: end, Slots: 2,
 	})
 
-	stdout, stderr := &bytes.Buffer{}, &strings.Builder{}
-	code := Run([]string{"--config", conf, "--json", "explain", "t-task-uuid"}, stdout, stderr)
+	code, out, errOut := e.Run("--json", "explain", "t-task-uuid")
 	if code != 0 {
-		t.Fatalf("exit = %d, stderr %q", code, stderr.String())
+		t.Fatalf("exit = %d, stderr %q", code, errOut)
 	}
 	var view struct {
 		SchemaVersion int `json:"schema_version"`
@@ -256,8 +228,8 @@ func TestExplainJSONPinnedDisposition(t *testing.T) {
 			Slots      int       `json:"slots"`
 		} `json:"dispositions"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
-		t.Fatalf("stdout is not explain JSON: %v\n%s", err, stdout.String())
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		t.Fatalf("stdout is not explain JSON: %v\n%s", err, out)
 	}
 	if view.SchemaVersion != wire.ExplainVersion {
 		t.Fatalf("schema_version = %d", view.SchemaVersion)
@@ -272,24 +244,20 @@ func TestExplainJSONPinnedDisposition(t *testing.T) {
 	if !d.Start.Equal(start) || !d.End.Equal(end) {
 		t.Fatalf("span = %v..%v, want %v..%v", d.Start, d.End, start, end)
 	}
-	if strings.Contains(stdout.String(), "Snapshot") {
-		t.Fatalf("domain snapshot leaked:\n%s", stdout.String())
+	if strings.Contains(out, "Snapshot") {
+		t.Fatalf("domain snapshot leaked:\n%s", out)
 	}
 }
 
 func TestExplainJSONStoodDownDisposition(t *testing.T) {
-	f := &scheduleFake{}
-	api := miniApp(t)
-	conf, cred := writeTestSetup(t, api)
-	base := f.mount(t, nil)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+	e := mustE2E(t, e2eOptions{Google: true})
 
 	// One schedule seeds the store with the Task's resolved snapshot; a
 	// stood-down disposition only applies while that snapshot matches.
-	if code := Run([]string{"--config", conf, "--json", "schedule"}, &bytes.Buffer{}, &strings.Builder{}); code != 0 {
-		t.Fatalf("seed schedule exit = %d", code)
+	if code, _, errOut := e.Run("--json", "schedule"); code != 0 {
+		t.Fatalf("seed schedule exit = %d, stderr %q", code, errOut)
 	}
-	storePath := filepath.Join(filepath.Dir(cred), "lodo.db")
+	storePath := filepath.Join(filepath.Dir(e.Cred), "lodo.db")
 	st, err := store.Open(storePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -304,15 +272,14 @@ func TestExplainJSONStoodDownDisposition(t *testing.T) {
 		t.Fatalf("no snapshot for t-task-uuid: %+v", snapshots)
 	}
 
-	seedExplainDisposition(t, cred, model.Disposition{
+	seedExplainDisposition(t, e.Cred, model.Disposition{
 		TaskID: "t-task-uuid", BlockIndex: 0, Kind: model.DispositionStoodDown,
 		Slots: 2, Snapshot: snap,
 	})
 
-	stdout, stderr := &bytes.Buffer{}, &strings.Builder{}
-	code := Run([]string{"--config", conf, "--json", "explain", "t-task-uuid"}, stdout, stderr)
+	code, out, errOut := e.Run("--json", "explain", "t-task-uuid")
 	if code != 0 {
-		t.Fatalf("exit = %d, stderr %q", code, stderr.String())
+		t.Fatalf("exit = %d, stderr %q", code, errOut)
 	}
 	var view struct {
 		SchemaVersion int `json:"schema_version"`
@@ -323,8 +290,8 @@ func TestExplainJSONStoodDownDisposition(t *testing.T) {
 			Slots      int    `json:"slots"`
 		} `json:"dispositions"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
-		t.Fatalf("stdout is not explain JSON: %v\n%s", err, stdout.String())
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		t.Fatalf("stdout is not explain JSON: %v\n%s", err, out)
 	}
 	if len(view.Dispositions) != 1 {
 		t.Fatalf("dispositions = %+v", view.Dispositions)
@@ -332,22 +299,20 @@ func TestExplainJSONStoodDownDisposition(t *testing.T) {
 	if d := view.Dispositions[0]; d.TaskID != "t-task-uuid" || d.BlockIndex != 0 || d.Kind != "stood-down" || d.Slots != 2 {
 		t.Fatalf("disposition = %+v", d)
 	}
-	if strings.Contains(stdout.String(), "Snapshot") {
-		t.Fatalf("domain snapshot leaked:\n%s", stdout.String())
+	if strings.Contains(out, "Snapshot") {
+		t.Fatalf("domain snapshot leaked:\n%s", out)
 	}
 }
 
 func TestExplainAmbiguousJSONIsTyped(t *testing.T) {
-	api := twoTaskApp(t)
-	conf, _ := writeTestSetup(t, api)
-	fg := &fakeGoogle{}
-	base := fg.mount(t, `{"items":[]}`)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+	e := mustE2E(t, e2eOptions{Google: true, Tasks: []*logseq.Block{
+		{UUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Content: "TODO Write alpha report", Marker: "TODO", Properties: map[string]any{"duration": "30m"}},
+		{UUID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", Content: "TODO Write beta report", Marker: "TODO", Properties: map[string]any{"duration": "30m"}},
+	}})
 
-	stdout, stderr := &bytes.Buffer{}, &strings.Builder{}
-	code := Run([]string{"--config", conf, "--json", "explain", "write"}, stdout, stderr)
+	code, out, errOut := e.Run("--json", "explain", "write")
 	if code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
+		t.Fatalf("exit = %d, want 1 (stderr %q)", code, errOut)
 	}
 	var view struct {
 		SchemaVersion int              `json:"schema_version"`
@@ -355,8 +320,8 @@ func TestExplainAmbiguousJSONIsTyped(t *testing.T) {
 		Query         string           `json:"query"`
 		Matches       []map[string]any `json:"matches"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
-		t.Fatalf("stdout is not error JSON: %v\n%s", err, stdout.String())
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		t.Fatalf("stdout is not error JSON: %v\n%s", err, out)
 	}
 	if view.SchemaVersion != wire.ExplainVersion {
 		t.Fatalf("schema_version = %d, want %d", view.SchemaVersion, wire.ExplainVersion)
@@ -380,64 +345,21 @@ func TestExplainAmbiguousJSONIsTyped(t *testing.T) {
 	}
 }
 
-// twoTaskApp is miniApp with two Tasks that share the word "write", so an
-// explain query exercises the ambiguous path.
-func twoTaskApp(t *testing.T) string {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST", http.StatusMethodNotAllowed)
-			return
-		}
-		var req struct {
-			Method string `json:"method"`
-			Args   []any  `json:"args"`
-		}
-		body, _ := io.ReadAll(r.Body)
-		if err := json.Unmarshal(body, &req); err != nil {
-			t.Fatalf("bad stub request: %v", err)
-		}
-		switch req.Method {
-		case "logseq.Editor.get_all_pages":
-			_, _ = w.Write([]byte(`[{"name":"2026-01-01","uuid":"d"},{"name":"Time Maps","uuid":"tm"}]`))
-		case "logseq.Editor.get_page_blocks_tree":
-			if req.Args[0].(string) == "Time Maps" {
-				_, _ = w.Write([]byte(`[{"uuid":"map","content":"Deep Work","properties":{"default":true},"children":[{"uuid":"w","content":"Mon-Fri 09:00-12:00"}]}]`))
-				return
-			}
-			_, _ = w.Write([]byte(`[
-				{"uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","content":"TODO Write alpha report","marker":"TODO","properties":{"duration":"30m"}},
-				{"uuid":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","content":"TODO Write beta report","marker":"TODO","properties":{"duration":"30m"}}
-			]`))
-		case "logseq.Editor.get_page":
-			_, _ = w.Write([]byte(`{"name":"` + req.Args[0].(string) + `","uuid":"x","properties":null}`))
-		default:
-			http.Error(w, "unexpected method", http.StatusNotFound)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv.URL
-}
-
 func TestExplainVerboseAddsConsiderationOrder(t *testing.T) {
-	fg := &fakeGoogle{}
-	api := miniApp(t)
-	conf, _ := writeTestSetup(t, api)
-	base := fg.mount(t, `{"items":[]}`)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+	e := mustE2E(t, e2eOptions{Google: true})
 
-	plain := &strings.Builder{}
-	if code := Run([]string{"--config", conf, "explain", "milestone"}, plain, &strings.Builder{}); code != 0 {
-		t.Fatalf("plain exit")
+	code, plain, errOut := e.Run("explain", "milestone")
+	if code != 0 {
+		t.Fatalf("plain exit = %d, stderr %q", code, errOut)
 	}
-	if strings.Contains(plain.String(), "Consideration order (--verbose)") {
+	if strings.Contains(plain, "Consideration order (--verbose)") {
 		t.Fatalf("plain explain must not list consideration order")
 	}
-	verbose := &strings.Builder{}
-	if code := Run([]string{"--config", conf, "--verbose", "explain", "milestone"}, verbose, &strings.Builder{}); code != 0 {
-		t.Fatalf("verbose exit")
+	code, verbose, errOut := e.Run("--verbose", "explain", "milestone")
+	if code != 0 {
+		t.Fatalf("verbose exit = %d, stderr %q", code, errOut)
 	}
-	if !strings.Contains(verbose.String(), "Consideration order (--verbose)") {
-		t.Fatalf("verbose explain must list consideration order:\n%s", verbose.String())
+	if !strings.Contains(verbose, "Consideration order (--verbose)") {
+		t.Fatalf("verbose explain must list consideration order:\n%s", verbose)
 	}
 }

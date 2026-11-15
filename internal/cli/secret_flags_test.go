@@ -1,12 +1,7 @@
 package cli
 
 import (
-	"bytes"
-	"os"
-	"strings"
 	"testing"
-
-	"golang.org/x/oauth2"
 )
 
 // Secret flags beat file and environment: a credentials file with an empty
@@ -19,35 +14,29 @@ func TestSecretFlagsOverrideFile(t *testing.T) {
 	t.Setenv("LODO_GOOGLE_CLIENT_SECRET", "")
 	t.Setenv("LODO_GOOGLE_REFRESH_TOKEN", "")
 
-	api := miniApp(t)
-	conf, cred := writeTestSetup(t, api)
+	e := mustE2E(t, e2eOptions{Google: true})
 
 	// Empty the file's Logseq token: without the flag this refuses.
-	if err := os.WriteFile(cred, []byte(`{"logseq":{"token":""}}`), 0o600); err != nil {
+	if _, err := writeCredentials(t, e.Dir, `{"logseq":{"token":""}}`); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr := &bytes.Buffer{}, &strings.Builder{}
-	if code := Run([]string{"--config", conf, "check", "--logseq-token", "st-token"}, stdout, stderr); code != 0 {
-		t.Fatalf("check with --logseq-token exit = %d, stderr %q", code, stderr.String())
+	code, _, errOut := e.Run("check", "--logseq-token", "st-token")
+	if code != 0 {
+		t.Fatalf("check with --logseq-token exit = %d, stderr %q", code, errOut)
 	}
 
 	// No google section in the file: flags supply the triple.
-	if err := os.WriteFile(cred, []byte(`{"logseq":{"token":"st-token"}}`), 0o600); err != nil {
+	if _, err := writeCredentials(t, e.Dir, e2eLogseqCreds); err != nil {
 		t.Fatal(err)
 	}
-	fg := &fakeGoogle{}
-	base := fg.mount(t, `{"items": []}`)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
-
-	stdout, stderr = &bytes.Buffer{}, &strings.Builder{}
-	args := []string{"--config", conf, "--json", "forecast",
+	code, _, errOut = e.Run("--json", "forecast",
 		"--google-client-id", "cid",
 		"--google-client-secret", "secret",
-		"--google-refresh-token", "1//flag-refresh"}
-	if code := Run(args, stdout, stderr); code != 0 {
-		t.Fatalf("forecast with google flags exit = %d, stderr %q", code, stderr.String())
+		"--google-refresh-token", "1//flag-refresh")
+	if code != 0 {
+		t.Fatalf("forecast with google flags exit = %d, stderr %q", code, errOut)
 	}
-	if got := fg.tokenSeen; len(got) != 1 || got[0] != "1//flag-refresh" {
+	if got := e.Calendar.TokenSeen(); len(got) != 1 || got[0] != "1//flag-refresh" {
 		t.Fatalf("refresh token used = %q, want the flag value", got)
 	}
 }

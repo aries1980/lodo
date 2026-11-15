@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
-
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/run"
 )
@@ -19,19 +17,14 @@ import (
 // credentials file with no Google grant.
 func degradedCheckSetup(t *testing.T) string {
 	t.Helper()
-	conf, cred := writeTestSetup(t, miniApp(t))
-	stripGoogle(t, cred)
-	return conf
+	return mustE2E(t, e2eOptions{}).Conf
 }
 
 // calendarCheckSetup is check's calendar path: the same graph plus a fake
 // Google with no events and a stored refresh token.
 func calendarCheckSetup(t *testing.T) string {
 	t.Helper()
-	conf, _ := writeTestSetup(t, miniApp(t))
-	base := (&fakeGoogle{}).mount(t, `{"items":[]}`)
-	pointBoth(t, oauth2Endpoint(base), base)
-	return conf
+	return mustE2E(t, e2eOptions{Google: true}).Conf
 }
 
 // checkPathCase is one of the two paths a read-only command can take.
@@ -103,22 +96,19 @@ func TestCheckStrictExitMessage(t *testing.T) {
 // With a calendar, an orphaned Managed event is a validation failure: check
 // --strict counts it and names it.
 func TestCheckStrictCountsOrphansWithCalendar(t *testing.T) {
-	conf, _ := writeTestSetup(t, miniApp(t))
-	start := time.Now().Add(48 * time.Hour).Truncate(time.Hour)
-	events := fmt.Sprintf(`{"items":[{"id":"lodo-orphan","status":"confirmed","summary":"ghost","start":{"dateTime":%q},"end":{"dateTime":%q},"extendedProperties":{"private":{"lodo":"true"}}}]}`,
-		start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339))
-	base := (&fakeGoogle{}).mount(t, events)
-	pointBoth(t, oauth2Endpoint(base), base)
+	e := mustE2E(t, e2eOptions{Google: true, CalendarEvents: []map[string]any{
+		calendarEvent("lodo-orphan", "ghost", e2eAt(2, 9, 0), e2eAt(2, 10, 0), true),
+	}})
 
-	stdout, stderr := &bytes.Buffer{}, &strings.Builder{}
-	if code := Run([]string{"--config", conf, "check", "--strict"}, stdout, stderr); code != 2 {
-		t.Fatalf("exit = %d, want 2 for an orphaned event (stderr %q)", code, stderr.String())
+	code, out, errOut := e.Run("check", "--strict")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 for an orphaned event (stderr %q)", code, errOut)
 	}
-	if !strings.Contains(stderr.String(), ", 1 orphaned") {
-		t.Fatalf("stderr must count the orphan: %q", stderr.String())
+	if !strings.Contains(errOut, ", 1 orphaned") {
+		t.Fatalf("stderr must count the orphan: %q", errOut)
 	}
-	if !strings.Contains(stdout.String(), "Orphaned: 1") {
-		t.Fatalf("the report must list the orphan:\n%s", stdout.String())
+	if !strings.Contains(out, "Orphaned: 1") {
+		t.Fatalf("the report must list the orphan:\n%s", out)
 	}
 }
 
@@ -137,23 +127,23 @@ func TestDegradedCheckLogsOneRunStart(t *testing.T) {
 // refresh warns about shared-calendar conflicts in JSON log mode too; the
 // record used to sit in the text-only branch, where logRunWarn is a no-op.
 func TestRefreshJSONLogsConflicts(t *testing.T) {
-	api := miniApp(t)
-	conf, _ := writeSetupWithReads(t, api, "  read_calendars:\n    - shared@example.com\n")
-	start := time.Now().Add(30 * time.Hour).Truncate(time.Hour)
-	end := start.Add(time.Hour)
-	span := fmt.Sprintf(`"start":{"dateTime":%q},"end":{"dateTime":%q}`, start.Format(time.RFC3339), end.Format(time.RFC3339))
-	f := &calendarFake{events: map[string]string{
-		"primary":            fmt.Sprintf(`{"items":[{"id":"lodo-managed","status":"confirmed","summary":"Managed",%s,"extendedProperties":{"private":{"lodo":"true"}}}]}`, span),
-		"shared@example.com": fmt.Sprintf(`{"items":[{"id":"shared-busy","status":"confirmed",%s}]}`, span),
-	}}
-	base := f.mount(t)
-	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+	start, end := e2eAt(1, 9, 0), e2eAt(1, 10, 0)
+	span := fmt.Sprintf(`"start":{"dateTime":%q},"end":{"dateTime":%q}`,
+		start.Format(time.RFC3339), end.Format(time.RFC3339))
+	e := mustE2E(t, e2eOptions{
+		Google:        true,
+		ReadCalendars: []string{"shared@example.com"},
+		CalendarReads: map[string]string{
+			"primary":            fmt.Sprintf(`{"items":[{"id":"lodo-managed","status":"confirmed","summary":"Managed",%s,"extendedProperties":{"private":{"lodo":"true"}}}]}`, span),
+			"shared@example.com": fmt.Sprintf(`{"items":[{"id":"shared-busy","status":"confirmed",%s}]}`, span),
+		},
+	})
 
-	stdout, stderr := &bytes.Buffer{}, &strings.Builder{}
-	if code := Run([]string{"--config", conf, "--json", "--log-format=json", "refresh"}, stdout, stderr); code != 0 {
-		t.Fatalf("refresh exit = %d, stderr %q", code, stderr.String())
+	code, _, errOut := e.Run("--json", "--log-format=json", "refresh")
+	if code != 0 {
+		t.Fatalf("refresh exit = %d, stderr %q", code, errOut)
 	}
-	if !strings.Contains(stderr.String(), `"event":"refresh.conflict"`) {
-		t.Fatalf("stderr must carry the conflict record: %q", stderr.String())
+	if !strings.Contains(errOut, `"event":"refresh.conflict"`) {
+		t.Fatalf("stderr must carry the conflict record: %q", errOut)
 	}
 }

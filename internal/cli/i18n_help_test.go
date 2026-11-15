@@ -1,10 +1,9 @@
-package cli_test
+package cli
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/aries1980/lodo/internal/cli"
 	"github.com/aries1980/lodo/internal/i18n"
 )
 
@@ -48,7 +47,7 @@ func runHelp(t *testing.T, env map[string]string, args ...string) string {
 		}
 	}
 	stdout, stderr := &strings.Builder{}, &strings.Builder{}
-	code := cli.Run(args, stdout, stderr)
+	code := Run(args, stdout, stderr)
 	if code != 0 {
 		t.Fatalf("help exit = %d, stderr = %q", code, stderr.String())
 	}

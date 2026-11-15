@@ -6,14 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
-
 	"github.com/aries1980/lodo/internal/theme"
 )
-
-func oauth2Endpoint(base string) oauth2.Endpoint {
-	return oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}
-}
 
 func TestResolveLogFormat(t *testing.T) {
 	for in, want := range map[string]string{
@@ -86,19 +80,14 @@ func TestJSONLogLinesAreParseable(t *testing.T) {
 func TestLogFormatJSONEmitsRunEvents(t *testing.T) {
 	// check with a fake calendar exercises the full path and must emit
 	// run.start/run.finish JSONL to stderr.
-	fg := &fakeGoogle{}
-	api := miniApp(t)
-	conf, _ := writeTestSetup(t, api)
-	base := fg.mount(t, `{"items":[]}`)
-	pointBoth(t, oauth2Endpoint(base), base)
-	stdout, stderr := &strings.Builder{}, &strings.Builder{}
-	code := Run([]string{"--config", conf, "--log-format=json", "check"}, stdout, stderr)
+	e := mustE2E(t, e2eOptions{Google: true})
+	code, out, errOut := e.Run("--log-format=json", "check")
 	if code != 0 {
-		t.Fatalf("exit = %d, stderr %q", code, stderr.String())
+		t.Fatalf("exit = %d, stderr %q", code, errOut)
 	}
-	lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+	lines := strings.Split(strings.TrimSpace(errOut), "\n")
 	if len(lines) < 2 {
-		t.Fatalf("want run.start + run.finish lines, got %q", stderr.String())
+		t.Fatalf("want run.start + run.finish lines, got %q", errOut)
 	}
 	for _, line := range lines {
 		var rec struct {
@@ -120,8 +109,8 @@ func TestLogFormatJSONEmitsRunEvents(t *testing.T) {
 		}
 	}
 	// stdout stays human-readable in this mode (no --json result flag).
-	if !strings.Contains(stdout.String(), "Summary:") {
-		t.Fatalf("human output must keep the summary footer:\n%s", stdout.String())
+	if !strings.Contains(out, "Summary:") {
+		t.Fatalf("human output must keep the summary footer:\n%s", out)
 	}
 }
 
