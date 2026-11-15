@@ -1,0 +1,14 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: lodo 0.1\n"
+"Language: en-GB\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "disable colors in human-readable output (also NO_COLOR, TERM=dumb, non-TTY)"
+msgstr "disable colours in human-readable output (also NO_COLOR, TERM=dumb, non-TTY)"
+
+msgid "machine-readable output"
+msgstr "machine-readable output"
+
+msgid "Graph: %d issues"
+msgstr "Graph: %d issues"
