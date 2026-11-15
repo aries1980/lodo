@@ -97,6 +97,8 @@ not resolve the graph or recompute the Schedule.
   `internal/parse` and `internal/model` when the shape changes.
 - Placement rules, ordering, shortfalls, suggestions: `internal/planner/*`. Slot
   geometry: `internal/grid/*`.
+- A config setting: field and `yaml` tag in `internal/config/config.go`; trimming,
+  defaults, and errors live in that file's `validate`.
 - Scheduling config (granularity, window, timezone): `internal/config`, then the
   `planner.Input` that `internal/run` builds.
 - Persistence, bindings, snapshots, dispositions, run audit: `internal/store/*`

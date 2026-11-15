@@ -26,85 +26,86 @@ import (
 	"github.com/aries1980/lodo/internal/theme"
 )
 
-// Config mirrors config.yaml.
+// Config mirrors config.yaml; it decodes from the file directly and validate
+// owns trimming, defaults and errors.
 type Config struct {
-	Logseq     Logseq     `json:"logseq"`
-	Scheduling Scheduling `json:"scheduling"`
-	Calendar   Calendar   `json:"calendar"`
-	UI         UI         `json:"ui"`
+	Logseq     Logseq     `json:"logseq" yaml:"logseq"`
+	Scheduling Scheduling `json:"scheduling" yaml:"scheduling"`
+	Calendar   Calendar   `json:"calendar" yaml:"calendar"`
+	UI         UI         `json:"ui" yaml:"ui"`
 }
 
 // UI holds human-output presentation: the named color scheme.
 type UI struct {
-	Theme string `json:"theme"`
+	Theme string `json:"theme" yaml:"theme"`
 }
 
 // Logseq is the graph source: where Lodo reads over the HTTP API (ADR 0002).
 type Logseq struct {
 	// APIURL is the Logseq app's HTTP API endpoint, e.g.
 	// http://127.0.0.1:12315/api.
-	APIURL string
+	APIURL string `yaml:"api_url"`
 	// TimeMapsPage names the page holding the Time Maps; default "Time Maps".
-	TimeMapsPage string
+	TimeMapsPage string `yaml:"time_maps_page"`
 	// Insecure skips TLS verification for an app serving a self-signed
 	// certificate. It is machine-bound, so it lives in the file (ADR 0005),
 	// never as a flag: whoever wrote the config accepted that certificate.
-	Insecure bool
+	Insecure bool `yaml:"insecure"`
 	// Graphs lists the Logseq graphs to merge, in priority order. Empty
 	// means single-graph mode (APIURL alone). When non-empty, each entry
 	// needs its own Logseq window on its own HTTP port: one endpoint
 	// always serves its current graph only.
-	Graphs []GraphSource
+	Graphs []GraphSource `yaml:"graphs"`
 }
 
 // GraphSource is one Logseq graph in a multi-graph setup.
 type GraphSource struct {
 	// Name is the graph slug (work, family, personal). It fills
 	// Task.Graph, check/forecast output and the calendar graph field.
-	Name string
+	Name string `yaml:"name"`
 	// APIURL is this graph HTTP API endpoint.
-	APIURL string
+	APIURL string `yaml:"api_url"`
 	// TimeMapsPage optionally overrides the canonical page for this graph;
 	// empty means the global TimeMapsPage. Canonical Time Maps are read
 	// from the first graph; this field is reserved for a future union.
-	TimeMapsPage string
+	TimeMapsPage string `yaml:"time_maps_page"`
 	// DefaultTimeMap is the graph-level fallback Time Map slug.
 	// Explicit time-map:: on block, parent or page wins over it; it wins
 	// over the global default:: true map.
-	DefaultTimeMap string
+	DefaultTimeMap string `yaml:"default_time_map"`
 }
 
 // Scheduling settings.
 type Scheduling struct {
 	// Granularity is the calendar's quantum, a whole number of minutes that
 	// divides 60 (15m, 20m, 30m), and the floor for small Tasks.
-	Granularity string
+	Granularity string `yaml:"granularity"`
 	// WindowDays is the rolling Scheduling window; nothing beyond it is
 	// scheduled or synced.
-	WindowDays int
+	WindowDays int `yaml:"window_days"`
 	// Timezone names the zone Time Map hours are interpreted in: Time Map
 	// hours are absolute local times, so this is what "09:00" means.
-	Timezone string
+	Timezone string `yaml:"timezone"`
 }
 
 // Calendar is the single output Calendar.
 type Calendar struct {
 	// Provider is "google" in v0.1.
-	Provider string
+	Provider string `yaml:"provider"`
 	// ID selects the one Google Calendar; default "primary".
-	ID string
+	ID string `yaml:"id"`
 	// ReadCalendars holds shared calendar IDs read for busy time only
 	// (person shares use the owner email, resources and groups use their
 	// IDs). Empty means the write calendar alone. Never written to.
-	ReadCalendars []string
+	ReadCalendars []string `yaml:"read_calendars"`
 	// IgnoreReadAllDay drops every all-day event on a read calendar from
 	// busy time. The write calendar is unchanged. False keeps all-day events
 	// busy, which is the default.
-	IgnoreReadAllDay bool
+	IgnoreReadAllDay bool `yaml:"ignore_read_all_day"`
 	// IgnoreReadAllDayMatching drops an all-day read-calendar event whose
 	// summary contains one of these phrases, case-insensitively. Timed
 	// events are never matched. Unused when IgnoreReadAllDay is true.
-	IgnoreReadAllDayMatching []string
+	IgnoreReadAllDayMatching []string `yaml:"ignore_read_all_day_matching"`
 }
 
 // ParseGranularity parses a configured scheduling.granularity: a positive
@@ -134,43 +135,6 @@ func (s Scheduling) Location() (*time.Location, error) {
 	return loc, nil
 }
 
-// rawGraph mirrors one graphs: entry before validation.
-type rawGraph struct {
-	Name           string `yaml:"name"`
-	APIURL         string `yaml:"api_url"`
-	TimeMapsPage   string `yaml:"time_maps_page"`
-	DefaultTimeMap string `yaml:"default_time_map"`
-}
-
-// rawFile mirrors the YAML document before validation.
-type rawFile struct {
-	Logseq struct {
-		APIURL       string     `yaml:"api_url"`
-		TimeMapsPage string     `yaml:"time_maps_page"`
-		Insecure     bool       `yaml:"insecure"`
-		Graphs       []rawGraph `yaml:"graphs"`
-	} `yaml:"logseq"`
-	Scheduling struct {
-		Granularity string `yaml:"granularity"`
-		WindowDays  int    `yaml:"window_days"`
-		Timezone    string `yaml:"timezone"`
-	} `yaml:"scheduling"`
-	Calendar struct {
-		Provider string `yaml:"provider"`
-		ID       string `yaml:"id"`
-		// ReadCalendars mirrors calendar.read_calendars: shared calendars
-		// read for busy time only.
-		ReadCalendars []string `yaml:"read_calendars"`
-		// IgnoreReadAllDay mirrors calendar.ignore_read_all_day.
-		IgnoreReadAllDay bool `yaml:"ignore_read_all_day"`
-		// IgnoreReadAllDayMatching mirrors calendar.ignore_read_all_day_matching.
-		IgnoreReadAllDayMatching []string `yaml:"ignore_read_all_day_matching"`
-	} `yaml:"calendar"`
-	UI struct {
-		Theme string `yaml:"theme"`
-	} `yaml:"ui"`
-}
-
 // Load reads and validates the config file at path.
 func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
@@ -178,34 +142,10 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("config file %s: %w (pass --config to override; default %s)", path, err, DefaultConfig)
 	}
 
-	var raw rawFile
+	var cfg Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	if err := dec.Decode(&raw); err != nil {
+	if err := dec.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("config file %s: %w", path, err)
-	}
-
-	cfg := Config{
-		Logseq: Logseq{
-			APIURL:       strings.TrimSpace(raw.Logseq.APIURL),
-			TimeMapsPage: raw.Logseq.TimeMapsPage,
-			Insecure:     raw.Logseq.Insecure,
-			Graphs:       decodeGraphs(raw.Logseq.Graphs),
-		},
-		Scheduling: Scheduling{
-			Granularity: raw.Scheduling.Granularity,
-			WindowDays:  raw.Scheduling.WindowDays,
-			Timezone:    strings.TrimSpace(raw.Scheduling.Timezone),
-		},
-		Calendar: Calendar{
-			Provider:                 strings.TrimSpace(raw.Calendar.Provider),
-			ID:                       strings.TrimSpace(raw.Calendar.ID),
-			ReadCalendars:            append([]string(nil), raw.Calendar.ReadCalendars...),
-			IgnoreReadAllDay:         raw.Calendar.IgnoreReadAllDay,
-			IgnoreReadAllDayMatching: append([]string(nil), raw.Calendar.IgnoreReadAllDayMatching...),
-		},
-		UI: UI{
-			Theme: strings.TrimSpace(raw.UI.Theme),
-		},
 	}
 	return validate(cfg)
 }
@@ -223,7 +163,24 @@ const (
 	DefaultCredentials = "${XDG_STATE_HOME:-~/.local/state}/lodo/credentials.json"
 )
 
+// validate normalises cfg (trimming every string setting) and checks it,
+// returning the effective config with defaults applied.
 func validate(cfg Config) (Config, error) {
+	cfg.Logseq.APIURL = strings.TrimSpace(cfg.Logseq.APIURL)
+	cfg.Logseq.TimeMapsPage = strings.TrimSpace(cfg.Logseq.TimeMapsPage)
+	for i := range cfg.Logseq.Graphs {
+		g := &cfg.Logseq.Graphs[i]
+		g.Name = strings.TrimSpace(g.Name)
+		g.APIURL = strings.TrimSpace(g.APIURL)
+		g.TimeMapsPage = strings.TrimSpace(g.TimeMapsPage)
+		g.DefaultTimeMap = strings.TrimSpace(g.DefaultTimeMap)
+	}
+	cfg.Scheduling.Granularity = strings.TrimSpace(cfg.Scheduling.Granularity)
+	cfg.Scheduling.Timezone = strings.TrimSpace(cfg.Scheduling.Timezone)
+	cfg.Calendar.Provider = strings.TrimSpace(cfg.Calendar.Provider)
+	cfg.Calendar.ID = strings.TrimSpace(cfg.Calendar.ID)
+	cfg.UI.Theme = strings.TrimSpace(cfg.UI.Theme)
+
 	if len(cfg.Logseq.Graphs) == 0 {
 		if cfg.Logseq.APIURL == "" {
 			return Config{}, fmt.Errorf("logseq.api_url: required")
@@ -279,28 +236,10 @@ func validate(cfg Config) (Config, error) {
 	}
 	cfg.Calendar.ReadCalendars = norm.ReadCalendars(cfg.Calendar.ID, cfg.Calendar.ReadCalendars)
 	cfg.Calendar.IgnoreReadAllDayMatching = norm.Phrases(cfg.Calendar.IgnoreReadAllDayMatching)
-	cfg.UI.Theme = strings.TrimSpace(cfg.UI.Theme)
 	if cfg.UI.Theme == "" {
 		cfg.UI.Theme = theme.Concrete
 	}
 	return cfg, nil
-}
-
-// decodeGraphs trims one graphs: entry each; validation slugifies and checks URLs.
-func decodeGraphs(in []rawGraph) []GraphSource {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]GraphSource, 0, len(in))
-	for _, g := range in {
-		out = append(out, GraphSource{
-			Name:           strings.TrimSpace(g.Name),
-			APIURL:         strings.TrimSpace(g.APIURL),
-			TimeMapsPage:   strings.TrimSpace(g.TimeMapsPage),
-			DefaultTimeMap: strings.TrimSpace(g.DefaultTimeMap),
-		})
-	}
-	return out
 }
 
 // checkAPIURL validates one absolute http(s) URL.
