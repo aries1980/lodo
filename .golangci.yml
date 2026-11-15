@@ -5,6 +5,13 @@ run:
 
 linters:
   default: standard
+  enable:
+    - forbidigo
+  settings:
+    forbidigo:
+      forbid:
+        - pattern: '^httptest\.NewServer$'
+          msg: use httptest.NewTestServer so the server shuts down with the test
 
 formatters:
   enable:
