@@ -92,19 +92,19 @@ jobs:
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          path: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          path: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
           format: spdx-json
-          output-file: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
+          output-file: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
           upload-artifact: false
       - name: Attest build provenance
         uses: actions/attest@v4
         with:
-          subject-path: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          subject-path: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
       - name: Attest SBOM
         uses: actions/attest@v4
         with:
-          subject-path: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
-          sbom-path: dist/lodo_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
+          subject-path: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          sbom-path: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
       - uses: actions/upload-artifact@v7
         with:
           name: lodo-${{ matrix.goos }}-${{ matrix.goarch }}
