@@ -36,7 +36,7 @@ type explainReport struct {
 	Placement     *planner.Placement           `json:"placement,omitempty"`
 	Blocks        []planner.BlockDecision      `json:"final_blocks,omitempty"`
 	Outcome       planner.Outcome              `json:"outcome"`
-	Dispositions  []model.Disposition          `json:"dispositions,omitempty"`
+	Dispositions  []dispositionJSON            `json:"dispositions,omitempty"`
 	Predecessors  []string                     `json:"consideration_order_before,omitempty"`
 	Spillover     *explainSpillover            `json:"spillover,omitempty"`
 	Issues        []resolve.Issue              `json:"graph_issues,omitempty"`
@@ -172,7 +172,7 @@ func runExplain(ctx context.Context, opts *options, ov configOverrides, query st
 			Placement:    decision.Placement,
 			Blocks:       decision.Blocks,
 			Outcome:      decision.Outcome,
-			Dispositions: decision.Dispositions,
+			Dispositions: dispositionViews(outcome.Tasks, decision.Dispositions),
 			Predecessors: predecessors,
 			Spillover:    spill,
 			Issues:       issues,
