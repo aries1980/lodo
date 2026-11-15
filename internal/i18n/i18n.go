@@ -1,16 +1,14 @@
 package i18n
 
 import (
-	"embed"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-)
 
-//go:embed locales/*.po
-var localeFS embed.FS
+	"github.com/aries1980/lodo/translations"
+)
 
 const (
 	LangEnUS = "en-US"
@@ -25,7 +23,7 @@ var (
 
 func init() {
 	for _, lang := range []string{LangEnUS, LangEnGB} {
-		data, err := localeFS.ReadFile("locales/" + lang + ".po")
+		data, err := translations.FS.ReadFile(strings.ToLower(lang) + ".po")
 		if err != nil {
 			continue
 		}
