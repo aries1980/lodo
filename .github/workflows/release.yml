@@ -159,7 +159,7 @@ jobs:
           cd release
           sha256sum lodo_*.tar.gz > SHA256SUMS
           cat SHA256SUMS
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v3
       - name: Sign artifacts and checksums
         run: |
           set -eu
