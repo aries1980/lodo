@@ -20,6 +20,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/parse"
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 // Config mirrors config.yaml.
@@ -27,6 +28,12 @@ type Config struct {
 	Logseq     Logseq     `json:"logseq"`
 	Scheduling Scheduling `json:"scheduling"`
 	Calendar   Calendar   `json:"calendar"`
+	UI         UI         `json:"ui"`
+}
+
+// UI holds human-output presentation: the named color scheme.
+type UI struct {
+	Theme string `json:"theme"`
 }
 
 // Logseq is the graph source: where Lodo reads over the HTTP API (ADR 0002).
@@ -156,6 +163,9 @@ type rawFile struct {
 		// IgnoreReadAllDayMatching mirrors calendar.ignore_read_all_day_matching.
 		IgnoreReadAllDayMatching []string `yaml:"ignore_read_all_day_matching"`
 	} `yaml:"calendar"`
+	UI struct {
+		Theme string `yaml:"theme"`
+	} `yaml:"ui"`
 }
 
 // Load reads and validates the config file at path.
@@ -189,6 +199,9 @@ func Load(path string) (Config, error) {
 			ReadCalendars:            append([]string(nil), raw.Calendar.ReadCalendars...),
 			IgnoreReadAllDay:         raw.Calendar.IgnoreReadAllDay,
 			IgnoreReadAllDayMatching: append([]string(nil), raw.Calendar.IgnoreReadAllDayMatching...),
+		},
+		UI: UI{
+			Theme: strings.TrimSpace(raw.UI.Theme),
 		},
 	}
 	return validate(cfg)
@@ -263,6 +276,10 @@ func validate(cfg Config) (Config, error) {
 	}
 	cfg.Calendar.ReadCalendars = norm.ReadCalendars(cfg.Calendar.ID, cfg.Calendar.ReadCalendars)
 	cfg.Calendar.IgnoreReadAllDayMatching = norm.Phrases(cfg.Calendar.IgnoreReadAllDayMatching)
+	cfg.UI.Theme = strings.TrimSpace(cfg.UI.Theme)
+	if cfg.UI.Theme == "" {
+		cfg.UI.Theme = theme.Concrete
+	}
 	return cfg, nil
 }
 

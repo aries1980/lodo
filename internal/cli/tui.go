@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/aries1980/lodo/internal/tui"
@@ -24,7 +25,11 @@ func runTUI(opts *options, ov configOverrides) error {
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "tui")); err != nil {
+	th, warn := resolveTheme(cfg, opts.config)
+	if warn != "" {
+		_, _ = fmt.Fprintln(errWriter(opts), warn)
+	}
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "tui", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	ctx := context.Background()
@@ -35,7 +40,7 @@ func runTUI(opts *options, ov configOverrides) error {
 	reload := func() (tui.Data, error) {
 		return tui.Load(context.Background(), cfg, sources)
 	}
-	if err := tui.RunProgram(data, reload); err != nil {
+	if err := tui.RunProgram(data, reload, th); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	return nil

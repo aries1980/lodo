@@ -88,6 +88,7 @@ jobs:
           go build -trimpath -ldflags '-s -w' -o "dist/lodo${ext}" ./cmd/lodo
           name="lodo_${VERSION}_${GOOS}_${GOARCH}"
           cp "dist/lodo${ext}" LICENSE README.md stage/
+          mkdir -p stage/themes && cp internal/theme/themes/*.yaml stage/themes/
           if [ "$GOOS" = "windows" ]; then
             (cd stage && zip -qr "../dist/${name}.zip" .)
             echo "file=${name}.zip" >> "$GITHUB_OUTPUT"
@@ -151,6 +152,7 @@ jobs:
           mkdir -p dist stage
           tar -xzf "pkgsrc/lodo_${VERSION}_linux_${ARCH}.tar.gz" -C stage
           test -f stage/lodo
+          mkdir -p stage/themes && cp /app/internal/theme/themes/*.yaml stage/themes/
           case "$ARCH-$PACKAGER" in
             amd64-deb) PKGARCH=amd64 ;;
             arm64-deb) PKGARCH=arm64 ;;
@@ -176,6 +178,9 @@ jobs:
               type: file
               file_info:
                 mode: 0755
+            - src: /app/stage/themes
+              dst: /usr/share/lodo/themes
+              type: tree
             - src: /app/stage/LICENSE
               dst: /usr/share/doc/lodo/copyright
               type: file

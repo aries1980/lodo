@@ -53,6 +53,9 @@ func wantConfig() config.Config {
 			Provider: "google",
 			ID:       "primary",
 		},
+		UI: config.UI{
+			Theme: "concrete",
+		},
 	}
 }
 
@@ -90,6 +93,9 @@ calendar:
 	if cfg.Logseq.Insecure {
 		t.Fatal("Insecure must default to false")
 	}
+	if cfg.UI.Theme != "concrete" {
+		t.Fatalf("UI.Theme = %q, want concrete default", cfg.UI.Theme)
+	}
 }
 
 func TestInsecureApplies(t *testing.T) {
@@ -103,6 +109,8 @@ scheduling:
   timezone: Pacific/Auckland
 calendar:
   provider: google
+ui:
+  theme: monokai
 `
 	cfg, err := config.Load(write(t, body))
 	if err != nil {
@@ -110,6 +118,31 @@ calendar:
 	}
 	if !cfg.Logseq.Insecure {
 		t.Fatal("logseq.insecure: true must reach the config")
+	}
+	if cfg.UI.Theme != "monokai" {
+		t.Fatalf("UI.Theme = %q, want monokai", cfg.UI.Theme)
+	}
+}
+
+func TestThemePathPreserved(t *testing.T) {
+	body := `
+logseq:
+  api_url: https://logseq.example/api
+scheduling:
+  granularity: 30m
+  window_days: 21
+  timezone: Pacific/Auckland
+calendar:
+  provider: google
+ui:
+  theme: ./themes/custom.yaml
+`
+	cfg, err := config.Load(write(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UI.Theme != "./themes/custom.yaml" {
+		t.Fatalf("UI.Theme = %q, want the custom path preserved", cfg.UI.Theme)
 	}
 }
 

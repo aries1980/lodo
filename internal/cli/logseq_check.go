@@ -15,6 +15,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/run"
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 // Probe schedule: the first Ping gets logseqProbeInitialTimeout and each
@@ -107,8 +108,8 @@ func checkLogseqAvailable(ctx context.Context, sources []run.Source, notify func
 // on stderr for humans (stdout stays machine-readable for --json) and a
 // run.warn record for JSON logs (a no-op in text mode by construction of
 // logRunWarn).
-func makeLogseqProbeNotify(opts *options, command string) func(logseqProbeAttempt) {
-	st := newStyler(errWriter(opts), opts.disableColors)
+func makeLogseqProbeNotify(opts *options, command string, th theme.Theme) func(logseqProbeAttempt) {
+	st := newStyler(errWriter(opts), opts.disableColors, th)
 	return func(a logseqProbeAttempt) {
 		msg := logseqProbeRetryMessage(a)
 		_, _ = fmt.Fprintln(errWriter(opts), st.warning(msg))

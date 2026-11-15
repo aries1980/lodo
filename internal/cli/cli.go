@@ -10,6 +10,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/i18n"
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 const (
@@ -68,7 +69,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			}
 			logRunError(stderr, opts.verbose, name, err.Error(), code, nil)
 		} else {
-			st := newStyler(stderr, opts.disableColors)
+			st := newStyler(stderr, opts.disableColors, theme.For(theme.Concrete))
 			_, _ = fmt.Fprintln(stderr, st.danger("lodo:")+" "+err.Error())
 		}
 

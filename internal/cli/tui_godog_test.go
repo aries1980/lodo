@@ -16,6 +16,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/resolve"
+	"github.com/aries1980/lodo/internal/theme"
 	"github.com/aries1980/lodo/internal/tui"
 )
 
@@ -363,7 +364,7 @@ func registerTUISteps(s *godog.ScenarioContext, w *tuiWorld) {
 				break
 			}
 		}
-		out := tui.Highlight(raw)
+		out := tui.Highlight(raw, theme.For(theme.Concrete))
 		if !strings.Contains(out, "**") || !strings.Contains(out, "::") {
 			return fmt.Errorf("raw markers hidden:\n%s", out)
 		}

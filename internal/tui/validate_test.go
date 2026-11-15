@@ -7,6 +7,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/resolve"
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 func testData() Data {
@@ -98,7 +99,7 @@ func TestValidateEditedRejectsUnknownTimeMapThenPatchFixes(t *testing.T) {
 
 func TestHighlightPreservesRaw(t *testing.T) {
 	in := "TODO **Write** the note\nduration:: 30m\n[[Link]] ((12345678-1234-1234-1234-123456789012))"
-	out := Highlight(in)
+	out := Highlight(in, theme.For(theme.Concrete))
 	if !strings.Contains(out, "**") {
 		t.Fatalf("bold markers hidden:\n%s", out)
 	}

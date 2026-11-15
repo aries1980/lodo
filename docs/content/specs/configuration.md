@@ -48,6 +48,9 @@ calendar:
     - resource_123@resource.calendar.google.com        # resource: resource ID
   ignore_read_all_day: false          # true: all-day events on read calendars are free
   ignore_read_all_day_matching: []    # or phrases, e.g. birthday; all-day events only
+
+ui:
+  theme: concrete      # concrete (default, plain) | shipped name | path to a theme file
 ```
 
 - **`scheduling.granularity`** — the quantum of the Schedule. A whole number of minutes
@@ -72,6 +75,14 @@ calendar:
 - **`logseq.insecure`** — skip TLS verification for an app serving a self-signed
   certificate. It is machine-bound, so it lives in this file rather than a flag: writing
   `true` here is the acceptance of that one certificate.
+- **`ui.theme`** — named color scheme for human output (default `concrete`, plain
+  no-color). Shipped schemes: `monokai`, `tokyonight`, `solarized-dark`,
+  `solarized-light`, `synthwave`, `gruvbox`, `dracula`, `nord`,
+  `catppuccin-mocha`; any other value is a theme file path (absolute,
+  `~`-relative, or relative to the config file).
+  Unknown or unreadable themes warn on stderr and fall back to `concrete`, so a
+  bad theme never fails a run. `--disable-colors`, `NO_COLOR`, `TERM=dumb`, and
+  non-TTY output still force plain regardless of theme. See [themes](./themes.md).
 
 ## Multiple graphs
 

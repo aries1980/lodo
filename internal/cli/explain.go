@@ -84,15 +84,19 @@ type explainTask struct {
 // calendar), so the explanation reflects actual decisions, not an approximation.
 func runExplain(opts *options, ov configOverrides, query string, yes bool) error {
 	start := logRunStart(opts, "explain")
-	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "explain")); err != nil {
+	th, warn := resolveTheme(cfg, opts.config)
+	if warn != "" {
+		_, _ = fmt.Fprintln(errWriter(opts), warn)
+	}
+	style := newStyler(opts.out, opts.disableColors, th)
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "explain", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	st, err := openStore()

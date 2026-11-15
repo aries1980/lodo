@@ -4,21 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-)
-
-var (
-	propKeyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	propSepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	todoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
-	doingStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-	doneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	boldStyle    = lipgloss.NewStyle().Bold(true)
-	codeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	linkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
-	refStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	headStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
-	hintStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 var (
@@ -28,30 +14,31 @@ var (
 	refRe  = regexp.MustCompile(`\(\([0-9a-fA-F-]{36}\)\)`)
 )
 
-func highlightInline(s string) string {
+func highlightInline(s string, st styles) string {
 	s = boldRe.ReplaceAllStringFunc(s, func(m string) string {
 		inner := boldRe.FindStringSubmatch(m)[1]
-		return "**" + boldStyle.Render(inner) + "**"
+		return "**" + st.bold.Render(inner) + "**"
 	})
 	s = codeRe.ReplaceAllStringFunc(s, func(m string) string {
 		inner := codeRe.FindStringSubmatch(m)[1]
-		return "`" + codeStyle.Render(inner) + "`"
+		return "`" + st.code.Render(inner) + "`"
 	})
 	s = linkRe.ReplaceAllStringFunc(s, func(m string) string {
 		inner := linkRe.FindStringSubmatch(m)[1]
-		return "[[" + linkStyle.Render(inner) + "]]"
+		return "[[" + st.link.Render(inner) + "]]"
 	})
 	s = refRe.ReplaceAllStringFunc(s, func(m string) string {
-		return refStyle.Render(m)
+		return st.ref.Render(m)
 	})
 	return s
 }
 
-func Highlight(content string) string {
+func Highlight(content string, th theme.Theme) string {
+	st := stylesFor(th)
 	var b strings.Builder
 	for _, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(line, "# lodo-tui:") {
-			b.WriteString(hintStyle.Render(line))
+			b.WriteString(st.hint.Render(line))
 			b.WriteByte('\n')
 			continue
 		}
@@ -65,10 +52,10 @@ func Highlight(content string) string {
 				val = strings.TrimSpace(trimmed[idx+2:])
 			}
 			b.WriteString(lead)
-			b.WriteString(propKeyStyle.Render(key))
-			b.WriteString(propSepStyle.Render("::"))
+			b.WriteString(st.propKey.Render(key))
+			b.WriteString(st.propSep.Render("::"))
 			if val != "" {
-				b.WriteString(" " + highlightInline(val))
+				b.WriteString(" " + highlightInline(val, st))
 			}
 			b.WriteByte('\n')
 			continue
@@ -78,27 +65,27 @@ func Highlight(content string) string {
 		case strings.HasPrefix(upper, "TODO "):
 			i := strings.Index(line, "TODO")
 			if i >= 0 {
-				b.WriteString(line[:i] + todoStyle.Render("TODO") + highlightInline(line[i+4:]))
+				b.WriteString(line[:i] + st.todo.Render("TODO") + highlightInline(line[i+4:], st))
 				b.WriteByte('\n')
 				continue
 			}
 		case strings.HasPrefix(upper, "DOING "):
 			i := strings.Index(strings.ToUpper(line), "DOING")
 			if i >= 0 {
-				b.WriteString(line[:i] + doingStyle.Render("DOING") + highlightInline(line[i+5:]))
+				b.WriteString(line[:i] + st.doing.Render("DOING") + highlightInline(line[i+5:], st))
 				b.WriteByte('\n')
 				continue
 			}
 		case strings.HasPrefix(upper, "DONE ") || strings.HasPrefix(upper, "CANCELLED "):
-			b.WriteString(doneStyle.Render(highlightInline(line)))
+			b.WriteString(st.done.Render(highlightInline(line, st)))
 			b.WriteByte('\n')
 			continue
 		case strings.HasPrefix(strings.TrimSpace(line), "#"):
-			b.WriteString(headStyle.Render(highlightInline(line)))
+			b.WriteString(st.head.Render(highlightInline(line, st)))
 			b.WriteByte('\n')
 			continue
 		}
-		b.WriteString(highlightInline(line))
+		b.WriteString(highlightInline(line, st))
 		b.WriteByte('\n')
 	}
 	out := b.String()

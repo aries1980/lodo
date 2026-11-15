@@ -16,7 +16,6 @@ import (
 // commit. It never resolves the graph and never writes the calendar.
 func runRefresh(opts *options, ov configOverrides) error {
 	start := logRunStart(opts, "refresh")
-	style := newStyler(opts.out, opts.disableColors)
 	cfgPath := opts.config
 	if cfgPath == "" {
 		def, err := config.DefaultConfigPath()
@@ -29,6 +28,11 @@ func runRefresh(opts *options, ov configOverrides) error {
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
+	th, warn := resolveTheme(cfg, cfgPath)
+	if warn != "" {
+		_, _ = fmt.Fprintln(errWriter(opts), warn)
+	}
+	style := newStyler(opts.out, opts.disableColors, th)
 	cfg, err = config.Apply(cfg, config.Overrides{
 		ReadCalendars: ov.readCalendars,
 	})

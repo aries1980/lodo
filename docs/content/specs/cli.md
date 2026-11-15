@@ -92,12 +92,13 @@ the second graph write path
 Two audiences, two streams. Result payloads go to stdout; diagnostics go
 to stderr, so `--json` stdout stays pipeable.
 
-- Humans (default): colored text on stdout — bold day headers, green
+- Humans (default `ui.theme: concrete`): plain text on stdout — bold day headers, green
   placed/synced, yellow shortfalls/warnings, red orphans/errors, dim
-  busy lines and event IDs — with tab-aligned block times and a
-  `Summary:` footer per command. Colors are off with `--disable-colors`,
+  busy lines and event IDs when a color theme is selected — with tab-aligned block times and a
+  `Summary:` footer per command. `ui.theme` set to a shipped scheme
+  (e.g. `monokai`) or a custom theme file enables colors; colors stay off with `--disable-colors`,
   `NO_COLOR`, `TERM=dumb`, or a non-TTY. Errors print as
-  `error: <what> — <fix>` in red.
+  `error: <what> — <fix>` (red under a color theme). See [themes](./themes.md).
 - CI/cron (`--log-format=json` or `LODO_LOG_FORMAT=json`): stderr is
   JSONL, one object per line, with `timestamp` (RFC3339Nano UTC), `level`,
   `message`, plus `service: lodo`, `command`, `event`

@@ -13,6 +13,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/gauth"
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 // stdin is where paste mode reads the pasted redirects from. It is a var so
@@ -84,7 +85,7 @@ func runAuthGoogle(opts *options, ov configOverrides, noBrowser bool) error {
 }
 
 func printStored(opts *options, path string) error {
-	st := newStyler(opts.out, opts.disableColors)
+	st := newStyler(opts.out, opts.disableColors, theme.For(theme.Concrete))
 	if opts.json {
 		if err := printJSON(opts.out, struct {
 			Stored string `json:"stored"`

@@ -21,15 +21,19 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 		return runForecast(opts, ov, verbose, yes)
 	}
 	start := logRunStart(opts, "schedule")
-	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "schedule")); err != nil {
+	th, warn := resolveTheme(cfg, opts.config)
+	if warn != "" {
+		_, _ = fmt.Fprintln(errWriter(opts), warn)
+	}
+	style := newStyler(opts.out, opts.disableColors, th)
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "schedule", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	cal, err := calendarFull(context.Background(), creds, cfg)

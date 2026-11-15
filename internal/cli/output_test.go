@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 func oauth2Endpoint(base string) oauth2.Endpoint {
@@ -27,7 +29,7 @@ func TestResolveLogFormat(t *testing.T) {
 }
 
 func TestStylerDisabledByDefaultForBuffers(t *testing.T) {
-	st := newStyler(&strings.Builder{}, false)
+	st := newStyler(&strings.Builder{}, false, theme.For(theme.Monokai))
 	if st.enabled {
 		t.Fatal("buffers are not terminals: colors must be off")
 	}
@@ -40,7 +42,7 @@ func TestStylerDisabledByDefaultForBuffers(t *testing.T) {
 }
 
 func TestStylerRespectsDisableAndEnv(t *testing.T) {
-	if got := newStyler(&strings.Builder{}, true); got.enabled {
+	if got := newStyler(&strings.Builder{}, true, theme.For(theme.Monokai)); got.enabled {
 		t.Fatal("--disable-colors must win")
 	}
 	t.Setenv("NO_COLOR", "1")
@@ -49,7 +51,7 @@ func TestStylerRespectsDisableAndEnv(t *testing.T) {
 	}
 	// newStyler with NO_COLOR set stays off even for files; buffers
 	// already prove the non-terminal path.
-	if got := newStyler(&strings.Builder{}, false); got.enabled {
+	if got := newStyler(&strings.Builder{}, false, theme.For(theme.Monokai)); got.enabled {
 		t.Fatal("NO_COLOR must disable colors")
 	}
 }
@@ -129,8 +131,8 @@ func TestDisableColorsStripsANSI(t *testing.T) {
 	// plain, covered above.
 	st := forceStyler()
 	colored := st.success("ok")
-	if !strings.Contains(colored, "\x1b[32m") {
-		t.Fatalf("forced green must wrap, got %q", colored)
+	if !strings.Contains(colored, "\x1b[38;2;") {
+		t.Fatalf("forced monokai green must wrap, got %q", colored)
 	}
 	plain := styler{}.success("ok")
 	if strings.Contains(plain, "\x1b[") {

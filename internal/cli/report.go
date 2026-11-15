@@ -141,15 +141,19 @@ func errWriter(opts *options) io.Writer {
 // for a missing Time Maps page the user confirms (or pre-answers with -y).
 func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 	start := logRunStart(opts, "check")
-	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "check")); err != nil {
+	th, warn := resolveTheme(cfg, opts.config)
+	if warn != "" {
+		_, _ = fmt.Fprintln(errWriter(opts), warn)
+	}
+	style := newStyler(opts.out, opts.disableColors, th)
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "check", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	st, err := openStore()
@@ -263,7 +267,11 @@ func buildCheckOutcomeWithoutCalendar(cfg config.Config, sources []run.Source, s
 // Orphaned needs the calendar, so it stays empty.
 func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store) error {
 	start := logRunStart(opts, "check")
-	style := newStyler(opts.out, opts.disableColors)
+	th, warn := resolveTheme(cfg, opts.config)
+	if warn != "" {
+		_, _ = fmt.Fprintln(errWriter(opts), warn)
+	}
+	style := newStyler(opts.out, opts.disableColors, th)
 	now := time.Now()
 	outcome, err := buildCheckOutcomeWithoutCalendar(cfg, sources, st, now)
 	if err != nil {
@@ -312,15 +320,19 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 // is a missing Time Maps page the user confirms (or pre-answers with -y).
 func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 	start := logRunStart(opts, "forecast")
-	style := newStyler(opts.out, opts.disableColors)
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "forecast")); err != nil {
+	th, warn := resolveTheme(cfg, opts.config)
+	if warn != "" {
+		_, _ = fmt.Fprintln(errWriter(opts), warn)
+	}
+	style := newStyler(opts.out, opts.disableColors, th)
+	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "forecast", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors)); err != nil {
+	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 

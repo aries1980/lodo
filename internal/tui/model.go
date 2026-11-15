@@ -15,6 +15,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/resolve"
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 type state int
@@ -62,15 +63,9 @@ type Model struct {
 	fixCursor     int
 	fixForID      string
 	pendingTmp    string
+	th            theme.Theme
+	st            styles
 }
-
-var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	selectStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
-)
 
 func formatDuration(d time.Duration) string {
 	if d <= 0 {
@@ -106,7 +101,7 @@ func formatTaskRow(t model.Task) table.Row {
 	return table.Row{t.Text, graph, dur, maps, pri, dead}
 }
 
-func buildTable(tasks []model.Task) table.Model {
+func buildTable(tasks []model.Task, th theme.Theme) table.Model {
 	cols := []table.Column{
 		{Title: "Task", Width: 44},
 		{Title: "Graph", Width: 10},
@@ -126,16 +121,34 @@ func buildTable(tasks []model.Task) table.Model {
 		table.WithHeight(20),
 	)
 	s := table.DefaultStyles()
-	s.Header = s.Header.BorderStyle(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("8")).BorderBottom(true).Bold(true)
-	s.Selected = s.Selected.Foreground(lipgloss.Color("15")).Background(lipgloss.Color("8")).Bold(false)
+	border := "8"
+	selFg := "15"
+	selBg := "8"
+	if !th.Concrete {
+		if th.Palette.TableBorder != "" {
+			border = th.Palette.TableBorder
+		}
+		if th.Palette.TableSelFg != "" {
+			selFg = th.Palette.TableSelFg
+		}
+		if th.Palette.TableSelBg != "" {
+			selBg = th.Palette.TableSelBg
+		}
+	}
+	s.Header = s.Header.BorderStyle(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(border)).BorderBottom(true).Bold(true)
+	if th.Concrete {
+		s.Selected = s.Selected.Bold(false)
+	} else {
+		s.Selected = s.Selected.Foreground(lipgloss.Color(selFg)).Background(lipgloss.Color(selBg)).Bold(false)
+	}
 	tb.SetStyles(s)
 	return tb
 }
 
-func NewModel(data Data, reload func() (Data, error)) Model {
-	tb := buildTable(data.Tasks)
+func NewModel(data Data, reload func() (Data, error), th theme.Theme) Model {
+	tb := buildTable(data.Tasks, th)
 	vp := viewport.New(80, 20)
-	return Model{data: data, reload: reload, table: tb, viewport: vp, state: stateList, width: 80, height: 24}
+	return Model{data: data, reload: reload, table: tb, viewport: vp, state: stateList, width: 80, height: 24, th: th, st: stylesFor(th)}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -287,7 +300,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateInvalid
 		m.selectedID = msg.id
 		m.issues = issues
-		m.viewport.SetContent(Highlight(m.editedContent) + "\n\n" + issuesText(issues))
+		m.viewport.SetContent(Highlight(m.editedContent, m.th) + "\n\n" + issuesText(issues, m.st))
 		m.viewport.GotoTop()
 		return m, nil
 	case saveFinishedMsg:
@@ -296,7 +309,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedID = msg.id
 			m.editedContent = msg.content
 			m.issues = []resolve.Issue{{Kind: "logseq-write", Context: "logseq", Detail: msg.err.Error()}}
-			m.viewport.SetContent(Highlight(msg.content) + "\n\n" + issuesText(m.issues))
+			m.viewport.SetContent(Highlight(msg.content, m.th) + "\n\n" + issuesText(m.issues, m.st))
 			m.viewport.GotoTop()
 			return m, nil
 		}
@@ -340,17 +353,17 @@ func rowsFromTasks(tasks []model.Task) []table.Row {
 	return rows
 }
 
-func issuesText(issues []resolve.Issue) string {
+func issuesText(issues []resolve.Issue, st styles) string {
 	if len(issues) == 0 {
-		return okStyle.Render("valid.")
+		return st.ok.Render("valid.")
 	}
 	var sb strings.Builder
-	sb.WriteString(errStyle.Render(fmt.Sprintf("%d problem(s) — save blocked:", len(issues))))
+	sb.WriteString(st.err.Render(fmt.Sprintf("%d problem(s) — save blocked:", len(issues))))
 	sb.WriteByte('\n')
 	for _, is := range issues {
 		fmt.Fprintf(&sb, "  [%s] %s: %s\n", is.Kind, is.Context, is.Detail)
 	}
-	sb.WriteString(dimStyle.Render("e: re-edit  t: fix time-map  esc: discard"))
+	sb.WriteString(st.dim.Render("e: re-edit  t: fix time-map  esc: discard"))
 	return sb.String()
 }
 
@@ -369,7 +382,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedID = id
 			m.selectedTask = t
 			m.state = stateView
-			content := Highlight(m.rawContent(id)) + footerFor(id, &m.data)
+			content := Highlight(m.rawContent(id), m.th) + footerFor(id, &m.data)
 			m.viewport.SetContent(content)
 			m.viewport.GotoTop()
 			return m, nil
@@ -458,7 +471,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state = stateInvalid
 			m.selectedID = m.fixForID
 			m.issues = issues
-			m.viewport.SetContent(Highlight(patched) + "\n\n" + issuesText(issues))
+			m.viewport.SetContent(Highlight(patched, m.th) + "\n\n" + issuesText(issues, m.st))
 			m.viewport.GotoTop()
 			return m, nil
 		case "ctrl+c", "q":
@@ -476,37 +489,37 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	switch m.state {
 	case stateList:
-		help := dimStyle.Render("enter: view  e: edit in $EDITOR  q: quit   tasks: " + fmt.Sprint(len(m.data.Tasks)))
-		s := titleStyle.Render("Logseq Tasks") + "\n" + m.table.View() + "\n" + help
+		help := m.st.dim.Render("enter: view  e: edit in $EDITOR  q: quit   tasks: " + fmt.Sprint(len(m.data.Tasks)))
+		s := m.st.title.Render("Logseq Tasks") + "\n" + m.table.View() + "\n" + help
 		if m.status != "" {
-			s += "\n" + dimStyle.Render(m.status)
+			s += "\n" + m.st.dim.Render(m.status)
 		}
 		if len(m.data.Issues) > 0 {
-			s += "\n" + dimStyle.Render(fmt.Sprintf("graph issues: %d (see lodo check)", len(m.data.Issues)))
+			s += "\n" + m.st.dim.Render(fmt.Sprintf("graph issues: %d (see lodo check)", len(m.data.Issues)))
 		}
 		return s
 	case stateView:
-		help := dimStyle.Render("esc: back  e: edit  q: quit")
-		return titleStyle.Render("Task") + "\n" + m.viewport.View() + "\n" + help
+		help := m.st.dim.Render("esc: back  e: edit  q: quit")
+		return m.st.title.Render("Task") + "\n" + m.viewport.View() + "\n" + help
 	case stateInvalid:
-		help := dimStyle.Render("e: re-edit  t: fix time-map  esc: discard  q: quit")
-		return errStyle.Render("Validation blocked save") + "\n" + m.viewport.View() + "\n" + help
+		help := m.st.dim.Render("e: re-edit  t: fix time-map  esc: discard  q: quit")
+		return m.st.err.Render("Validation blocked save") + "\n" + m.viewport.View() + "\n" + help
 	case stateFixMap:
 		var sb strings.Builder
-		sb.WriteString(titleStyle.Render("Select time-map") + "\n")
+		sb.WriteString(m.st.title.Render("Select time-map") + "\n")
 		for i, opt := range m.fixOptions {
 			cursor := "  "
 			if i == m.fixCursor {
-				cursor = selectStyle.Render("> ")
-				sb.WriteString(cursor + selectStyle.Render(opt) + "\n")
+				cursor = m.st.select_.Render("> ")
+				sb.WriteString(cursor + m.st.select_.Render(opt) + "\n")
 				continue
 			}
 			sb.WriteString(cursor + opt + "\n")
 		}
-		sb.WriteString(dimStyle.Render("enter: apply  esc: back"))
+		sb.WriteString(m.st.dim.Render("enter: apply  esc: back"))
 		return sb.String()
 	case stateSaving:
-		return dimStyle.Render(m.status)
+		return m.st.dim.Render(m.status)
 	default:
 		return ""
 	}
