@@ -110,19 +110,16 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 		// Record the actual tie-break that put plan first among ready peers.
 		if origIndegree[plan.task.ID] > 0 {
 			deps := orderingDeps(plan)
-			plan.decision.Ordering.TieBreak = "dependency"
-			if len(deps) == 0 {
-				plan.decision.Ordering.TieBreakDetail = "dependency-ordered: unblocked after dependencies placed"
-			} else {
-				plan.decision.Ordering.TieBreakDetail = "dependency-ordered after " + strings.Join(deps, ", ") + "; topological order overrides tie-breaks"
+			detail := "dependency-ordered: unblocked after dependencies placed"
+			if len(deps) > 0 {
+				detail = "dependency-ordered after " + strings.Join(deps, ", ") + "; topological order overrides tie-breaks"
 			}
+			plan.markTieBreak("dependency", detail)
 		} else if len(peers) > 1 {
 			key, detail := tieBreakBetween(plan.task, peers[1].task)
-			plan.decision.Ordering.TieBreak = key
-			plan.decision.Ordering.TieBreakDetail = detail
+			plan.markTieBreak(key, detail)
 		} else {
-			plan.decision.Ordering.TieBreak = "only-ready"
-			plan.decision.Ordering.TieBreakDetail = "only ready task; no peer tie-break"
+			plan.markTieBreak("only-ready", "only ready task; no peer tie-break")
 		}
 		for _, depID := range dependents[plan.task.ID] {
 			indegree[depID]--
@@ -155,13 +152,7 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 	}
 	cycleSet = cycleMembers(remaining, lookup)
 	for i, plan := range order {
-		plan.decision.Ordering.Position = i + 1
-		plan.decision.Ordering.Total = len(order)
-	}
-	for _, plan := range candidates {
-		if plan.decision.Ordering.Total == 0 {
-			plan.decision.Ordering.Total = len(order)
-		}
+		plan.markPosition(i + 1)
 	}
 	return order, cycleSet
 }

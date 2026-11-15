@@ -3,96 +3,58 @@ package planner
 import (
 	"slices"
 	"time"
-
-	"github.com/aries1980/lodo/internal/set"
 )
-
-// reportInput bundles buildReport's inputs so the signature stays readable.
-// All maps/slices are read-only except scope.ends, which pin-violation
-// checks read.
-type reportInput struct {
-	candidates     []*taskPlan
-	order          []*taskPlan
-	pins           []*taskPlan
-	lookup         planLookup
-	cycleSet       set.Set[string]
-	blockedUnknown map[string][]string
-	blockedReason  map[string]Reason
-	blockedBy      map[string][]string
-	scope          *placementScope
-}
 
 // placeOrdered gates each Task on its dependencies and places the
 // survivors. Any dependency that is stood down, short, unplaced, or in a
 // cycle blocks the Task entirely. It records ends as the max of pinned and
 // newly placed flexible blocks.
-func placeOrdered(planBuilder *builder, order []*taskPlan, lookup planLookup, cycleSet set.Set[string], scope *placementScope) (blockedReason map[string]Reason, blockedBy map[string][]string) {
-	blockedReason = map[string]Reason{}
-	blockedBy = map[string][]string{}
+func (r *planRun) placeOrdered() {
+	r.blocked = map[string]Reason{}
+	r.blockedBy = map[string][]string{}
 
-	for _, plan := range order {
-		if cycleSet.Has(plan.task.ID) {
-			plan.decision.Dependency.CycleMember = true
-		}
-		if plan.task.PlanStart != nil || plan.task.PlanEnd != nil {
-			plan.decision.Ordering.Kind = "time-bound"
-		} else {
-			plan.decision.Ordering.Kind = "flexible"
-		}
-
-		if markBeyondHorizon(plan, scope) {
+	for _, plan := range r.order {
+		if r.beyondHorizon(plan) {
 			continue // not due yet; left unplaced silently
 		}
 		// Full-gate: any dep stood-down, shortfall, unplaced, or cycle
 		// blocks the Task entirely.
-		blockingIDs, depEnd, hasDepEnd, blocked := dependencyGate(plan, lookup, cycleSet, scope.ends)
-		plan.decision.Eligibility.Considered = true
+		blockingIDs, depEnd, hasDepEnd, blocked := r.dependencyGate(plan)
 		if hasDepEnd {
-			plan.decision.Dependency.LowerBound = depEnd
+			plan.markLowerBound(depEnd)
 		}
 		if blocked {
 			plan.shortfall = plan.required()
 			slices.Sort(blockingIDs)
-			blockedReason[plan.task.ID] = ReasonBlockedByDependency
-			blockedBy[plan.task.ID] = blockingIDs
-			plan.decision.Dependency.Blocked = true
-			plan.decision.Dependency.BlockReason = string(ReasonBlockedByDependency)
-			plan.decision.Dependency.BlockedBy = append([]string(nil), blockingIDs...)
+			r.blocked[plan.task.ID] = ReasonBlockedByDependency
+			r.blockedBy[plan.task.ID] = blockingIDs
 			continue
 		}
-		startBound := scope.now
+		startBound := r.in.Now
 		if hasDepEnd && depEnd.After(startBound) {
 			startBound = depEnd
 		}
-		planBuilder.placeWithBound(plan, scope.maps, overdue(plan.task, scope.today), startBound)
-		recordPlacementEnd(plan, planBuilder, scope.ends)
+		window := r.searchWindow(plan, startBound)
+		plan.markSearch(r.b.placeWithBound(plan, r.maps, window))
+		r.recordPlacementEnd(plan)
 	}
-	return blockedReason, blockedBy
 }
 
-// markBeyondHorizon flags plans not due yet and reports whether to skip.
-func markBeyondHorizon(plan *taskPlan, scope *placementScope) bool {
-	beyondHorizon := plan.task.PlanStart != nil && !plan.task.PlanStart.Before(scope.horizonEnd)
-	if !beyondHorizon {
+// beyondHorizon reports whether the Task is not due yet and records that fact
+// for explain. Pins and containers never reach this gate.
+func (r *planRun) beyondHorizon(plan *taskPlan) bool {
+	if plan.task.PlanStart == nil || plan.task.PlanStart.Before(r.horizonEnd) {
 		return false
 	}
-	plan.decision.Eligibility.Considered = false
-	plan.decision.Eligibility.BeyondHorizon = true
-	plan.decision.Eligibility.SkipReason = "beyond scheduling horizon: not due yet"
-	plan.decision.Ordering.TieBreak = "beyond-horizon"
-	plan.decision.Ordering.TieBreakDetail = "not due yet: plan-start is on or after the horizon end; left unplaced silently until it enters the window"
-	plan.decision.Window.Overdue = false
-	if scope.horizonEnd.Year != 0 {
-		plan.decision.Window.HorizonEnd = scope.horizonEnd.String()
-	}
+	plan.markBeyondHorizon()
 	return true
 }
 
 // dependencyGate checks finish-to-start predecessors: explicit depends plus
 // sequential-chain edges already expanded into Depends.
-func dependencyGate(plan *taskPlan, lookup planLookup, cycleSet set.Set[string], ends map[string]time.Time) (blockingIDs []string, depEnd time.Time, hasDepEnd bool, blocked bool) {
+func (r *planRun) dependencyGate(plan *taskPlan) (blockingIDs []string, depEnd time.Time, hasDepEnd bool, blocked bool) {
 	for _, dep := range plan.task.Depends {
-		depPlan, ok := lookup.lookup(dep)
+		depPlan, ok := r.lookup.lookup(dep)
 		if !ok {
 			blockingIDs = append(blockingIDs, dep)
 			blocked = true
@@ -102,7 +64,7 @@ func dependencyGate(plan *taskPlan, lookup planLookup, cycleSet set.Set[string],
 			continue
 		}
 		if depPlan.task.Pin != nil {
-			if end, ok := ends[depPlan.task.ID]; ok {
+			if end, ok := r.ends[depPlan.task.ID]; ok {
 				if !hasDepEnd || end.After(depEnd) {
 					depEnd = end
 					hasDepEnd = true
@@ -110,7 +72,7 @@ func dependencyGate(plan *taskPlan, lookup planLookup, cycleSet set.Set[string],
 			}
 			continue
 		}
-		if cycleSet.Has(depPlan.task.ID) {
+		if r.cycleSet.Has(depPlan.task.ID) {
 			blockingIDs = append(blockingIDs, depPlan.task.ID)
 			blocked = true
 			continue
@@ -125,7 +87,7 @@ func dependencyGate(plan *taskPlan, lookup planLookup, cycleSet set.Set[string],
 			blocked = true
 			continue
 		}
-		end, ok := ends[depPlan.task.ID]
+		end, ok := r.ends[depPlan.task.ID]
 		if !ok {
 			// Dep beyond horizon (silently skipped) or otherwise
 			// unplaced: the plan waits.
@@ -143,9 +105,9 @@ func dependencyGate(plan *taskPlan, lookup planLookup, cycleSet set.Set[string],
 
 // recordPlacementEnd tracks the max end for dependency gating (pins +
 // pinned already placed, plus new flexible blocks).
-func recordPlacementEnd(plan *taskPlan, planBuilder *builder, ends map[string]time.Time) {
-	max, ok := ends[plan.task.ID]
-	for _, blk := range planBuilder.blocks {
+func (r *planRun) recordPlacementEnd(plan *taskPlan) {
+	max, ok := r.ends[plan.task.ID]
+	for _, blk := range r.b.blocks {
 		if blk.TaskID != plan.task.ID {
 			continue
 		}
@@ -155,89 +117,68 @@ func recordPlacementEnd(plan *taskPlan, planBuilder *builder, ends map[string]ti
 		}
 	}
 	if ok {
-		ends[plan.task.ID] = max
+		r.ends[plan.task.ID] = max
 	}
 }
 
-func buildReport(in reportInput) Report {
-	inOrder := make(set.Set[string], len(in.order))
-	for _, plan := range in.order {
-		inOrder.Add(plan.task.ID)
+// reportFor is the single TaskReport constructor, so every branch names the
+// same Task fields and only varies the reason, blockers and shortfall.
+func reportFor(plan *taskPlan, reason Reason, blockers []string, shortfall int) TaskReport {
+	return TaskReport{
+		TaskID:    plan.task.ID,
+		Required:  plan.n,
+		Placed:    plan.placed,
+		StoodDown: plan.stoodDown,
+		Shortfall: shortfall,
+		Reason:    reason,
+		BlockedBy: blockers,
 	}
+}
+
+func (r *planRun) buildReport() Report {
 	var report Report
-	for _, plan := range in.candidates {
-		if _, ok := in.blockedUnknown[plan.task.ID]; ok {
-			ids := append([]string(nil), in.blockedUnknown[plan.task.ID]...)
+	for _, plan := range r.candidates {
+		if _, ok := r.unknown[plan.task.ID]; ok {
+			ids := append([]string(nil), r.unknown[plan.task.ID]...)
 			slices.Sort(ids)
-			report.Tasks = append(report.Tasks, TaskReport{
-				TaskID:    plan.task.ID,
-				Required:  plan.n,
-				Placed:    plan.placed,
-				StoodDown: plan.stoodDown,
-				Shortfall: plan.shortfall + plan.required(),
-				Reason:    ReasonUnknownDependency,
-				BlockedBy: ids,
-			})
+			report.Tasks = append(report.Tasks, reportFor(plan, ReasonUnknownDependency, ids, plan.required()))
 			continue
 		}
-		if in.cycleSet.Has(plan.task.ID) {
+		if r.cycleSet.Has(plan.task.ID) {
 			// Blocker: the cycle neighbours for context.
 			var blockers []string
 			for _, dep := range plan.task.Depends {
-				if d, ok := in.lookup.lookup(dep); ok {
+				if d, ok := r.lookup.lookup(dep); ok {
 					blockers = append(blockers, d.task.ID)
 				}
 			}
 			slices.Sort(blockers)
-			report.Tasks = append(report.Tasks, TaskReport{
-				TaskID:    plan.task.ID,
-				Required:  plan.n,
-				Placed:    plan.placed,
-				StoodDown: plan.stoodDown,
-				Shortfall: plan.n - plan.stoodDown - plan.pinnedSlots,
-				Reason:    ReasonDependencyCycle,
-				BlockedBy: blockers,
-			})
+			report.Tasks = append(report.Tasks, reportFor(plan, ReasonDependencyCycle, blockers, plan.required()))
 			continue
 		}
-		if !inOrder.Has(plan.task.ID) {
+		if !r.orderSet.Has(plan.task.ID) {
 			// Downstream of a cycle: not a member, blocked by an unplaced
 			// dependency. Name those dependencies for the report.
 			var blockers []string
 			for _, dep := range plan.task.Depends {
-				d, ok := in.lookup.lookup(dep)
+				d, ok := r.lookup.lookup(dep)
 				if !ok || d.task.Container || d.task.Pin != nil || d.required() == 0 {
 					continue
 				}
-				if !inOrder.Has(d.task.ID) {
+				if !r.orderSet.Has(d.task.ID) {
 					blockers = append(blockers, d.task.ID)
 				}
 			}
 			slices.Sort(blockers)
 			blockers = slices.Compact(blockers)
-			report.Tasks = append(report.Tasks, TaskReport{
-				TaskID:    plan.task.ID,
-				Required:  plan.n,
-				Placed:    plan.placed,
-				StoodDown: plan.stoodDown,
-				Shortfall: plan.required(),
-				Reason:    ReasonBlockedByDependency,
-				BlockedBy: blockers,
-			})
+			report.Tasks = append(report.Tasks, reportFor(plan, ReasonBlockedByDependency, blockers, plan.required()))
 			continue
 		}
 	}
-	for _, plan := range in.order {
-		if r, ok := in.blockedReason[plan.task.ID]; ok {
-			report.Tasks = append(report.Tasks, TaskReport{
-				TaskID:    plan.task.ID,
-				Required:  plan.n,
-				Placed:    plan.placed,
-				StoodDown: plan.stoodDown,
-				Shortfall: plan.shortfall,
-				Reason:    r,
-				BlockedBy: append([]string(nil), in.blockedBy[plan.task.ID]...),
-			})
+	for _, plan := range r.order {
+		if reason, ok := r.blocked[plan.task.ID]; ok {
+			blockers := append([]string(nil), r.blockedBy[plan.task.ID]...)
+			report.Tasks = append(report.Tasks, reportFor(plan, reason, blockers, plan.shortfall))
 			continue
 		}
 		if plan.shortfall <= 0 {
@@ -255,25 +196,17 @@ func buildReport(in reportInput) Report {
 			blockers = append(blockers, plan.task.Depends...)
 			slices.Sort(blockers)
 		}
-		report.Tasks = append(report.Tasks, TaskReport{
-			TaskID:    plan.task.ID,
-			Required:  plan.n,
-			Placed:    plan.placed,
-			StoodDown: plan.stoodDown,
-			Shortfall: plan.shortfall,
-			Reason:    reason,
-			BlockedBy: blockers,
-		})
+		report.Tasks = append(report.Tasks, reportFor(plan, reason, blockers, plan.shortfall))
 	}
 	// Pin-precedes-dependency violations: Pins stay, and the order break is reported.
-	for _, plan := range in.pins {
+	for _, plan := range r.pins {
 		if len(plan.task.Depends) == 0 {
 			continue
 		}
 		start := *plan.task.Pin
 		var viol []string
 		for _, dep := range plan.task.Depends {
-			depPlan, ok := in.lookup.lookup(dep)
+			depPlan, ok := r.lookup.lookup(dep)
 			if !ok {
 				viol = append(viol, dep)
 				continue
@@ -281,7 +214,7 @@ func buildReport(in reportInput) Report {
 			if depPlan.task.Container {
 				continue
 			}
-			if end, ok := in.scope.ends[depPlan.task.ID]; ok {
+			if end, ok := r.ends[depPlan.task.ID]; ok {
 				if start.Before(end) {
 					viol = append(viol, depPlan.task.ID)
 				}
@@ -295,15 +228,7 @@ func buildReport(in reportInput) Report {
 		}
 		if len(viol) > 0 {
 			slices.Sort(viol)
-			report.Tasks = append(report.Tasks, TaskReport{
-				TaskID:    plan.task.ID,
-				Required:  plan.n,
-				Placed:    plan.placed,
-				StoodDown: plan.stoodDown,
-				Shortfall: 0,
-				Reason:    ReasonPinPrecedesDependency,
-				BlockedBy: viol,
-			})
+			report.Tasks = append(report.Tasks, reportFor(plan, ReasonPinPrecedesDependency, viol, 0))
 		}
 	}
 

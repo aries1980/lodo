@@ -25,10 +25,6 @@ type builder struct {
 	pinMask    grid.Mask
 	pinnedMask grid.Mask
 	baseBusy   grid.Mask
-
-	traceNow        time.Time
-	traceToday      model.CivilDate
-	traceHorizonEnd model.CivilDate
 }
 
 // addExact emits a Block at its exact time, never snapped, and marks every
@@ -60,9 +56,25 @@ func (b *builder) addFlexible(block model.Block, run grid.Run) {
 	b.busy.OrInto(b.g.Overlapping(block.Start, block.End))
 }
 
-// place searches the Task's free slots and emits its flexible Blocks.
-// Bound is the dependency-aware lower bound: the Task may not start before
-// bound (max of now and its dependencies' ends).
+// searchWindow resolves the window one placed Task may use: the Plan clip
+// unless it is overdue, then the dependency/now bound.
+func (r *planRun) searchWindow(plan *taskPlan, bound time.Time) searchWindow {
+	from, to := r.g.WindowStart(), r.g.WindowEnd()
+	overdue := overdue(plan.task, r.today)
+	if !overdue {
+		if plan.task.PlanStart != nil {
+			from = plan.task.PlanStart.Midnight(r.g.Location())
+		}
+		if plan.task.PlanEnd != nil {
+			to = plan.task.PlanEnd.AddDays(1).Midnight(r.g.Location())
+		}
+	}
+	return searchWindow{overdue: overdue, from: from, to: to, bound: bound}
+}
+
+// placeWithBound searches the Task's free slots and emits its flexible Blocks.
+// win carries the effective window and the dependency-aware lower bound: the
+// Task may not start before it.
 //
 // Hours still required are placed in three tier passes — green, then yellow,
 // then red — so a later green window beats an earlier yellow one. A Task that
@@ -73,31 +85,13 @@ func (b *builder) addFlexible(block model.Block, run grid.Run) {
 // pass uses the ADR 0010 comparator on that tier's free runs. A Block never
 // crosses a tier boundary. The minimum-Block floor applies per pass, so a
 // one-slot green fragment is left unused and the hours can spill.
-func (b *builder) placeWithBound(plan *taskPlan, maps map[string]model.TimeMap, overdue bool, bound time.Time) {
-	from, to := b.g.WindowStart(), b.g.WindowEnd()
-	if !overdue {
-		if plan.task.PlanStart != nil {
-			from = plan.task.PlanStart.Midnight(b.g.Location())
-		}
-		if plan.task.PlanEnd != nil {
-			to = plan.task.PlanEnd.AddDays(1).Midnight(b.g.Location())
-		}
-	}
-	window := b.g.Inside(from, to).And(b.g.NotBefore(bound))
+func (b *builder) placeWithBound(plan *taskPlan, maps map[string]model.TimeMap, win searchWindow) searchResult {
+	window := b.g.Inside(win.from, win.to).And(b.g.NotBefore(win.bound))
 
 	floor := 2
 	if plan.n == 1 {
 		floor = 1
 	}
-
-	plan.decision.Window.Overdue = overdue
-	plan.decision.Window.From = from
-	plan.decision.Window.To = to
-	plan.decision.Window.Bound = bound
-	if b.traceHorizonEnd.Year != 0 {
-		plan.decision.Window.HorizonEnd = b.traceHorizonEnd.String()
-	}
-	plan.decision.Placement = &Placement{Floor: floor, RequiredSlots: plan.n}
 
 	left := plan.required()
 	next := 0
@@ -112,7 +106,7 @@ func (b *builder) placeWithBound(plan *taskPlan, maps map[string]model.TimeMap, 
 	}
 	state := &tierState{
 		left: &left, next: &next, trace: &trace, window: window,
-		inside: insideMask(b.g, from, to), notBefore: b.g.NotBefore(bound),
+		inside: insideMask(b.g, win.from, win.to), notBefore: b.g.NotBefore(win.bound),
 		floor: floor,
 	}
 
@@ -125,8 +119,12 @@ func (b *builder) placeWithBound(plan *taskPlan, maps map[string]model.TimeMap, 
 			b.placeTier(plan, state, b.eligibilityFor(fallback, tier), tier, false, true)
 		}
 	}
-	plan.decision.TimeMaps = trace
 	plan.shortfall = left
+	return searchResult{
+		window:    win,
+		placement: Placement{Floor: floor, RequiredSlots: plan.n},
+		timeMaps:  trace,
+	}
 }
 
 // tierState carries the mutable placement cursor across tier passes.

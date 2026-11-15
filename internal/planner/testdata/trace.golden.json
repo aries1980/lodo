@@ -1,0 +1,1650 @@
+{
+  "Blocks": [
+    {
+      "TaskID": "pin",
+      "Index": 0,
+      "Start": "2026-11-09T08:00:00Z",
+      "End": "2026-11-09T08:30:00Z",
+      "Slots": 2,
+      "Kind": "pin"
+    },
+    {
+      "TaskID": "partial",
+      "Index": 0,
+      "Start": "2026-11-09T09:00:00Z",
+      "End": "2026-11-09T10:00:00Z",
+      "Slots": 4,
+      "Kind": "flexible"
+    },
+    {
+      "TaskID": "mixed",
+      "Index": 1,
+      "Start": "2026-11-09T10:00:00Z",
+      "End": "2026-11-09T10:30:00Z",
+      "Slots": 2,
+      "Kind": "pinned"
+    },
+    {
+      "TaskID": "partial",
+      "Index": 1,
+      "Start": "2026-11-09T10:30:00Z",
+      "End": "2026-11-09T12:00:00Z",
+      "Slots": 6,
+      "Kind": "flexible"
+    },
+    {
+      "TaskID": "bound",
+      "Index": 0,
+      "Start": "2026-11-10T09:00:00Z",
+      "End": "2026-11-10T09:30:00Z",
+      "Slots": 2,
+      "Kind": "flexible"
+    },
+    {
+      "TaskID": "mixed",
+      "Index": 0,
+      "Start": "2026-11-10T09:30:00Z",
+      "End": "2026-11-10T10:30:00Z",
+      "Slots": 4,
+      "Kind": "flexible"
+    },
+    {
+      "TaskID": "placed",
+      "Index": 0,
+      "Start": "2026-11-10T10:30:00Z",
+      "End": "2026-11-10T11:30:00Z",
+      "Slots": 4,
+      "Kind": "flexible"
+    }
+  ],
+  "Report": {
+    "Tasks": [
+      {
+        "TaskID": "cyc-a",
+        "Required": 2,
+        "Placed": 0,
+        "StoodDown": 0,
+        "Shortfall": 2,
+        "Reason": "dependency cycle: Tasks in the cycle are left unscheduled",
+        "BlockedBy": [
+          "cyc-b"
+        ]
+      },
+      {
+        "TaskID": "cyc-b",
+        "Required": 2,
+        "Placed": 0,
+        "StoodDown": 0,
+        "Shortfall": 2,
+        "Reason": "dependency cycle: Tasks in the cycle are left unscheduled",
+        "BlockedBy": [
+          "cyc-a"
+        ]
+      },
+      {
+        "TaskID": "cyc-tail",
+        "Required": 2,
+        "Placed": 0,
+        "StoodDown": 0,
+        "Shortfall": 2,
+        "Reason": "blocked by incomplete dependencies",
+        "BlockedBy": [
+          "cyc-a"
+        ]
+      },
+      {
+        "TaskID": "unknown",
+        "Required": 2,
+        "Placed": 0,
+        "StoodDown": 0,
+        "Shortfall": 2,
+        "Reason": "unknown dependency: depends:: references no Task",
+        "BlockedBy": [
+          "ghost"
+        ]
+      },
+      {
+        "TaskID": "partial",
+        "Required": 16,
+        "Placed": 10,
+        "StoodDown": 0,
+        "Shortfall": 6,
+        "Reason": "not enough eligible time to place the whole Task",
+        "BlockedBy": null
+      },
+      {
+        "TaskID": "none",
+        "Required": 4,
+        "Placed": 0,
+        "StoodDown": 0,
+        "Shortfall": 4,
+        "Reason": "no eligible time in the Scheduling window",
+        "BlockedBy": null
+      },
+      {
+        "TaskID": "dep-on-none",
+        "Required": 2,
+        "Placed": 0,
+        "StoodDown": 0,
+        "Shortfall": 2,
+        "Reason": "blocked by incomplete dependencies",
+        "BlockedBy": [
+          "none"
+        ]
+      },
+      {
+        "TaskID": "spill",
+        "Required": 8,
+        "Placed": 0,
+        "StoodDown": 0,
+        "Shortfall": 8,
+        "Reason": "no eligible time in the Scheduling window",
+        "BlockedBy": null
+      },
+      {
+        "TaskID": "pin",
+        "Required": 2,
+        "Placed": 2,
+        "StoodDown": 0,
+        "Shortfall": 0,
+        "Reason": "pin precedes dependency: the Pin stays, the order is violated",
+        "BlockedBy": [
+          "placed"
+        ]
+      }
+    ]
+  },
+  "Explanations": [
+    {
+      "TaskID": "pin",
+      "BlockIndex": 0,
+      "Kind": "pin",
+      "Start": "2026-11-09T08:00:00Z",
+      "Slots": 2,
+      "RunStart": "0001-01-01T00:00:00Z",
+      "RunSlots": 0
+    },
+    {
+      "TaskID": "partial",
+      "BlockIndex": 0,
+      "Kind": "flexible",
+      "Start": "2026-11-09T09:00:00Z",
+      "Slots": 4,
+      "RunStart": "2026-11-09T09:00:00Z",
+      "RunSlots": 4
+    },
+    {
+      "TaskID": "mixed",
+      "BlockIndex": 1,
+      "Kind": "pinned",
+      "Start": "2026-11-09T10:00:00Z",
+      "Slots": 2,
+      "RunStart": "0001-01-01T00:00:00Z",
+      "RunSlots": 0
+    },
+    {
+      "TaskID": "partial",
+      "BlockIndex": 1,
+      "Kind": "flexible",
+      "Start": "2026-11-09T10:30:00Z",
+      "Slots": 6,
+      "RunStart": "2026-11-09T10:30:00Z",
+      "RunSlots": 6
+    },
+    {
+      "TaskID": "bound",
+      "BlockIndex": 0,
+      "Kind": "flexible",
+      "Start": "2026-11-10T09:00:00Z",
+      "Slots": 2,
+      "RunStart": "2026-11-10T09:00:00Z",
+      "RunSlots": 12
+    },
+    {
+      "TaskID": "mixed",
+      "BlockIndex": 0,
+      "Kind": "flexible",
+      "Start": "2026-11-10T09:30:00Z",
+      "Slots": 4,
+      "RunStart": "2026-11-10T09:30:00Z",
+      "RunSlots": 10
+    },
+    {
+      "TaskID": "placed",
+      "BlockIndex": 0,
+      "Kind": "flexible",
+      "Start": "2026-11-10T10:30:00Z",
+      "Slots": 4,
+      "RunStart": "2026-11-10T10:30:00Z",
+      "RunSlots": 6
+    }
+  ],
+  "Decisions": [
+    {
+      "task_id": "beyond",
+      "task": "beyond",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 4,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 4,
+        "beyond_horizon": true,
+        "considered": false,
+        "skip_reason": "beyond scheduling horizon: not due yet"
+      },
+      "ordering": {
+        "kind": "time-bound",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 4,
+        "total": 8,
+        "tie_break": "beyond-horizon",
+        "tie_break_detail": "not due yet: plan-start is on or after the horizon end; left unplaced silently until it enters the window"
+      },
+      "dependency": {
+        "blocked": false,
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "plan_start": "2026-11-16",
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "outcome": {
+        "required": 4,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 4
+      }
+    },
+    {
+      "task_id": "bound",
+      "task": "bound",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 2,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 2,
+        "beyond_horizon": false,
+        "considered": true
+      },
+      "ordering": {
+        "kind": "time-bound",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "plan_end": "2026-11-10",
+        "position": 2,
+        "total": 8,
+        "tie_break": "plan-end",
+        "tie_break_detail": "plan-end 2026-11-10 vs 2026-11-14"
+      },
+      "dependency": {
+        "blocked": false,
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "plan_end": "2026-11-10",
+        "from": "2026-11-09T00:00:00Z",
+        "to": "2026-11-11T00:00:00Z",
+        "bound": "2026-11-09T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "requested": [
+          "deep"
+        ],
+        "primary": [
+          "deep"
+        ],
+        "best_tier": "green",
+        "no_upward_spill": false,
+        "passes": [
+          {
+            "tier": "green",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 2,
+            "slots_placed": 2,
+            "slots_after": 0,
+            "floor": 2,
+            "eligible_tier_slots": 60,
+            "window_slots": 24,
+            "free_slots": 12,
+            "runs_considered": 1,
+            "runs_below_floor": 0,
+            "rejected_busy": 12,
+            "rejected_out_of_window": 36,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 2,
+            "rejected_placed_earlier": 10,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 36,
+            "comparator": {
+              "completeness": 2,
+              "candidates": 1,
+              "feasible_runs": 1,
+              "chosen_blocks": 1,
+              "decision_keys": [
+                "completeness (max placed hours)",
+                "contiguity (single block when feasible)",
+                "front-loading/start day (earliest feasible)"
+              ],
+              "allocations": [
+                {
+                  "run_start": "2026-11-10T09:00:00Z",
+                  "run_slots": 12,
+                  "slots": 2
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "placement": {
+        "floor": 2,
+        "required_slots": 2
+      },
+      "blocks": [
+        {
+          "index": 0,
+          "kind": "flexible",
+          "start": "2026-11-10T09:00:00Z",
+          "end": "2026-11-10T09:30:00Z",
+          "slots": 2,
+          "run_start": "2026-11-10T09:00:00Z",
+          "run_slots": 12
+        }
+      ],
+      "outcome": {
+        "required": 2,
+        "placed": 2,
+        "stood_down": 0,
+        "shortfall": 0
+      }
+    },
+    {
+      "task_id": "container",
+      "task": "container",
+      "eligibility": {
+        "container": true,
+        "pin": false,
+        "required_slots": 0,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 0,
+        "beyond_horizon": false,
+        "considered": false,
+        "skip_reason": "container: never scheduled"
+      },
+      "ordering": {
+        "kind": "container",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 0,
+        "total": 8,
+        "tie_break": "never-scheduled",
+        "tie_break_detail": "containers never enter consideration order; only their leaves are scheduled"
+      },
+      "dependency": {
+        "blocked": false,
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "outcome": {
+        "required": 0,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 0
+      }
+    },
+    {
+      "task_id": "cyc-a",
+      "task": "cyc-a",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 2,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 2,
+        "beyond_horizon": false,
+        "considered": false,
+        "skip_reason": "dependency cycle"
+      },
+      "ordering": {
+        "kind": "cycle-blocked",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 0,
+        "total": 8,
+        "tie_break": "dependency-cycle",
+        "tie_break_detail": "dependency cycle: tasks in the cycle are left unscheduled"
+      },
+      "dependency": {
+        "depends": [
+          "cyc-b"
+        ],
+        "blocked": true,
+        "block_reason": "dependency cycle: Tasks in the cycle are left unscheduled",
+        "blocked_by": [
+          "cyc-b"
+        ],
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": true,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "outcome": {
+        "required": 2,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 2,
+        "reason": "dependency cycle: Tasks in the cycle are left unscheduled",
+        "blocked_by": [
+          "cyc-b"
+        ]
+      }
+    },
+    {
+      "task_id": "cyc-b",
+      "task": "cyc-b",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 2,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 2,
+        "beyond_horizon": false,
+        "considered": false,
+        "skip_reason": "dependency cycle"
+      },
+      "ordering": {
+        "kind": "cycle-blocked",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 0,
+        "total": 8,
+        "tie_break": "dependency-cycle",
+        "tie_break_detail": "dependency cycle: tasks in the cycle are left unscheduled"
+      },
+      "dependency": {
+        "depends": [
+          "cyc-a"
+        ],
+        "blocked": true,
+        "block_reason": "dependency cycle: Tasks in the cycle are left unscheduled",
+        "blocked_by": [
+          "cyc-a"
+        ],
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": true,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "outcome": {
+        "required": 2,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 2,
+        "reason": "dependency cycle: Tasks in the cycle are left unscheduled",
+        "blocked_by": [
+          "cyc-a"
+        ]
+      }
+    },
+    {
+      "task_id": "cyc-tail",
+      "task": "cyc-tail",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 2,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 2,
+        "beyond_horizon": false,
+        "considered": false,
+        "skip_reason": "blocked by dependency"
+      },
+      "ordering": {
+        "kind": "blocked",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 0,
+        "total": 8,
+        "tie_break": "dependency",
+        "tie_break_detail": "blocked by unplaced dependency; downstream of a cycle or blocked task"
+      },
+      "dependency": {
+        "depends": [
+          "cyc-a"
+        ],
+        "blocked": true,
+        "block_reason": "blocked by incomplete dependencies",
+        "blocked_by": [
+          "cyc-a"
+        ],
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "outcome": {
+        "required": 2,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 2,
+        "reason": "blocked by incomplete dependencies",
+        "blocked_by": [
+          "cyc-a"
+        ]
+      }
+    },
+    {
+      "task_id": "dep-on-none",
+      "task": "dep-on-none",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 2,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 2,
+        "beyond_horizon": false,
+        "considered": true
+      },
+      "ordering": {
+        "kind": "flexible",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 5,
+        "total": 8,
+        "tie_break": "dependency",
+        "tie_break_detail": "dependency-ordered after none; topological order overrides tie-breaks"
+      },
+      "dependency": {
+        "depends": [
+          "none"
+        ],
+        "blocked": true,
+        "block_reason": "blocked by incomplete dependencies",
+        "blocked_by": [
+          "none"
+        ],
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "outcome": {
+        "required": 2,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 2,
+        "reason": "blocked by incomplete dependencies",
+        "blocked_by": [
+          "none"
+        ]
+      }
+    },
+    {
+      "task_id": "mixed",
+      "task": "mixed",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 8,
+        "stood_down_slots": 2,
+        "pinned_slots": 2,
+        "flexible_slots": 4,
+        "beyond_horizon": false,
+        "considered": true
+      },
+      "ordering": {
+        "kind": "flexible",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 6,
+        "total": 8,
+        "tie_break": "id",
+        "tie_break_detail": "id mixed vs placed"
+      },
+      "dependency": {
+        "blocked": false,
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "2026-11-09T00:00:00Z",
+        "to": "2026-11-16T00:00:00Z",
+        "bound": "2026-11-09T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "requested": [
+          "deep"
+        ],
+        "primary": [
+          "deep"
+        ],
+        "best_tier": "green",
+        "no_upward_spill": false,
+        "passes": [
+          {
+            "tier": "green",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 4,
+            "slots_placed": 4,
+            "slots_after": 0,
+            "floor": 2,
+            "eligible_tier_slots": 60,
+            "window_slots": 60,
+            "free_slots": 46,
+            "runs_considered": 4,
+            "runs_below_floor": 0,
+            "rejected_busy": 14,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 2,
+            "rejected_placed_earlier": 12,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0,
+            "comparator": {
+              "completeness": 4,
+              "candidates": 4,
+              "feasible_runs": 4,
+              "chosen_blocks": 1,
+              "decision_keys": [
+                "completeness (max placed hours)",
+                "contiguity (single block when feasible)",
+                "front-loading/start day (earliest feasible)"
+              ],
+              "allocations": [
+                {
+                  "run_start": "2026-11-10T09:30:00Z",
+                  "run_slots": 10,
+                  "slots": 4
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "placement": {
+        "floor": 2,
+        "required_slots": 8
+      },
+      "blocks": [
+        {
+          "index": 1,
+          "kind": "pinned",
+          "start": "2026-11-09T10:00:00Z",
+          "end": "2026-11-09T10:30:00Z",
+          "slots": 2,
+          "run_start": "0001-01-01T00:00:00Z",
+          "run_slots": 0
+        },
+        {
+          "index": 0,
+          "kind": "flexible",
+          "start": "2026-11-10T09:30:00Z",
+          "end": "2026-11-10T10:30:00Z",
+          "slots": 4,
+          "run_start": "2026-11-10T09:30:00Z",
+          "run_slots": 10
+        }
+      ],
+      "outcome": {
+        "required": 8,
+        "placed": 6,
+        "stood_down": 2,
+        "shortfall": 0
+      }
+    },
+    {
+      "task_id": "none",
+      "task": "none",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 4,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 4,
+        "beyond_horizon": false,
+        "considered": true
+      },
+      "ordering": {
+        "kind": "time-bound",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "plan_end": "2026-11-14",
+        "position": 3,
+        "total": 8,
+        "tie_break": "plan-end",
+        "tie_break_detail": "plan-end: none due 2026-11-14 before beyond with no plan-end"
+      },
+      "dependency": {
+        "blocked": false,
+        "block_reason": "no eligible time in the Scheduling window",
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "plan_start": "2026-11-14",
+        "plan_end": "2026-11-14",
+        "from": "2026-11-14T00:00:00Z",
+        "to": "2026-11-15T00:00:00Z",
+        "bound": "2026-11-09T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "requested": [
+          "deep"
+        ],
+        "primary": [
+          "deep"
+        ],
+        "best_tier": "green",
+        "no_upward_spill": false,
+        "passes": [
+          {
+            "tier": "green",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 4,
+            "slots_placed": 0,
+            "slots_after": 4,
+            "floor": 2,
+            "eligible_tier_slots": 60,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 60,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 60
+          },
+          {
+            "tier": "yellow",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 4,
+            "slots_placed": 0,
+            "slots_after": 4,
+            "floor": 2,
+            "eligible_tier_slots": 0,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          },
+          {
+            "tier": "red",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 4,
+            "slots_placed": 0,
+            "slots_after": 4,
+            "floor": 2,
+            "eligible_tier_slots": 0,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          }
+        ]
+      },
+      "placement": {
+        "floor": 2,
+        "required_slots": 4
+      },
+      "outcome": {
+        "required": 4,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 4,
+        "reason": "no eligible time in the Scheduling window"
+      }
+    },
+    {
+      "task_id": "partial",
+      "task": "partial",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 16,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 16,
+        "beyond_horizon": false,
+        "considered": true
+      },
+      "ordering": {
+        "kind": "time-bound",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "plan_end": "2026-11-09",
+        "position": 1,
+        "total": 8,
+        "tie_break": "plan-end",
+        "tie_break_detail": "plan-end 2026-11-09 vs 2026-11-10"
+      },
+      "dependency": {
+        "blocked": false,
+        "block_reason": "not enough eligible time to place the whole Task",
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "plan_end": "2026-11-09",
+        "from": "2026-11-09T00:00:00Z",
+        "to": "2026-11-10T00:00:00Z",
+        "bound": "2026-11-09T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "requested": [
+          "deep"
+        ],
+        "primary": [
+          "deep"
+        ],
+        "best_tier": "green",
+        "no_upward_spill": false,
+        "passes": [
+          {
+            "tier": "green",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 16,
+            "slots_placed": 10,
+            "slots_after": 6,
+            "floor": 2,
+            "eligible_tier_slots": 60,
+            "window_slots": 12,
+            "free_slots": 10,
+            "runs_considered": 2,
+            "runs_below_floor": 0,
+            "rejected_busy": 2,
+            "rejected_out_of_window": 48,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 2,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 48,
+            "comparator": {
+              "completeness": 10,
+              "candidates": 2,
+              "feasible_runs": 2,
+              "chosen_blocks": 2,
+              "decision_keys": [
+                "completeness (max placed hours)",
+                "block count (fewer blocks)",
+                "block starts (earlier)",
+                "block sizes (largest-first)",
+                "front-loading/start day (earliest feasible)"
+              ],
+              "allocations": [
+                {
+                  "run_start": "2026-11-09T09:00:00Z",
+                  "run_slots": 4,
+                  "slots": 4
+                },
+                {
+                  "run_start": "2026-11-09T10:30:00Z",
+                  "run_slots": 6,
+                  "slots": 6
+                }
+              ]
+            }
+          },
+          {
+            "tier": "yellow",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 6,
+            "slots_placed": 0,
+            "slots_after": 6,
+            "floor": 2,
+            "eligible_tier_slots": 0,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          },
+          {
+            "tier": "red",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 6,
+            "slots_placed": 0,
+            "slots_after": 6,
+            "floor": 2,
+            "eligible_tier_slots": 0,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          }
+        ]
+      },
+      "placement": {
+        "floor": 2,
+        "required_slots": 16
+      },
+      "blocks": [
+        {
+          "index": 0,
+          "kind": "flexible",
+          "start": "2026-11-09T09:00:00Z",
+          "end": "2026-11-09T10:00:00Z",
+          "slots": 4,
+          "run_start": "2026-11-09T09:00:00Z",
+          "run_slots": 4
+        },
+        {
+          "index": 1,
+          "kind": "flexible",
+          "start": "2026-11-09T10:30:00Z",
+          "end": "2026-11-09T12:00:00Z",
+          "slots": 6,
+          "run_start": "2026-11-09T10:30:00Z",
+          "run_slots": 6
+        }
+      ],
+      "outcome": {
+        "required": 16,
+        "placed": 10,
+        "stood_down": 0,
+        "shortfall": 6,
+        "reason": "not enough eligible time to place the whole Task"
+      }
+    },
+    {
+      "task_id": "pin",
+      "task": "pin",
+      "eligibility": {
+        "container": false,
+        "pin": true,
+        "required_slots": 2,
+        "stood_down_slots": 0,
+        "pinned_slots": 2,
+        "flexible_slots": 0,
+        "beyond_horizon": false,
+        "considered": true
+      },
+      "ordering": {
+        "kind": "pin",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 0,
+        "total": 8,
+        "tie_break": "pin-first",
+        "tie_break_detail": "pins are placed first at their exact time; everything else schedules around them"
+      },
+      "dependency": {
+        "depends": [
+          "placed"
+        ],
+        "blocked": true,
+        "block_reason": "pin precedes dependency: the Pin stays, the order is violated",
+        "blocked_by": [
+          "placed"
+        ],
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": true
+      },
+      "window": {
+        "overdue": false,
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "blocks": [
+        {
+          "index": 0,
+          "kind": "pin",
+          "start": "2026-11-09T08:00:00Z",
+          "end": "2026-11-09T08:30:00Z",
+          "slots": 2,
+          "run_start": "0001-01-01T00:00:00Z",
+          "run_slots": 0
+        }
+      ],
+      "outcome": {
+        "required": 2,
+        "placed": 2,
+        "stood_down": 0,
+        "shortfall": 0,
+        "reason": "pin precedes dependency: the Pin stays, the order is violated",
+        "blocked_by": [
+          "placed"
+        ]
+      }
+    },
+    {
+      "task_id": "placed",
+      "task": "placed",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 4,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 4,
+        "beyond_horizon": false,
+        "considered": true
+      },
+      "ordering": {
+        "kind": "flexible",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 7,
+        "total": 8,
+        "tie_break": "id",
+        "tie_break_detail": "id placed vs spill"
+      },
+      "dependency": {
+        "blocked": false,
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "2026-11-09T00:00:00Z",
+        "to": "2026-11-16T00:00:00Z",
+        "bound": "2026-11-09T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "requested": [
+          "deep"
+        ],
+        "primary": [
+          "deep"
+        ],
+        "best_tier": "green",
+        "no_upward_spill": false,
+        "passes": [
+          {
+            "tier": "green",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 4,
+            "slots_placed": 4,
+            "slots_after": 0,
+            "floor": 2,
+            "eligible_tier_slots": 60,
+            "window_slots": 60,
+            "free_slots": 42,
+            "runs_considered": 4,
+            "runs_below_floor": 0,
+            "rejected_busy": 18,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 2,
+            "rejected_placed_earlier": 16,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0,
+            "comparator": {
+              "completeness": 4,
+              "candidates": 4,
+              "feasible_runs": 4,
+              "chosen_blocks": 1,
+              "decision_keys": [
+                "completeness (max placed hours)",
+                "contiguity (single block when feasible)",
+                "front-loading/start day (earliest feasible)"
+              ],
+              "allocations": [
+                {
+                  "run_start": "2026-11-10T10:30:00Z",
+                  "run_slots": 6,
+                  "slots": 4
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "placement": {
+        "floor": 2,
+        "required_slots": 4
+      },
+      "blocks": [
+        {
+          "index": 0,
+          "kind": "flexible",
+          "start": "2026-11-10T10:30:00Z",
+          "end": "2026-11-10T11:30:00Z",
+          "slots": 4,
+          "run_start": "2026-11-10T10:30:00Z",
+          "run_slots": 6
+        }
+      ],
+      "outcome": {
+        "required": 4,
+        "placed": 4,
+        "stood_down": 0,
+        "shortfall": 0
+      }
+    },
+    {
+      "task_id": "satisfied",
+      "task": "satisfied",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 4,
+        "stood_down_slots": 4,
+        "pinned_slots": 0,
+        "flexible_slots": 0,
+        "beyond_horizon": false,
+        "considered": false,
+        "skip_reason": "fully satisfied by pinned/stood-down dispositions"
+      },
+      "ordering": {
+        "kind": "time-bound",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 0,
+        "total": 8,
+        "tie_break": "satisfied",
+        "tie_break_detail": "fully satisfied by pinned/stood-down dispositions; no flexible hours remain"
+      },
+      "dependency": {
+        "blocked": false,
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "plan_start": "2026-11-11",
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "outcome": {
+        "required": 4,
+        "placed": 0,
+        "stood_down": 4,
+        "shortfall": 0
+      }
+    },
+    {
+      "task_id": "spill",
+      "task": "spill",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 8,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 8,
+        "beyond_horizon": false,
+        "considered": true
+      },
+      "ordering": {
+        "kind": "flexible",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 8,
+        "total": 8,
+        "tie_break": "only-ready",
+        "tie_break_detail": "only ready task; no peer tie-break"
+      },
+      "dependency": {
+        "blocked": false,
+        "block_reason": "no eligible time in the Scheduling window",
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "2026-11-09T00:00:00Z",
+        "to": "2026-11-16T00:00:00Z",
+        "bound": "2026-11-09T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "requested": [
+          "yellow"
+        ],
+        "primary": [
+          "yellow"
+        ],
+        "fallback": [
+          "deep"
+        ],
+        "best_tier": "yellow",
+        "no_upward_spill": true,
+        "passes": [
+          {
+            "tier": "green",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 8,
+            "slots_placed": 0,
+            "slots_after": 8,
+            "floor": 2,
+            "eligible_tier_slots": 0,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          },
+          {
+            "tier": "yellow",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 8,
+            "slots_placed": 0,
+            "slots_after": 8,
+            "floor": 2,
+            "eligible_tier_slots": 4,
+            "window_slots": 4,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 4,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 4,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          },
+          {
+            "tier": "yellow",
+            "primary": false,
+            "fallback_allowed": true,
+            "slots_before": 8,
+            "slots_placed": 0,
+            "slots_after": 8,
+            "floor": 2,
+            "eligible_tier_slots": 0,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          },
+          {
+            "tier": "red",
+            "primary": true,
+            "fallback_allowed": false,
+            "slots_before": 8,
+            "slots_placed": 0,
+            "slots_after": 8,
+            "floor": 2,
+            "eligible_tier_slots": 0,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          },
+          {
+            "tier": "red",
+            "primary": false,
+            "fallback_allowed": true,
+            "slots_before": 8,
+            "slots_placed": 0,
+            "slots_after": 8,
+            "floor": 2,
+            "eligible_tier_slots": 0,
+            "window_slots": 0,
+            "free_slots": 0,
+            "runs_considered": 0,
+            "runs_below_floor": 0,
+            "rejected_busy": 0,
+            "rejected_out_of_window": 0,
+            "rejected_below_floor_slots": 0,
+            "rejected_external": 0,
+            "rejected_pin": 0,
+            "rejected_pinned": 0,
+            "rejected_placed_earlier": 0,
+            "rejected_before_bound": 0,
+            "rejected_outside_plan": 0
+          }
+        ]
+      },
+      "placement": {
+        "floor": 2,
+        "required_slots": 8
+      },
+      "outcome": {
+        "required": 8,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 8,
+        "reason": "no eligible time in the Scheduling window"
+      }
+    },
+    {
+      "task_id": "unknown",
+      "task": "unknown",
+      "eligibility": {
+        "container": false,
+        "pin": false,
+        "required_slots": 2,
+        "stood_down_slots": 0,
+        "pinned_slots": 0,
+        "flexible_slots": 2,
+        "beyond_horizon": false,
+        "considered": false,
+        "skip_reason": "blocked by unknown dependency"
+      },
+      "ordering": {
+        "kind": "blocked",
+        "graph_order": 0,
+        "priority_rank": 3,
+        "outline_order": 0,
+        "position": 0,
+        "total": 8,
+        "tie_break": "blocked",
+        "tie_break_detail": "unknown dependency: depends:: references no task"
+      },
+      "dependency": {
+        "depends": [
+          "ghost"
+        ],
+        "blocked": true,
+        "block_reason": "unknown dependency: depends:: references no Task",
+        "blocked_by": [
+          "ghost"
+        ],
+        "lower_bound": "0001-01-01T00:00:00Z",
+        "cycle_member": false,
+        "pin_violation": false
+      },
+      "window": {
+        "overdue": false,
+        "from": "0001-01-01T00:00:00Z",
+        "to": "0001-01-01T00:00:00Z",
+        "bound": "0001-01-01T00:00:00Z",
+        "horizon_end": "2026-11-16"
+      },
+      "time_maps": {
+        "no_upward_spill": false
+      },
+      "outcome": {
+        "required": 2,
+        "placed": 0,
+        "stood_down": 0,
+        "shortfall": 2,
+        "reason": "unknown dependency: depends:: references no Task",
+        "blocked_by": [
+          "ghost"
+        ]
+      }
+    }
+  ],
+  "Suggestions": [
+    {
+      "TaskID": "cyc-a",
+      "Reason": "fix-cycle",
+      "Change": "break dependency cycle",
+      "Impact": "unblocks tasks in cycle",
+      "Tier": ""
+    },
+    {
+      "TaskID": "cyc-b",
+      "Reason": "fix-cycle",
+      "Change": "break dependency cycle",
+      "Impact": "unblocks tasks in cycle",
+      "Tier": ""
+    },
+    {
+      "TaskID": "cyc-tail",
+      "Reason": "fix-cycle",
+      "Change": "break dependency cycle",
+      "Impact": "unblocks tasks in cycle",
+      "Tier": ""
+    },
+    {
+      "TaskID": "dep-on-none",
+      "Reason": "complete-dependency",
+      "Change": "complete none first",
+      "Impact": "unblocks dep-on-none",
+      "Tier": ""
+    },
+    {
+      "TaskID": "none",
+      "Reason": "add-time-map-hours",
+      "Change": "add Time Map hours on Sun, Sat",
+      "Impact": "adds capacity",
+      "Tier": ""
+    },
+    {
+      "TaskID": "none",
+      "Reason": "extend-plan-end",
+      "Change": "move plan-end by 2 days",
+      "Impact": "adds ~2 days of eligible green capacity",
+      "Tier": "green"
+    },
+    {
+      "TaskID": "none",
+      "Reason": "reduce-duration",
+      "Change": "reduce duration by 1h",
+      "Impact": "fits in current window",
+      "Tier": ""
+    },
+    {
+      "TaskID": "partial",
+      "Reason": "add-time-map-hours",
+      "Change": "add Time Map hours on Sun, Sat",
+      "Impact": "adds capacity",
+      "Tier": ""
+    },
+    {
+      "TaskID": "partial",
+      "Reason": "extend-plan-end",
+      "Change": "move plan-end by 2 days",
+      "Impact": "adds ~2 days of eligible green capacity",
+      "Tier": "green"
+    },
+    {
+      "TaskID": "partial",
+      "Reason": "reduce-duration",
+      "Change": "reduce duration by 90m",
+      "Impact": "fits in current window",
+      "Tier": ""
+    },
+    {
+      "TaskID": "spill",
+      "Reason": "add-time-map-hours",
+      "Change": "add Time Map hours on Sun, Tue",
+      "Impact": "adds capacity",
+      "Tier": ""
+    },
+    {
+      "TaskID": "spill",
+      "Reason": "reduce-duration",
+      "Change": "reduce duration by 2h",
+      "Impact": "fits in current window",
+      "Tier": ""
+    },
+    {
+      "TaskID": "unknown",
+      "Reason": "fix-dependency",
+      "Change": "fix depends:: reference ghost",
+      "Impact": "unblocks task",
+      "Tier": ""
+    }
+  ]
+}

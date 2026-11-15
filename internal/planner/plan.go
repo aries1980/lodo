@@ -5,14 +5,15 @@
 // identical inputs always produce identical output (ADR 0006).
 //
 // Files, in pipeline order:
-//   - plan.go — Plan, pins, and the candidate index
-//   - taskplan.go — one Task's placement state
+//   - plan.go — Plan, Input/Schedule, and the pin helpers
+//   - run.go — planRun, the state one Plan call threads through its phases
+//   - taskplan.go — one Task's placement state and explain facts
 //   - order.go — dependency order (topoOrder)
 //   - search.go — free-run search and Block emission
 //   - comparator.go — the ADR 0010 placement comparator
 //   - report.go — the dependency gate (placeOrdered) and the shortfall report
-//   - decisions.go — per-Task explain decisions
-//   - trace.go — explain decision types Plan fills in
+//   - decisions.go — the single explain-decision assembler
+//   - trace.go — explain decision types
 //   - suggest.go — advisory suggestions for shortfalls
 package planner
 
@@ -133,17 +134,6 @@ func (l planLookup) lookup(dep string) (depPlan *taskPlan, ok bool) {
 	return nil, false
 }
 
-// placementScope bundles the read-only horizon inputs that travel with
-// every placement/reporting call: dependency end times, Time Maps, and the
-// scheduling window. It replaces five separate parameters.
-type placementScope struct {
-	ends       map[string]time.Time
-	maps       map[string]model.TimeMap
-	today      model.CivilDate
-	horizonEnd model.CivilDate
-	now        time.Time
-}
-
 // Explanation records where one Block came from, for `forecast` and
 // `schedule --verbose`. RunStart and RunSlots describe the free run a flexible
 // Block was placed in; they are zero for Pins and Pinned Blocks.
@@ -162,91 +152,18 @@ func Plan(in Input) (Schedule, error) {
 		return Schedule{}, err
 	}
 
-	g := grid.Build(in.Now, in.Location, in.Granularity, in.WindowDays)
-	busy, err := buildBusy(in.Busy, g)
+	run, err := newPlanRun(in)
 	if err != nil {
 		return Schedule{}, err
 	}
-
-	dispositions, err := indexDispositions(in.Dispositions)
-	if err != nil {
-		return Schedule{}, err
-	}
-
-	plans, err := buildPlans(in.Tasks, dispositions, in.Granularity)
-	if err != nil {
-		return Schedule{}, err
-	}
-
-	planBuilder := &builder{g: g, busy: busy, external: busy.Clone()}
-	planBuilder.pinMask = grid.NewMask(g.Len())
-	planBuilder.pinnedMask = grid.NewMask(g.Len())
 
 	// Pins are immovable and exact, so they shape the timeline before any
-	// search begins. They are emitted at their authored time, never snapped.
-	// A Pin with dependencies stays at its authored time; the order
-	// violation is reported after placement.
-	pins := collectPins(plans)
-	emitPins(pins, planBuilder)
-	planBuilder.pinMask = planBuilder.busy.AndNot(planBuilder.external)
-	emitPinned(plans, planBuilder, in.Granularity)
-	planBuilder.pinnedMask = planBuilder.busy.AndNot(planBuilder.external).AndNot(planBuilder.pinMask)
-	planBuilder.baseBusy = planBuilder.busy.Clone()
-
-	// Order the search: topological over dependencies first (deps before
-	// dependents, even across time-bound/flexible), existing comparator as
-	// tie-break among unrelated Tasks. Containers never enter the order.
-	today := model.CivilDateOf(in.Now.In(in.Location))
-	horizonEnd := today.AddDays(in.WindowDays)
-
-	lookup := indexPlans(plans)
-	candidates := collectCandidates(plans)
-	blockedUnknown := findUnknownDeps(candidates, lookup)
-	order, cycleSet := topoOrder(candidates, lookup, blockedUnknown)
-
-	maps := indexTimeMaps(in.TimeMaps)
-	scope := placementScope{
-		ends:       initialEnds(pins, plans),
-		maps:       maps,
-		today:      today,
-		horizonEnd: horizonEnd,
-		now:        in.Now,
-	}
-
-	planBuilder.traceNow = in.Now
-	planBuilder.traceToday = today
-	planBuilder.traceHorizonEnd = horizonEnd
-	blockedReason, blockedBy := placeOrdered(planBuilder, order, lookup, cycleSet, &scope)
-
-	report := buildReport(reportInput{
-		candidates:     candidates,
-		order:          order,
-		pins:           pins,
-		lookup:         lookup,
-		cycleSet:       cycleSet,
-		blockedUnknown: blockedUnknown,
-		blockedReason:  blockedReason,
-		blockedBy:      blockedBy,
-		scope:          &scope,
-	})
-
-	blocks, explanations := planBuilder.sorted()
-	decisions := buildDecisions(decisionsInput{
-		plans:          plans,
-		blocks:         blocks,
-		explanations:   explanations,
-		order:          order,
-		pins:           pins,
-		cycleSet:       cycleSet,
-		blockedUnknown: blockedUnknown,
-		blockedReason:  blockedReason,
-		blockedBy:      blockedBy,
-		report:         report,
-		scope:          &scope,
-	})
-	schedule := Schedule{Blocks: blocks, Report: report, Explanations: explanations, Decisions: decisions}
-	schedule.Suggestions = Suggest(in, schedule, cycleSet)
-	return schedule, nil
+	// search begins. Then order the search, gate placement on dependencies,
+	// report shortfalls, and assemble the explain trace from the facts.
+	run.emitPins()
+	run.orderCandidates()
+	run.placeOrdered()
+	return run.schedule(), nil
 }
 
 func validateInput(in Input) error {

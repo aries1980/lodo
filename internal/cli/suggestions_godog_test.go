@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -407,6 +409,116 @@ func (w *suggestionWorld) fixtureBlocks() ([]*logseq.Block, []*logseq.Block) {
 			},
 		}
 		return tasks, maps
+	case "explain-placed":
+		tasks := []*logseq.Block{
+			{
+				UUID:    "t-placed-uuid",
+				Content: "TODO Write brief",
+				Marker:  "TODO",
+				Properties: map[string]any{
+					"duration": "1h",
+				},
+			},
+		}
+		return tasks, wideDefaultMap()
+	case "explain-container":
+		tasks := []*logseq.Block{
+			{
+				UUID:    "t-container-uuid",
+				Content: "TODO Project",
+				Marker:  "TODO",
+				Properties: map[string]any{
+					"duration": "1h",
+				},
+				Children: []*logseq.Block{
+					{
+						UUID:    "t-container-leaf-uuid",
+						Content: "TODO Leaf",
+						Marker:  "TODO",
+						Properties: map[string]any{
+							"duration": "30m",
+						},
+					},
+				},
+			},
+		}
+		return tasks, wideDefaultMap()
+	case "explain-cycle":
+		tasks := []*logseq.Block{
+			{
+				UUID:    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+				Content: "TODO A",
+				Marker:  "TODO",
+				Properties: map[string]any{
+					"duration": "30m",
+					"depends":  "((bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb))",
+				},
+			},
+			{
+				UUID:    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+				Content: "TODO B",
+				Marker:  "TODO",
+				Properties: map[string]any{
+					"duration": "30m",
+					"depends":  "((aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa))",
+				},
+			},
+		}
+		return tasks, wideDefaultMap()
+	case "explain-unknown":
+		tasks := []*logseq.Block{
+			{
+				UUID:    "t-unknown-dep-uuid",
+				Content: "TODO A",
+				Marker:  "TODO",
+				Properties: map[string]any{
+					"duration": "30m",
+					"depends":  "((99999999-9999-4999-8999-999999999999))",
+				},
+			},
+		}
+		return tasks, wideDefaultMap()
+	case "explain-partial":
+		tasks := []*logseq.Block{
+			{
+				UUID:    "t-partial-uuid",
+				Content: "TODO Big task",
+				Marker:  "TODO",
+				Properties: map[string]any{
+					"duration": "8h",
+				},
+			},
+		}
+		maps := []*logseq.Block{
+			{
+				UUID:       "map-deep-uuid",
+				Content:    "Deep Work",
+				Properties: map[string]any{"default": true},
+				Children: []*logseq.Block{
+					{UUID: "w-uuid", Content: "Mon-Sun 09:00-09:30"},
+				},
+			},
+		}
+		return tasks, maps
+	case "explain-none":
+		tasks := []*logseq.Block{
+			{
+				UUID:    "t-none-uuid",
+				Content: "TODO No time",
+				Marker:  "TODO",
+				Properties: map[string]any{
+					"duration": "1h",
+				},
+			},
+		}
+		maps := []*logseq.Block{
+			{
+				UUID:       "map-deep-uuid",
+				Content:    "Deep Work",
+				Properties: map[string]any{"default": true},
+			},
+		}
+		return tasks, maps
 	case "busy":
 		tasks := []*logseq.Block{
 			{
@@ -471,6 +583,22 @@ func (w *suggestionWorld) busyPayload() string {
 	start := now.AddDate(0, 0, -1).Format(time.RFC3339)
 	end := now.AddDate(0, 0, 8).Format(time.RFC3339)
 	return fmt.Sprintf(`{"items": [{"id":"busy-whole-window","status":"confirmed","start":{"dateTime":%q},"end":{"dateTime":%q}}]}`, start, end)
+}
+
+// wideDefaultMap is the day-independent default map for explain scenarios:
+// every weekday morning in the window, so the result does not depend on when
+// the suite runs.
+func wideDefaultMap() []*logseq.Block {
+	return []*logseq.Block{
+		{
+			UUID:       "map-deep-uuid",
+			Content:    "Deep Work",
+			Properties: map[string]any{"default": true},
+			Children: []*logseq.Block{
+				{UUID: "w-uuid", Content: "Mon-Fri 09:00-12:00"},
+			},
+		},
+	}
 }
 
 func newSuggestionLogseqServer(tasks, maps []*logseq.Block) *httptest.Server {
@@ -573,6 +701,72 @@ func suggestionsFrom(view map[string]any) []map[string]any {
 	return nil
 }
 
+// explainLookup walks the explain --json object; ok is false for an absent
+// (omitempty) field.
+func explainLookup(w *suggestionWorld, path ...string) (value any, ok bool, err error) {
+	view, err := w.lastJSON()
+	if err != nil {
+		return nil, false, err
+	}
+	var current any = view
+	for _, key := range path {
+		object, isObject := current.(map[string]any)
+		if !isObject {
+			return nil, false, nil
+		}
+		current, ok = object[key]
+		if !ok {
+			return nil, false, nil
+		}
+	}
+	return current, true, nil
+}
+
+func explainBool(w *suggestionWorld, path ...string) (bool, error) {
+	value, ok, err := explainLookup(w, path...)
+	if err != nil || !ok {
+		return false, err
+	}
+	b, _ := value.(bool)
+	return b, nil
+}
+
+func explainInt(w *suggestionWorld, path ...string) (int, error) {
+	value, ok, err := explainLookup(w, path...)
+	if err != nil || !ok {
+		return 0, err
+	}
+	number, isNumber := value.(float64)
+	if !isNumber {
+		return 0, fmt.Errorf("explain JSON %v is not a number:\n%s", path, w.lastStdout)
+	}
+	return int(number), nil
+}
+
+func explainString(w *suggestionWorld, path ...string) (string, error) {
+	value, ok, err := explainLookup(w, path...)
+	if err != nil || !ok {
+		return "", err
+	}
+	text, _ := value.(string)
+	return text, nil
+}
+
+func explainStrings(w *suggestionWorld, path ...string) ([]string, error) {
+	value, ok, err := explainLookup(w, path...)
+	if err != nil || !ok {
+		return nil, err
+	}
+	items, _ := value.([]any)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, isString := item.(string); isString {
+			out = append(out, text)
+		}
+	}
+	return out, nil
+}
+
 func registerSuggestionSteps(s *godog.ScenarioContext, w *suggestionWorld) {
 	s.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		w.reset()
@@ -654,7 +848,35 @@ func registerSuggestionSteps(s *godog.ScenarioContext, w *suggestionWorld) {
 		w.fixture = "deadline-no-plan"
 		return nil
 	})
+	s.Step(`^a TODO "([^"]+)" with duration "([^"]+)" in a wide default map$`, func(_, _ string) error {
+		w.fixture = "explain-placed"
+		return nil
+	})
+	s.Step(`^a parent TODO with a Task child in a wide default map$`, func() error {
+		w.fixture = "explain-container"
+		return nil
+	})
+	s.Step(`^two TODOs that depend on each other$`, func() error {
+		w.fixture = "explain-cycle"
+		return nil
+	})
+	s.Step(`^a TODO depending on a ghost block$`, func() error {
+		w.fixture = "explain-unknown"
+		return nil
+	})
+	s.Step(`^a TODO "([^"]+)" with duration "([^"]+)" in a narrow default map$`, func(_, _ string) error {
+		w.fixture = "explain-partial"
+		return nil
+	})
+	s.Step(`^a TODO whose default map has no hours$`, func() error {
+		w.fixture = "explain-none"
+		return nil
+	})
 	s.Step(`^an empty write calendar$`, noop0)
+
+	s.Step(`^I run "lodo explain --json" for task "([^"]+)"$`, func(id string) error {
+		return w.runCLI("--json", "explain", id)
+	})
 
 	s.Step(`^I run "lodo forecast --json"$`, func() error {
 		return w.runCLI("--json", "forecast")
@@ -690,6 +912,193 @@ func registerSuggestionSteps(s *godog.ScenarioContext, w *suggestionWorld) {
 	s.Step(`^exit code is 0$`, func() error {
 		if w.lastCode != 0 {
 			return fmt.Errorf("exit = %d, want 0\nstdout: %s\nstderr: %s", w.lastCode, w.lastStdout, w.lastStderr)
+		}
+		return nil
+	})
+
+	s.Step(`^the explain eligibility is (considered|not considered)$`, func(want string) error {
+		got, err := explainBool(w, "eligibility", "considered")
+		if err != nil {
+			return err
+		}
+		if got != (want == "considered") {
+			return fmt.Errorf("eligibility.considered = %v, want %s:\n%s", got, want, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain eligibility marks (container|pin|beyond horizon)$`, func(what string) error {
+		keys := map[string]string{"container": "container", "pin": "pin", "beyond horizon": "beyond_horizon"}
+		got, err := explainBool(w, "eligibility", keys[what])
+		if err != nil {
+			return err
+		}
+		if !got {
+			return fmt.Errorf("eligibility.%s = false, want true:\n%s", keys[what], w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain skip reason is "([^"]+)"$`, func(want string) error {
+		got, err := explainString(w, "eligibility", "skip_reason")
+		if err != nil {
+			return err
+		}
+		if got != want {
+			return fmt.Errorf("eligibility.skip_reason = %q, want %q:\n%s", got, want, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain ordering kind is "([^"]+)"$`, func(want string) error {
+		got, err := explainString(w, "ordering", "kind")
+		if err != nil {
+			return err
+		}
+		if got != want {
+			return fmt.Errorf("ordering.kind = %q, want %q:\n%s", got, want, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain ordering tie-break is "([^"]+)"$`, func(want string) error {
+		got, err := explainString(w, "ordering", "tie_break")
+		if err != nil {
+			return err
+		}
+		if got != want {
+			return fmt.Errorf("ordering.tie_break = %q, want %q:\n%s", got, want, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain ordering tie-break is present$`, func() error {
+		got, err := explainString(w, "ordering", "tie_break")
+		if err != nil {
+			return err
+		}
+		if got == "" {
+			return fmt.Errorf("ordering.tie_break is empty:\n%s", w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain ordering total is (\d+)$`, func(raw string) error {
+		want, err := strconv.Atoi(raw)
+		if err != nil {
+			return err
+		}
+		got, err := explainInt(w, "ordering", "total")
+		if err != nil {
+			return err
+		}
+		if got != want {
+			return fmt.Errorf("ordering.total = %d, want %d:\n%s", got, want, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain dependency is (blocked|not blocked)$`, func(want string) error {
+		got, err := explainBool(w, "dependency_gate", "blocked")
+		if err != nil {
+			return err
+		}
+		if got != (want == "blocked") {
+			return fmt.Errorf("dependency_gate.blocked = %v, want %s:\n%s", got, want, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain dependency reason mentions "([^"]+)"$`, func(text string) error {
+		got, err := explainString(w, "dependency_gate", "block_reason")
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(got, text) {
+			return fmt.Errorf("dependency_gate.block_reason = %q, want it to mention %q:\n%s", got, text, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain dependency names blocker "([^"]+)"$`, func(want string) error {
+		got, err := explainStrings(w, "dependency_gate", "blocked_by")
+		if err != nil {
+			return err
+		}
+		if slices.Contains(got, want) {
+			return nil
+		}
+		return fmt.Errorf("dependency_gate.blocked_by = %v, want %q:\n%s", got, want, w.lastStdout)
+	})
+	s.Step(`^the explain dependency marks (a cycle member|a pin violation)$`, func(what string) error {
+		keys := map[string]string{"a cycle member": "cycle_member", "a pin violation": "pin_violation"}
+		got, err := explainBool(w, "dependency_gate", keys[what])
+		if err != nil {
+			return err
+		}
+		if !got {
+			return fmt.Errorf("dependency_gate.%s = false, want true:\n%s", keys[what], w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain outcome reason is empty$`, func() error {
+		got, err := explainString(w, "outcome", "reason")
+		if err != nil {
+			return err
+		}
+		if got != "" {
+			return fmt.Errorf("outcome.reason = %q, want empty:\n%s", got, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain outcome reason mentions "([^"]+)"$`, func(text string) error {
+		got, err := explainString(w, "outcome", "reason")
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(got, text) {
+			return fmt.Errorf("outcome.reason = %q, want it to mention %q:\n%s", got, text, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain outcome shortfall is (\d+)$`, func(raw string) error {
+		want, err := strconv.Atoi(raw)
+		if err != nil {
+			return err
+		}
+		got, err := explainInt(w, "outcome", "shortfall")
+		if err != nil {
+			return err
+		}
+		if got != want {
+			return fmt.Errorf("outcome.shortfall = %d, want %d:\n%s", got, want, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain outcome shortfall is greater than 0$`, func() error {
+		got, err := explainInt(w, "outcome", "shortfall")
+		if err != nil {
+			return err
+		}
+		if got <= 0 {
+			return fmt.Errorf("outcome.shortfall = %d, want > 0:\n%s", got, w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain time maps have passes$`, func() error {
+		value, ok, err := explainLookup(w, "time_maps", "passes")
+		if err != nil {
+			return err
+		}
+		items, _ := value.([]any)
+		if !ok || len(items) == 0 {
+			return fmt.Errorf("time_maps.passes is empty:\n%s", w.lastStdout)
+		}
+		return nil
+	})
+	s.Step(`^the explain final blocks are at least (\d+)$`, func(raw string) error {
+		want, err := strconv.Atoi(raw)
+		if err != nil {
+			return err
+		}
+		value, _, err := explainLookup(w, "final_blocks")
+		if err != nil {
+			return err
+		}
+		items, _ := value.([]any)
+		if len(items) < want {
+			return fmt.Errorf("final_blocks = %d, want at least %d:\n%s", len(items), want, w.lastStdout)
 		}
 		return nil
 	})

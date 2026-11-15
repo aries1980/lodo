@@ -19,9 +19,6 @@ func buildPlans(tasks []model.Task, dispositions map[string][]model.Disposition,
 			plans[i].shortfall = 0
 			plans[i].stoodDown = 0
 			plans[i].pinnedSlots = 0
-			plans[i].decision.Eligibility.Container = true
-			plans[i].decision.Eligibility.Considered = false
-			plans[i].decision.Eligibility.SkipReason = "container: never scheduled"
 			continue
 		}
 		if task.Duration <= 0 {
@@ -46,30 +43,54 @@ type taskPlan struct {
 	pinnedDisps    []model.Disposition
 	stoodDownDisps []model.Disposition
 	reserved       set.Set[int]
-	decision       TaskDecision
+	facts          planFacts
 }
+
+// planFacts is what placement records for the explain trace. Placement never
+// reads it back; buildDecisions is its only consumer (ADR 0006).
+type planFacts struct {
+	tieBreak       string
+	tieBreakDetail string
+	position       int
+	beyondHorizon  bool
+	lowerBound     time.Time
+	hasLowerBound  bool
+	search         *searchResult
+}
+
+// searchResult is what one flexible placement search saw and chose.
+type searchResult struct {
+	window    searchWindow
+	placement Placement
+	timeMaps  TimeMaps
+}
+
+// searchWindow is the effective placement window for one Task.
+type searchWindow struct {
+	overdue bool
+	from    time.Time
+	to      time.Time
+	bound   time.Time
+}
+
+func (plan *taskPlan) markTieBreak(key, detail string) {
+	plan.facts.tieBreak = key
+	plan.facts.tieBreakDetail = detail
+}
+
+func (plan *taskPlan) markPosition(position int) { plan.facts.position = position }
+
+func (plan *taskPlan) markBeyondHorizon() { plan.facts.beyondHorizon = true }
+
+func (plan *taskPlan) markLowerBound(end time.Time) {
+	plan.facts.lowerBound = end
+	plan.facts.hasLowerBound = true
+}
+
+func (plan *taskPlan) markSearch(result searchResult) { plan.facts.search = &result }
 
 func newTaskPlan(task model.Task, dispositions []model.Disposition, granularity time.Duration) *taskPlan {
 	plan := &taskPlan{task: task, n: norm.Units(task.Duration, granularity), reserved: set.New[int]()}
-	plan.decision = TaskDecision{
-		TaskID: task.ID,
-		Text:   task.Text,
-		Graph:  task.Graph,
-		Ordering: Ordering{
-			GraphOrder:   task.GraphOrder,
-			Priority:     string(task.Priority),
-			PriorityRank: task.Priority.Rank(),
-			OutlineOrder: task.OutlineOrder,
-		},
-		Dependency: Dependency{Depends: append([]string(nil), task.Depends...)},
-	}
-	if task.PlanStart != nil {
-		plan.decision.Window.PlanStart = task.PlanStart.String()
-	}
-	if task.PlanEnd != nil {
-		plan.decision.Window.PlanEnd = task.PlanEnd.String()
-		plan.decision.Ordering.PlanEnd = task.PlanEnd.String()
-	}
 
 	stoodDown := 0
 	pinned := 0
@@ -92,20 +113,12 @@ func newTaskPlan(task model.Task, dispositions []model.Disposition, granularity 
 		clear(plan.reserved)
 		plan.pinnedSlots = plan.n
 		plan.placed = plan.n
-		plan.decision.Eligibility = Eligibility{Pin: true, RequiredSlots: plan.n, PinnedSlots: plan.n, FlexibleSlots: 0, Considered: true}
-		plan.decision.Ordering.Kind = "pin"
 		return plan
 	}
 
 	plan.stoodDown = min(stoodDown, plan.n)
 	plan.pinnedSlots = min(pinned, plan.n-plan.stoodDown)
 	plan.placed = plan.pinnedSlots
-	plan.decision.Eligibility = Eligibility{
-		RequiredSlots:  plan.n,
-		StoodDownSlots: plan.stoodDown,
-		PinnedSlots:    plan.pinnedSlots,
-		FlexibleSlots:  plan.required(),
-	}
 	return plan
 }
 

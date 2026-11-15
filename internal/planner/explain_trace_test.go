@@ -4,12 +4,57 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/model"
 )
 
 func gridFor(in Input) *grid.Grid {
 	return grid.Build(in.Now, in.Location, in.Granularity, in.WindowDays)
+}
+
+// TestGateBlockedNamesOnlyBlockingDependencies distinguishes the dependency
+// gate's blocker list from the partial-fit fallback, which names every
+// dependency. A shortfalling dep blocks; a satisfied one must not be listed.
+func TestGateBlockedNamesOnlyBlockingDependencies(t *testing.T) {
+	good := localTask("good", duration(30))
+	short := localTask("short", duration(120))
+	dependent := localTask("dependent", duration(30))
+	dependent.Depends = []string{"good", "short"}
+
+	in := newInput(good, short, dependent)
+	in.TimeMaps = []model.TimeMap{deepMap(on(time.Monday, 9, 0, 10, 0))}
+
+	s, err := Plan(in)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	d := decisionByID(t, s, "dependent")
+	if !d.Dependency.Blocked || d.Dependency.BlockReason != string(ReasonBlockedByDependency) {
+		t.Fatalf("dependent must be blocked: %+v", d.Dependency)
+	}
+	if diff := cmp.Diff([]string{"short"}, d.Dependency.BlockedBy); diff != "" {
+		t.Fatalf("BlockedBy (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"short"}, d.Outcome.BlockedBy); diff != "" {
+		t.Fatalf("Outcome.BlockedBy (-want +got):\n%s", diff)
+	}
+	report := findReport(t, s, "dependent")
+	if diff := cmp.Diff([]string{"short"}, report.BlockedBy); diff != "" {
+		t.Fatalf("Report.BlockedBy (-want +got):\n%s", diff)
+	}
+}
+
+func findReport(t *testing.T, s Schedule, id string) TaskReport {
+	t.Helper()
+	for _, r := range s.Report.Tasks {
+		if r.TaskID == id {
+			return r
+		}
+	}
+	t.Fatalf("no report for %q", id)
+	return TaskReport{}
 }
 
 func TestDecisionsReflectActualPlacement(t *testing.T) {
