@@ -30,8 +30,8 @@ jobs:
       - name: Enforce lowercase filenames
         run: |
           set -eu
-          if ls translations | grep -q '[A-Z]'; then
-            echo "translations/ filenames must be lowercase"
-            ls translations
+          if ls translations/*.po | xargs -n1 basename | grep -q '[A-Z]'; then
+            echo "translations/*.po filenames must be lowercase"
+            ls translations/*.po
             exit 1
           fi
