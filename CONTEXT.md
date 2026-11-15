@@ -58,7 +58,9 @@ not resolve the graph or recompute the Schedule.
   their text in `views.go`.
 - `internal/run`: the command loop. `Forecast`/`ForecastSources` read, resolve, and
   plan. `Schedule` and `Check` reconcile, then plan. `Refresh` folds calendar edits
-  without recomputing.
+  without recomputing. `LoadGraph` fetches page trees with a bounded,
+  order-preserving fan-out; `Schedule` applies calendar writes in
+  delete/patch/insert phases with a bounded fan-out inside each phase.
   Forecast, check, and schedule share `Scheduled` (tasks, issues, schedule, busy);
   each outcome keeps only the fields that command adds.
 - `internal/resolve`: graph payloads to Tasks, Time Maps, issues, and provenance.
@@ -72,7 +74,8 @@ not resolve the graph or recompute the Schedule.
 - `internal/reconcile`: observed calendar events become pinned and stood-down
   dispositions (ADR 0019). Managed Event ids are derived here.
 - `internal/calendar`: Google Calendar list/get/insert/patch/delete and busy masks.
-  One calendar is written; the others are busy-only reads.
+  One calendar is written; the others are busy-only reads, fetched concurrently with
+  audit rows and warnings kept in config order.
 - `internal/gauth`: Google OAuth loopback for `lodo auth`.
 - `internal/logseq`: Logseq HTTP API client.
 - `internal/store`: SQLite (`${XDG_STATE_HOME:-~/.local/state}/lodo/lodo.db` by
@@ -84,6 +87,8 @@ not resolve the graph or recompute the Schedule.
   `internal/cli/wire.go`; no other package declares a payload. See ADR 0023.
 - `internal/jsonx`: shared JSON v2 encoding and decoding policy, preserving wire and
   store compatibility. `internal/set`: map-backed membership sets for shared plumbing.
+  `internal/fanout`: bounded, order-preserving fan-out for independent indexed reads
+  and calendar writes.
 
 ## Where to change X
 
@@ -105,6 +110,8 @@ not resolve the graph or recompute the Schedule.
   (ADR 0007 write ordering and snapshot round-trip).
 - Calendar read/write and busy masks: `internal/calendar/*`. OAuth: `internal/gauth/*`
   and the CLI auth flow.
+- Read or write fan-out, worker count, or cancellation policy: `internal/fanout`
+  (ADR 0024, ADR 0025).
 - What forecast, schedule, check, and refresh do, and in which order: `internal/run/*`.
 
 ## Canonical docs (source of truth for intent)

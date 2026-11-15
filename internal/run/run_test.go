@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	_ "time/tzdata"
@@ -43,6 +44,7 @@ type stubClient struct {
 	trees map[string][]*logseq.Block
 	props map[string]*logseq.Page
 
+	mu        sync.Mutex
 	pageCalls []string
 }
 
@@ -68,11 +70,20 @@ func (c *stubClient) Pages(context.Context) ([]*logseq.Page, error) {
 func (c *stubClient) Ping(context.Context) error { return nil }
 
 func (c *stubClient) Page(_ context.Context, name string) (*logseq.Page, error) {
+	c.mu.Lock()
 	c.pageCalls = append(c.pageCalls, name)
+	c.mu.Unlock()
 	if info, ok := c.props[name]; ok {
 		return info, nil
 	}
 	return &logseq.Page{Name: name, Properties: nil}, nil
+}
+
+// PageCalls returns the pages whose properties were fetched, in call order.
+func (c *stubClient) PageCalls() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.pageCalls...)
 }
 
 func (c *stubClient) Tree(_ context.Context, name string) ([]*logseq.Block, error) {

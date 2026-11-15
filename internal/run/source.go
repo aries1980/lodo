@@ -11,11 +11,17 @@ import (
 	"slices"
 	"time"
 
+	"github.com/aries1980/lodo/internal/fanout"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/set"
 )
+
+// readWorkers bounds concurrent page reads. The app serves one graph per
+// window; four keeps it responsive while cutting the serial round-trips that
+// dominated a first run (ADR 0024).
+const readWorkers = 4
 
 // ValidateTaskIDs refuses duplicated block UUIDs. Event ids, planner indexes
 // and store keys are built from the UUID alone, so two graphs sharing one
@@ -36,10 +42,21 @@ func ValidateTaskIDs(tasks []model.Task) error {
 	return nil
 }
 
+// pageRead is one page's concurrent read: its block tree and, when the page
+// can pass on properties, its page info.
+type pageRead struct {
+	tree []*logseq.Block
+	info *logseq.Page
+}
+
 // LoadGraph reads one graph: enumerate pages, fetch each page's block tree
 // and the page properties wherever they can matter, resolve it, and index
 // blocks by UUID for TUI editing. It returns the resolved result, the resolve
 // input (for TUI revalidation), the block index, and page names by block.
+//
+// Page trees are fetched concurrently with a bounded fan-out. The tree map and
+// page properties are assembled in page order after the reads, so the result
+// matches a serial read byte for byte.
 func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *time.Location) (resolve.Result, resolve.Input, map[string]*logseq.Block, map[string]string, error) {
 	pages, err := source.Client.Pages(ctx)
 	if err != nil {
@@ -57,23 +74,31 @@ func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *tim
 		TimeMapsPage:   timeMapsPage,
 		Location:       loc,
 	}
-	for _, p := range pages {
+	reads, err := fanout.Do(ctx, len(pages), readWorkers, func(ctx context.Context, i int) (pageRead, error) {
+		p := pages[i]
 		tree, err := source.Client.Tree(ctx, p.Name)
 		if err != nil {
-			return resolve.Result{}, resolve.Input{}, nil, nil, err
+			return pageRead{}, err
 		}
-		input.Trees[p.Name] = tree
+		read := pageRead{tree: tree}
 		if lowerTrim(p.Name) != tmName && !hasCandidate(tree) {
-			continue
+			return read, nil
 		}
 		info, err := source.Client.Page(ctx, p.Name)
 		if err != nil {
-			return resolve.Result{}, resolve.Input{}, nil, nil, err
+			return pageRead{}, err
 		}
-		if info == nil {
-			continue
+		read.info = info
+		return read, nil
+	})
+	if err != nil {
+		return resolve.Result{}, resolve.Input{}, nil, nil, err
+	}
+	for i, p := range pages {
+		input.Trees[p.Name] = reads[i].tree
+		if reads[i].info != nil {
+			p.Properties = reads[i].info.Properties
 		}
-		p.Properties = info.Properties
 	}
 	res, err := resolve.Resolve(input)
 	if err != nil {

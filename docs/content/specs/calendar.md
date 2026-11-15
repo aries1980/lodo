@@ -146,7 +146,7 @@ shortfall — it can never create hours, move a Pin, or reorder Tasks.
 
 ```mermaid
 flowchart TD
-    R["Read calendar request<br/>in config order"] --> OK{"Readable?"}
+    R["Read calendars concurrently<br/>(bounded; audit stays in config order)"] --> OK{"Readable?"}
     OK -->|Yes| LQ{"Carries lodo=true?"}
     LQ -->|Yes| WARN["Ordinary busy time<br/>check warns: manual copy or loop<br/>never adopted, never moved"]
     LQ -->|No| USE["Union into busy mask"]
@@ -165,6 +165,11 @@ calendars that did read. The warning names the calendar; for 403 it also notes t
 free/busy-only shares are not yet supported. Auth and network failures still fail the
 run. Every `forecast`, `schedule`, and `refresh` prints which calendars were read
 (`busy sources:`) so a placement made with a partial mask stays visible.
+
+Read calendars are fetched concurrently, with at most four calls in flight (see
+[ADR 0024](../ADRs/0024-bounded-concurrent-reads.md)). The `busy sources:` rows,
+warnings, and the busy union are assembled in config order after the reads, so a slow
+or failed calendar never reorders the report.
 
 Auth expiry fails fast and names the calendar: HTTP 401 on any calendar, and
 `invalid_grant` from Google's token endpoint (revoked, expired, or otherwise dead
@@ -245,6 +250,12 @@ adopts. A crash after a patch leaves the old binding, but the event carries Lodo
 `lodo-span` marker for the span it just wrote, so reconciliation updates the binding
 instead of inventing a user move. See
 [ADR 0007](../ADRs/0007-write-the-calendar-before-the-store.md).
+
+`schedule` applies its batch in delete, patch, insert phases. Each phase runs up to four
+writes concurrently; later phases wait for earlier ones, so a delete always completes
+before an insert of the same deterministic id. A failure stops the remaining phases and
+the store is not committed; a later run reconciles whatever landed (see
+[ADR 0025](../ADRs/0025-calendar-writes-fan-out-by-phase.md)).
 
 Shortfall suggestions are in v0.1. They are advice, and Lodo does not apply them
 ([scheduling](./scheduling.md#infeasibility),

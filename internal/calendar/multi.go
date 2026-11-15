@@ -12,9 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aries1980/lodo/internal/fanout"
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/norm"
 )
+
+// readWorkers bounds concurrent read-calendar calls. Four keeps Google's
+// per-user quota comfortable and matches the graph read bound (ADR 0024).
+const readWorkers = 4
 
 // Read-calendar statuses for the audit table.
 const (
@@ -62,10 +67,10 @@ type ReadOptions struct {
 }
 
 // MultiClient reads the write calendar plus each read calendar over the
-// scheduling window, OR-ing their busy masks. Reads run sequentially in
-// config order so warning output is deterministic. One read calendar
-// failing 403/404 does not stop the remaining reads; auth and network
-// failures still fail the run.
+// scheduling window, OR-ing their busy masks. Reads fan out with a bounded
+// number of workers; audit rows and warnings are assembled in config order,
+// so output stays deterministic. One read calendar failing 403/404 does not
+// stop the remaining reads; auth and network failures still fail the run.
 type MultiClient struct {
 	write                *Client
 	reads                []*Client
@@ -142,6 +147,14 @@ func (m *MultiClient) Delete(ctx context.Context, id string) error {
 	return m.write.Delete(ctx, id)
 }
 
+// readResult is one read calendar's concurrent result: its audit row,
+// warnings in event order, and busy contribution over the run grid.
+type readResult struct {
+	status   SourceStatus
+	warnings []string
+	mask     grid.Mask
+}
+
 // Busy lists the write calendar plus each read calendar over the grid's
 // window, classifies with the same rules on every calendar, and ORs the
 // masks. Managed-event detection is write-calendar-only: a lodo=true event
@@ -163,27 +176,36 @@ func (m *MultiClient) Busy(ctx context.Context, g *grid.Grid, now time.Time) (gr
 	}
 	union.OrInto(writeBusy)
 
-	for i, rc := range m.reads {
+	results, err := fanout.Do(ctx, len(m.reads), readWorkers, func(ctx context.Context, i int) (readResult, error) {
 		id := m.readIDs[i]
-		events, err := rc.List(ctx, now, g.WindowEnd())
+		events, err := m.reads[i].List(ctx, now, g.WindowEnd())
 		if err != nil {
 			if code, ok := StatusCodeOf(err); ok {
 				switch code {
 				case http.StatusForbidden:
-					report.Sources = append(report.Sources, SourceStatus{CalendarID: id, Status: SourceSkipped403, Events: 0})
-					report.Warnings = append(report.Warnings,
-						fmt.Sprintf("read calendar %q skipped (403): access denied (revoked, never accepted, or free/busy-only share; free/busy-only shares are not yet supported)", id))
-					continue
+					return readResult{
+						status: SourceStatus{CalendarID: id, Status: SourceSkipped403},
+						warnings: []string{
+							fmt.Sprintf("read calendar %q skipped (403): access denied (revoked, never accepted, or free/busy-only share; free/busy-only shares are not yet supported)", id),
+						},
+						mask: grid.NewMask(g.Len()),
+					}, nil
 				case http.StatusNotFound:
-					report.Sources = append(report.Sources, SourceStatus{CalendarID: id, Status: SourceSkipped404, Events: 0})
-					report.Warnings = append(report.Warnings,
-						fmt.Sprintf("read calendar %q skipped (404): not found (removed calendar)", id))
-					continue
+					return readResult{
+						status: SourceStatus{CalendarID: id, Status: SourceSkipped404},
+						warnings: []string{
+							fmt.Sprintf("read calendar %q skipped (404): not found (removed calendar)", id),
+						},
+						mask: grid.NewMask(g.Len()),
+					}, nil
 				}
 			}
-			return nil, nil, BusyReport{}, err
+			return readResult{}, err
 		}
-		report.Sources = append(report.Sources, SourceStatus{CalendarID: id, Status: SourceRead, Events: len(events)})
+		result := readResult{
+			status: SourceStatus{CalendarID: id, Status: SourceRead, Events: len(events)},
+			mask:   grid.NewMask(g.Len()),
+		}
 		for _, e := range events {
 			if e.Managed() {
 				// Write-calendar-only detection: on a read calendar a
@@ -191,7 +213,7 @@ func (m *MultiClient) Busy(ctx context.Context, g *grid.Grid, now time.Time) (gr
 				// plus a warning. Cancelled/transparent/declined are
 				// ignored here: a copied Managed event is busy, the way
 				// decision 7 states it.
-				report.Warnings = append(report.Warnings,
+				result.warnings = append(result.warnings,
 					fmt.Sprintf("read calendar %q: event %q carries lodo=true, treated as ordinary busy time (never adopted, never moved)", id, e.ID))
 			} else if Classify(e) == KindFree {
 				continue
@@ -201,15 +223,23 @@ func (m *MultiClient) Busy(ctx context.Context, g *grid.Grid, now time.Time) (gr
 			}
 			start, end, err := projectSpan(e, g, now)
 			if err != nil {
-				return nil, nil, BusyReport{}, err
+				return readResult{}, err
 			}
 			if start.IsZero() {
 				continue
 			}
-			slot := g.Overlapping(start, end)
-			union.OrInto(slot)
-			report.Shared.OrInto(slot)
+			result.mask.OrInto(g.Overlapping(start, end))
 		}
+		return result, nil
+	})
+	if err != nil {
+		return nil, nil, BusyReport{}, err
+	}
+	for _, result := range results {
+		report.Sources = append(report.Sources, result.status)
+		report.Warnings = append(report.Warnings, result.warnings...)
+		union.OrInto(result.mask)
+		report.Shared.OrInto(result.mask)
 	}
 	return union, managed, report, nil
 }

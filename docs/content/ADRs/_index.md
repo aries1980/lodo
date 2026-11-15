@@ -60,3 +60,5 @@ user's notes and calendar alone:
 - [ADR 0009](./0009-lodo-is-a-single-go-binary.md) — Lodo is a single Go binary.
 - [ADR 0016](./0016-dual-output-json-logs-and-colors.md) — JSONL logs for machines, colors for humans.
 - [ADR 0023](./0023-json-wire-schema-boundary.md) — one versioned wire schema for command output.
+- [ADR 0024](./0024-bounded-concurrent-reads.md) — independent reads fan out with a bounded worker count.
+- [ADR 0025](./0025-calendar-writes-fan-out-by-phase.md) — calendar writes fan out within delete, patch, insert phases.

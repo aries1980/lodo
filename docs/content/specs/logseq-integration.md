@@ -44,8 +44,13 @@ resolves against `(state/get-current-repo)` with no repo argument, and
 HTTP port. Lodo reads the canonical Time Maps page from the first graph and
 merges Tasks from all graphs; `depends::`/`order::` resolve per graph.
 
-Reads are performed fresh on each run. Lodo's SQLite store keeps a snapshot of the
-inputs it last read, so it can tell which Tasks changed without diffing the whole graph.
+Reads are performed fresh on each run. Within one graph, page trees for independent
+pages are fetched concurrently, with at most four calls in flight (see
+[ADR 0024](../ADRs/0024-bounded-concurrent-reads.md)); page properties follow their
+page's tree. The adapter is safe for concurrent reads, and the tree map and properties
+are assembled in page-name order, so the resolved graph is identical to a serial read.
+Lodo's SQLite store keeps a snapshot of the inputs it last read, so it can tell which
+Tasks changed without diffing the whole graph.
 
 ## Availability probe (fail fast)
 

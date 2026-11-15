@@ -46,7 +46,9 @@ const (
 // supplied by the caller: production wraps the OAuth token source so
 // refreshes happen transparently (the credentials' refresh token was
 // stored by `lodo auth google`); a failed refresh surfaces as an error
-// when a call is made, never as an empty mask.
+// when a call is made, never as an empty mask. A Client is safe for
+// concurrent use: MultiClient reads independent calendars at the same time,
+// and http.Client plus the OAuth token source are safe for concurrent calls.
 type Client struct {
 	hc   *http.Client
 	base *url.URL

@@ -17,6 +17,9 @@ import (
 	"github.com/aries1980/lodo/internal/store"
 )
 
+// Calendar is the calendar surface schedule writes through. Implementations
+// must be safe for concurrent writes: applyWrites runs independent
+// operations in one phase concurrently (ADR 0025).
 type Calendar interface {
 	Busy(ctx context.Context, g *grid.Grid, now time.Time) (grid.Mask, []calendar.Event, calendar.BusyReport, error)
 	List(ctx context.Context, from, to time.Time) ([]calendar.Event, error)

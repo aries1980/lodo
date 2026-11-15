@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,8 @@ func TestReadCalendarFlagReplacesConfig(t *testing.T) {
 		ReadCalendars: []string{"a@example.com", "b@example.com"},
 	})
 
-	// No flag: write plus both config reads, in order.
+	// No flag: write plus both config reads. Reads fan out, so only the
+	// audit rows promise config order.
 	code, out, errOut := e.Run("--json", "forecast")
 	if code != 0 {
 		t.Fatalf("forecast exit = %d, stderr %q", code, errOut)
@@ -24,8 +26,12 @@ func TestReadCalendarFlagReplacesConfig(t *testing.T) {
 	if len(ids) != 3 {
 		t.Fatalf("reads = %q, want write plus two config reads", ids)
 	}
-	if ids[1] != "a@example.com" || ids[2] != "b@example.com" {
-		t.Fatalf("reads = %q, want config order", ids)
+	if ids[0] != "primary" {
+		t.Fatalf("first read = %q, want the write calendar", ids[0])
+	}
+	reads := slices.Sorted(slices.Values(ids[1:]))
+	if want := []string{"a@example.com", "b@example.com"}; !slices.Equal(reads, want) {
+		t.Fatalf("reads = %q, want %q", reads, want)
 	}
 	var view struct {
 		Busy struct {
@@ -42,6 +48,9 @@ func TestReadCalendarFlagReplacesConfig(t *testing.T) {
 	if len(view.Busy.Sources) != 2 {
 		t.Fatalf("busy_sources = %+v", view.Busy)
 	}
+	if view.Busy.Sources[0].CalendarID != "a@example.com" || view.Busy.Sources[1].CalendarID != "b@example.com" {
+		t.Fatalf("busy_sources sources = %+v, want config order", view.Busy.Sources)
+	}
 
 	// One flag replaces the whole list.
 	e.Calendar.ResetReads()
@@ -53,15 +62,20 @@ func TestReadCalendarFlagReplacesConfig(t *testing.T) {
 		t.Fatalf("flag reads = %q, want write plus c only", ids)
 	}
 
-	// Repeatable: two flags, config order is flag order.
+	// Repeatable: two flags, config order is flag order in the audit.
 	e.Calendar.ResetReads()
 	code, _, errOut = e.Run("--json", "forecast",
 		"--read-calendar", "c@example.com", "--read-calendar", "d@example.com")
 	if code != 0 {
 		t.Fatalf("forecast with two flags exit = %d, stderr %q", code, errOut)
 	}
-	if ids := e.Calendar.ReadIDs(); len(ids) != 3 || ids[1] != "c@example.com" || ids[2] != "d@example.com" {
+	ids = e.Calendar.ReadIDs()
+	if len(ids) != 3 || ids[0] != "primary" {
 		t.Fatalf("two-flag reads = %q", ids)
+	}
+	reads = slices.Sorted(slices.Values(ids[1:]))
+	if want := []string{"c@example.com", "d@example.com"}; !slices.Equal(reads, want) {
+		t.Fatalf("two-flag reads = %q, want %q", reads, want)
 	}
 
 	// The write ID in the flag is silently dropped.

@@ -1,5 +1,5 @@
-// Calendar writes: diffPlan's WriteOps applied in stable order with
-// cross-healing fallbacks for List-then-write races. Calendar first,
+// Calendar writes: diffPlan's WriteOps applied in delete/patch/insert phases
+// with cross-healing fallbacks for List-then-write races. Calendar first,
 // store second (ADR 0007).
 package run
 
@@ -12,24 +12,55 @@ import (
 	"time"
 
 	"github.com/aries1980/lodo/internal/calendar"
+	"github.com/aries1980/lodo/internal/fanout"
 	"github.com/aries1980/lodo/internal/reconcile"
 )
 
-// applyWrites issues the calendar mutations in a stable order: deletes,
-// patches, then inserts (all ordered by event id by diffPlan). A delete
-// 404 is already-gone success; anything else is operational. Inserts and
-// patches cross-heal: an insert that hits an existing id (the event lives
-// on the calendar but outside the list window, e.g. in the past) falls
-// back to patch, and a patch that hits a missing event falls back to
-// insert. Either fallback covers the List-then-write race with an external
-// edit.
+// writeWorkers bounds concurrent calendar writes within one operation phase.
+// Four keeps Google's write quota comfortable and matches the read bound
+// (ADR 0025).
+const writeWorkers = 4
+
+// applyWrites issues the calendar mutations in stable phases: deletes,
+// patches, then inserts. Each phase runs independently with a bounded
+// fan-out; later phases wait for earlier ones. The barrier matters: a
+// corrupt Managed event with an unusable pointer is deleted, while the plan
+// can insert a Block whose deterministic id is the same event id. Delete
+// must finish before that insert, or the insert's 409 fallback patches the
+// event the delete then removes.
+//
+// A delete 404 is already-gone success; anything else is operational.
+// Inserts and patches cross-heal: an insert that hits an existing id (the
+// event lives on the calendar but outside the list window, e.g. in the
+// past) falls back to patch, and a patch that hits a missing event falls
+// back to insert. Either fallback covers the List-then-write race with an
+// external edit.
 func applyWrites(ctx context.Context, cal Calendar, writes []WriteOp) error {
-	for _, op := range writes {
-		if err := applyWrite(ctx, cal, op); err != nil {
+	for _, op := range []string{"delete", "patch", "insert"} {
+		batch := writesOfOp(writes, op)
+		if len(batch) == 0 {
+			continue
+		}
+		_, err := fanout.Do(ctx, len(batch), writeWorkers, func(ctx context.Context, i int) (struct{}, error) {
+			return struct{}{}, applyWrite(ctx, cal, batch[i])
+		})
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// writesOfOp filters one phase, preserving the stable event-id order
+// diffPlan produced.
+func writesOfOp(writes []WriteOp, op string) []WriteOp {
+	out := make([]WriteOp, 0, len(writes))
+	for _, write := range writes {
+		if write.Op == op {
+			out = append(out, write)
+		}
+	}
+	return out
 }
 
 // applyWrite dispatches one calendar mutation to its per-op helper so each

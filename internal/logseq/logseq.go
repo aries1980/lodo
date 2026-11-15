@@ -54,6 +54,10 @@ type Block struct {
 // per graph flavour (logseq-integration.md); the file-based-graph adapter
 // below is the only one in v0.1.
 //
+// Implementations must be safe for concurrent use: callers may fetch
+// independent pages at the same time, and the adapter must correlate the
+// responses without shared mutable state.
+//
 // Reads are the whole loop, with one exception: the prompted bootstrap of
 // a missing Time Maps page (internal/cli), which creates the page and its
 // recommended defaults through the same adapter. Lodo never edits the

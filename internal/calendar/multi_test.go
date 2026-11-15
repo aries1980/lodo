@@ -1,30 +1,53 @@
 package calendar
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	_ "time/tzdata"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/aries1980/lodo/internal/grid"
 )
 
 // multiFake serves per-calendar events.list bodies or per-calendar HTTP
 // failures, routing by the calendar ID in the path. Requests are recorded
-// in order for determinism asserts.
+// for order asserts; reads are concurrent, so recording is guarded.
 type multiFake struct {
-	bodies map[string][]string // calendar ID -> list bodies by page
-	status map[string]int      // calendar ID -> HTTP status to fail with
-	paths  []string
+	bodies map[string][]string      // calendar ID -> list bodies by page
+	status map[string]int           // calendar ID -> HTTP status to fail with
+	delay  map[string]time.Duration // calendar ID -> response delay
+
+	mu    sync.Mutex
+	paths []string
+}
+
+// Paths returns the recorded request paths in arrival order.
+func (f *multiFake) Paths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.paths...)
 }
 
 func (f *multiFake) serve(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
 		f.paths = append(f.paths, r.URL.Path)
+		f.mu.Unlock()
 		id := calendarIDFromPath(r.URL.Path)
+		if d := f.delay[id]; d > 0 {
+			time.Sleep(d)
+		}
 		if code, ok := f.status[id]; ok && code != 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(code)
@@ -108,15 +131,19 @@ func TestMultiUnion(t *testing.T) {
 	if len(report.Sources) != 2 || report.Sources[0].Events != 1 || report.Sources[1].Events != 1 {
 		t.Fatalf("sources = %+v", report.Sources)
 	}
-	// Reads ran sequentially in config order.
-	if len(fa.paths) != 3 {
-		t.Fatalf("paths = %v, want write plus two reads", fa.paths)
+	// The write calendar is read first; the read calendars fan out, so only
+	// the audit rows promise config order.
+	paths := fa.Paths()
+	if len(paths) != 3 {
+		t.Fatalf("paths = %v, want write plus two reads", paths)
 	}
-	if got := calendarIDFromPath(fa.paths[1]); got != "a@example.com" {
-		t.Fatalf("second read = %q, want a@example.com", got)
+	if got := calendarIDFromPath(paths[0]); got != "primary" {
+		t.Fatalf("first read = %q, want the write calendar", got)
 	}
-	if got := calendarIDFromPath(fa.paths[2]); got != "b@example.com" {
-		t.Fatalf("third read = %q, want b@example.com", got)
+	reads := []string{calendarIDFromPath(paths[1]), calendarIDFromPath(paths[2])}
+	slices.Sort(reads)
+	if want := []string{"a@example.com", "b@example.com"}; !slices.Equal(reads, want) {
+		t.Fatalf("read calendars = %v, want %v", reads, want)
 	}
 }
 
@@ -422,5 +449,292 @@ func assertMask(t *testing.T, g *grid.Grid, got, want grid.Mask) {
 		if got.Has(i) != want.Has(i) {
 			t.Fatalf("slot %d at %v: busy=%v want %v", i, g.Start(i).Format("Mon 15:04"), got.Has(i), want.Has(i))
 		}
+	}
+}
+
+// sequentialBusy is the pre-fan-out Busy loop, kept as the oracle for
+// TestMultiBusyMatchesSequentialRead. Do not simplify it to call Busy.
+func sequentialBusy(ctx context.Context, m *MultiClient, g *grid.Grid, now time.Time) (grid.Mask, []Event, BusyReport, error) {
+	report := BusyReport{WriteCalendar: m.writeID, Shared: grid.NewMask(g.Len())}
+	union := grid.NewMask(g.Len())
+
+	writeEvents, managed, err := m.write.listBusy(ctx, g, now)
+	if err != nil {
+		return nil, nil, BusyReport{}, err
+	}
+	report.WriteEvents = len(writeEvents)
+	writeBusy, err := busyMask(g, writeEvents, now)
+	if err != nil {
+		return nil, nil, BusyReport{}, err
+	}
+	union.OrInto(writeBusy)
+
+	for i, rc := range m.reads {
+		id := m.readIDs[i]
+		events, err := rc.List(ctx, now, g.WindowEnd())
+		if err != nil {
+			if code, ok := StatusCodeOf(err); ok {
+				switch code {
+				case http.StatusForbidden:
+					report.Sources = append(report.Sources, SourceStatus{CalendarID: id, Status: SourceSkipped403})
+					report.Warnings = append(report.Warnings,
+						fmt.Sprintf("read calendar %q skipped (403): access denied (revoked, never accepted, or free/busy-only share; free/busy-only shares are not yet supported)", id))
+					continue
+				case http.StatusNotFound:
+					report.Sources = append(report.Sources, SourceStatus{CalendarID: id, Status: SourceSkipped404})
+					report.Warnings = append(report.Warnings,
+						fmt.Sprintf("read calendar %q skipped (404): not found (removed calendar)", id))
+					continue
+				}
+			}
+			return nil, nil, BusyReport{}, err
+		}
+		report.Sources = append(report.Sources, SourceStatus{CalendarID: id, Status: SourceRead, Events: len(events)})
+		for _, e := range events {
+			if e.Managed() {
+				report.Warnings = append(report.Warnings,
+					fmt.Sprintf("read calendar %q: event %q carries lodo=true, treated as ordinary busy time (never adopted, never moved)", id, e.ID))
+			} else if Classify(e) == KindFree {
+				continue
+			}
+			if m.skipReadAllDay(e) {
+				continue
+			}
+			start, end, err := projectSpan(e, g, now)
+			if err != nil {
+				return nil, nil, BusyReport{}, err
+			}
+			if start.IsZero() {
+				continue
+			}
+			slot := g.Overlapping(start, end)
+			union.OrInto(slot)
+			report.Shared.OrInto(slot)
+		}
+	}
+	return union, managed, report, nil
+}
+
+func lodoReadEvent(id, start, end string) string {
+	return fmt.Sprintf(`{"id":%q,"status":"confirmed","start":{"dateTime":%q},"end":{"dateTime":%q},"extendedProperties":{"private":{"lodo":"true","task":"t","block":"0"}}}`, id, start, end)
+}
+
+func TestMultiBusyMatchesSequentialRead(t *testing.T) {
+	fa := &multiFake{
+		bodies: map[string][]string{
+			"primary": {listBody([]string{
+				timed("w-meet", "2026-11-09T10:00:00Z", "2026-11-09T11:00:00Z"),
+			}, "")},
+			"ok@example.com": {listBody([]string{
+				timed("ok-meet", "2026-11-09T14:00:00Z", "2026-11-09T15:00:00Z"),
+				`{"id":"ok-bday","status":"confirmed","start":{"date":"2026-11-10"},"end":{"date":"2026-11-11"}}`,
+			}, "")},
+			"copy@example.com": {listBody([]string{
+				lodoReadEvent("copied", "2026-11-09T16:00:00Z", "2026-11-09T17:00:00Z"),
+				timed("copy-meet", "2026-11-09T18:00:00Z", "2026-11-09T19:00:00Z"),
+			}, "")},
+		},
+		status: map[string]int{
+			"bad@example.com":  http.StatusForbidden,
+			"gone@example.com": http.StatusNotFound,
+		},
+	}
+	m, err := NewMultiClient(nil, "primary",
+		[]string{"ok@example.com", "bad@example.com", "gone@example.com", "copy@example.com"},
+		fa.serve(t), ReadOptions{IgnoreAllDay: true})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	g, now, _ := busyFixture(t)
+
+	wantMask, wantManaged, wantReport, wantErr := sequentialBusy(t.Context(), m, g, now)
+	gotMask, gotManaged, gotReport, gotErr := m.Busy(t.Context(), g, now)
+
+	if (wantErr != nil) != (gotErr != nil) {
+		t.Fatalf("errors = %v, want %v", gotErr, wantErr)
+	}
+	if wantErr != nil && wantErr.Error() != gotErr.Error() {
+		t.Fatalf("error = %q, want %q", gotErr, wantErr)
+	}
+	if diff := cmp.Diff(wantMask, gotMask); diff != "" {
+		t.Fatalf("mask mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(wantManaged, gotManaged); diff != "" {
+		t.Fatalf("managed mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(wantReport, gotReport); diff != "" {
+		t.Fatalf("report mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestMultiReadsCalendarsConcurrently(t *testing.T) {
+	arrived := make(chan string, 2)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := calendarIDFromPath(r.URL.Path)
+		if id != "primary" {
+			arrived <- id
+			<-release
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	m, err := NewMultiClient(nil, "primary", []string{"a@example.com", "b@example.com"}, srv.URL, ReadOptions{})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	g, now, _ := busyFixture(t)
+
+	done := make(chan struct{})
+	var (
+		report BusyReport
+		gotErr error
+	)
+	go func() {
+		_, _, report, gotErr = m.Busy(t.Context(), g, now)
+		close(done)
+	}()
+
+	for range 2 {
+		select {
+		case <-arrived:
+		case <-time.After(5 * time.Second):
+			t.Fatal("read calendars did not run concurrently")
+		}
+	}
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Busy did not finish after releasing the reads")
+	}
+	if gotErr != nil {
+		t.Fatalf("Busy: %v", gotErr)
+	}
+	if len(report.Sources) != 2 ||
+		report.Sources[0].CalendarID != "a@example.com" ||
+		report.Sources[1].CalendarID != "b@example.com" {
+		t.Fatalf("sources = %+v, want config order", report.Sources)
+	}
+}
+
+func TestMultiKeepsConfigOrderWhenReadsFinishOutOfOrder(t *testing.T) {
+	fa := &multiFake{
+		bodies: map[string][]string{
+			"primary": {listBody(nil, "")},
+			"slow@example.com": {listBody([]string{
+				lodoReadEvent("slow-copy", "2026-11-09T10:00:00Z", "2026-11-09T11:00:00Z"),
+			}, "")},
+			"fast@example.com": {listBody([]string{
+				lodoReadEvent("fast-copy", "2026-11-09T14:00:00Z", "2026-11-09T15:00:00Z"),
+			}, "")},
+		},
+		delay: map[string]time.Duration{"slow@example.com": 30 * time.Millisecond},
+	}
+	m, err := NewMultiClient(nil, "primary", []string{"slow@example.com", "fast@example.com"}, fa.serve(t), ReadOptions{})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	g, now, _ := busyFixture(t)
+
+	_, _, report, err := m.Busy(t.Context(), g, now)
+	if err != nil {
+		t.Fatalf("Busy: %v", err)
+	}
+	if len(report.Sources) != 2 ||
+		report.Sources[0].CalendarID != "slow@example.com" ||
+		report.Sources[1].CalendarID != "fast@example.com" {
+		t.Fatalf("sources = %+v, want config order", report.Sources)
+	}
+	if len(report.Warnings) != 2 ||
+		!strings.Contains(report.Warnings[0], "slow-copy") ||
+		!strings.Contains(report.Warnings[1], "fast-copy") {
+		t.Fatalf("warnings = %+v, want config order", report.Warnings)
+	}
+}
+
+func TestMultiFirstHardErrorWinsOverCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch id := calendarIDFromPath(r.URL.Path); id {
+		case "primary":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		case "slow@example.com":
+			<-r.Context().Done()
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	m, err := NewMultiClient(nil, "primary", []string{"slow@example.com", "bad@example.com"}, srv.URL, ReadOptions{})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	g, now, _ := busyFixture(t)
+
+	_, _, _, err = m.Busy(t.Context(), g, now)
+	if err == nil {
+		t.Fatal("Busy succeeded, want the failing read to fail the run")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `read calendar "bad@example.com"`) || !strings.Contains(msg, "HTTP 500") {
+		t.Fatalf("Busy err = %q, want the read calendar's 500", msg)
+	}
+	if strings.Contains(msg, "context canceled") {
+		t.Fatalf("Busy err = %q, want the real failure, not the cancellation", msg)
+	}
+}
+
+func TestMultiHonorsCallerCancellation(t *testing.T) {
+	arrived := make(chan string, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calendarIDFromPath(r.URL.Path) != "primary" {
+			arrived <- calendarIDFromPath(r.URL.Path)
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	m, err := NewMultiClient(nil, "primary", []string{"a@example.com", "b@example.com"}, srv.URL, ReadOptions{})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	g, now, _ := busyFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := m.Busy(ctx, g, now)
+		done <- err
+	}()
+
+	for range 2 {
+		select {
+		case <-arrived:
+		case <-time.After(5 * time.Second):
+			t.Fatal("read calendars did not start")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Busy err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Busy did not stop after cancellation")
 	}
 }
