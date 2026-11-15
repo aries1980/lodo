@@ -3,13 +3,47 @@
 All notable changes to Lodo, generated from the commit history by
 [git-cliff](https://git-cliff.org).
 
-## Unreleased
+## 0.2.0 - 2026-11-15
+
+### Features
+
+- Move PO files to ./translations with lowercase names ([5227345](https://github.com/aries1980/lodo/commit/522734579df2c73e4d7b2d6da91612229c30b468))
+- Add en-US base with en-GB PO + friendly date/time formats ([a340b4f](https://github.com/aries1980/lodo/commit/a340b4f4eea5c372a949c6cd9012fcef99aa6562))
+- Advisory suggestions for infeasible tasks #3 ([067342f](https://github.com/aries1980/lodo/commit/067342fe23ad0bc6bd47e5b6e2dbe25db485fb8a))
+- Fail early with exponential retry when Logseq is down ([c96df50](https://github.com/aries1980/lodo/commit/c96df502ea26a1667f1b0fcf58cc0bbc365896b1))
+- Explain placement decisions #4 ([7a18b51](https://github.com/aries1980/lodo/commit/7a18b51cd9d8433caf8432ea298c928385b78e24))
+
+### Bug fixes
+
+- Use cosign-installer v3 in release workflow ([4d4f90f](https://github.com/aries1980/lodo/commit/4d4f90fb770a5fc4b47efdb1b1c009fdf3f5290d))
+- Scan release tarball via sbom file input ([f9c49e7](https://github.com/aries1980/lodo/commit/f9c49e78f5c4bc1f13d77aaffcee25a4d45ae2c9))
+- Expand VERSION in sbom and attest inputs via env context ([b097fce](https://github.com/aries1980/lodo/commit/b097fce1e9b0281f793c9f7025a68049ee301494))
+- Scope lowercase check to PO files #25 ([c6d3d9f](https://github.com/aries1980/lodo/commit/c6d3d9fdbf8e5e9b8150eea68757b197d28f45a6))
+- Translate help text via PO files #25 ([375bcda](https://github.com/aries1980/lodo/commit/375bcda2d05d3a2d96fa0d8986979d42a762bcbd))
+- Use valid gomod and github-actions ecosystems in dependabot config ([f290baa](https://github.com/aries1980/lodo/commit/f290baa37334c8d008f369cde22507766477cb8e))
+- Name calendar and hint re-auth on invalid_grant and 401 ([ce02b91](https://github.com/aries1980/lodo/commit/ce02b9121d1b11846a10587ceec28a30a4a83d3b))
+- Harden calendar reconciliation and input edge cases ([f60b1f4](https://github.com/aries1980/lodo/commit/f60b1f4d12d8905d083642049f2eeb4e7aef6e59))
+
+### Documentation
+
+- Short translator guide with tool links ([448537b](https://github.com/aries1980/lodo/commit/448537b684470cfeac5bb9e0b53a32bb855f1e1e))
+- Document partial-completion pattern in entering-tasks guide ([998f57a](https://github.com/aries1980/lodo/commit/998f57a3dd1d10392b9fc3be6a2524303c58002c))
+- Tie-break glossary, explain coverage, probe and re-auth notes, CONTRIBUTING, docker runtime support ([8589a16](https://github.com/aries1980/lodo/commit/8589a16f0b0eea0f97ec110afb19aba051c81661))
+- Improve codebase readability and agent navigation ([fcee9d3](https://github.com/aries1980/lodo/commit/fcee9d3431e66ae8fe372cc627c4e1eee6a02c87))
 
 ### Maintenance
 
+- Validate PO files with msgfmt on Alpine ([0ee589b](https://github.com/aries1980/lodo/commit/0ee589b9aa88ba1f05c0a521cc7b6a7804000e2d))
+- Bump actions/deploy-pages from 4 to 5 (#18) ([319f446](https://github.com/aries1980/lodo/commit/319f446ab8164aa75a2f5af942aa245a05de43ab))
+- Bump actions/upload-pages-artifact from 3 to 5 (#19) ([1164481](https://github.com/aries1980/lodo/commit/1164481a675135f9cb72610f80f2bc5ea386c1c9))
+- Bump actions/configure-pages from 5 to 6 (#20) ([a6a059c](https://github.com/aries1980/lodo/commit/a6a059c272b64abdb862ccb2ff18e6445f82cd10))
+- Bump modernc.org/sqlite from 1.61.0 to 1.61.1 (#21) ([d4f3a35](https://github.com/aries1980/lodo/commit/d4f3a35bcd38a7dfd9d9c70d7dcf4aef30670a7e))
+- Bump actions/checkout from 4 to 7 (#22) ([6b11be0](https://github.com/aries1980/lodo/commit/6b11be064ff8b5cc7fab572a89a57a32ba4bc1ce))
 - Generate the changelog and release notes from the commit history ([e73f10c](https://github.com/aries1980/lodo/commit/e73f10c54b0796df1899875132c71594081d1f50))
 - Pin the Go toolchain in go.mod ([4cae433](https://github.com/aries1980/lodo/commit/4cae4336a1222fddc09808b5e29b234d33b68359))
 - Release workflow for signed multi-arch binaries on tags ([f852769](https://github.com/aries1980/lodo/commit/f852769c222a5a73c36668eadbbf835343330108))
+
+[Full changelog](https://github.com/aries1980/lodo/compare/0.1.1...0.2.0)
 
 ## 0.1.1 - 2026-10-22
 
