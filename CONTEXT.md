@@ -54,7 +54,8 @@ not resolve the graph or recompute the Schedule.
 - `internal/cli`: Cobra command tree, flags, config loading, command handlers, and
   human/JSON output. Keep wiring explicit. `prepare.go` holds the one `commandNeeds`
   table of what each command opens, and opens it. Read-only commands stay off the
-  calendar and the store commit. New commands render through `views.go`.
+  calendar and the store commit. New commands map their payload in `wire.go` and
+  their text in `views.go`.
 - `internal/run`: the command loop. `Forecast`/`ForecastSources` read, resolve, and
   plan. `Schedule` and `Check` reconcile, then plan. `Refresh` folds calendar edits
   without recomputing.
@@ -78,6 +79,9 @@ not resolve the graph or recompute the Schedule.
   default). Atomic `Commit`; opened per run (no daemon, ADR 0009). Schema is v0.1
   create-if-not-exists (no migration framework).
 - `internal/config`: config and credentials (ADR 0005), plus per-run overrides.
+- `internal/wire`: the `--json` result schema: payloads, shared row types, schema
+  versions, and the `Payload` marker. The CLI maps run outcomes in
+  `internal/cli/wire.go`; no other package declares a payload. See ADR 0023.
 - `internal/jsonx`: shared JSON v2 encoding and decoding policy, preserving wire and
   store compatibility. `internal/set`: map-backed membership sets for shared plumbing.
 
@@ -86,7 +90,9 @@ not resolve the graph or recompute the Schedule.
 - New CLI flag, command, or override: `internal/cli/*` (constructor, handler, tests).
   A new command also needs a `commandNeeds` row in `prepare.go`; that table is the
   single declaration of the config, graph, calendar, and store I/O a command touches.
-  Render with the helpers in `views.go`.
+  Map its payload in `wire.go` and its text in `views.go`.
+- A JSON result field: the type and version in `internal/wire`, the mapping in
+  `internal/cli/wire.go`, and `docs/content/specs/cli.md`, in one commit.
 - Task, Time Map, dependency, or provenance resolution: `internal/resolve/*`, with
   `internal/parse` and `internal/model` when the shape changes.
 - Placement rules, ordering, shortfalls, suggestions: `internal/planner/*`. Slot

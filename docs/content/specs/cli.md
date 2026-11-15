@@ -116,11 +116,45 @@ the date, `level` as status); Loki parses it with `| json` and
 `timestamp` as the detected time field. `--verbose` maps to `DEBUG`
 records; without it the log is `INFO`/`WARN`/`ERROR` only.
 
-`lodo explain --json` emits a stable, versioned schema with a root
-`schema_version` (currently `2`) and the per-task decision produced by the
-actual resolve, reconcile, and planner logic. The schema evolves in an
-additive-compatible way: v2 adds `ordering` (including the actual
-`tie_break`/`tie_break_detail` and consideration `position`/`total`),
-per-task `dispositions`, `consideration_order_before`, `spillover`, and
-rejection breakdowns (`rejected_external/pin/pinned/placed_earlier`,
+### JSON result payloads
+
+Every `--json` run writes exactly one JSON object to stdout. The object starts
+with `schema_version`, whose value is per command:
+
+| Command | `schema_version` | Top-level fields |
+| --- | --- | --- |
+| `check` | `1` | `graph_issues`, `shortfalls`, `suggestions`, `stood_down`, `orphaned`, `explanations` (with `--verbose`), `busy_sources` |
+| `forecast`, `schedule --dry-run` | `1` | `blocks`, `shortfalls`, `suggestions`, `explanations` (with `--verbose`), `managed_left_out`, `busy_sources` |
+| `schedule` | `1` | `blocks`, `shortfalls`, `suggestions`, `explanations` and `reconciled`/`dispositions` (with `--verbose`), `writes`, `orphaned`, `busy_sources` |
+| `refresh` | `1` | `dispositions`, `adopted`, `captured`, `busy_sources`, `conflicts` |
+| `explain` | `2` | `context`, `task`, the planner decision trace (`eligibility`, `ordering`, `effective_properties`, `dependency_gate`, `plan_window`, `time_maps`, `placement`, `final_blocks`, `outcome`), `dispositions`, `consideration_order_before`, `spillover`, `graph_issues`, `report`, `busy_sources` |
+| `auth google` | `1` | `stored` |
+
+The schema lives in `internal/wire`
+([ADR 0023](../ADRs/0023-json-wire-schema-boundary.md)); `internal/cli/wire.go`
+maps run outcomes onto it. A version changes by adding fields, never by
+removing, renaming, or retyping one; readers ignore unknown fields. A shape
+change bumps the version even when it is additive. A payload with no
+`schema_version` is the unversioned pre-1 shape (version `0`).
+
+`busy_sources` is present for every calendar-reading payload. `check` drops it
+when no calendar was consulted; `explain` always carries it, and its
+`context.calendar` says whether a calendar was consulted. Fields marked
+`--verbose` appear only under that flag. When `explain` matches no Task or the
+query is ambiguous, the payload carries `schema_version`, `error`, `query`, and
+`matches` (each match has `id`, `text`, and `graph` when non-empty), and the
+command exits `1`.
+
+`explain` is the deep-dive payload: its per-task `eligibility`, `ordering`,
+`dependency_gate`, `plan_window`, `time_maps`, `placement`, `final_blocks`, and
+`outcome` are the planner's actual decision trace
+(`internal/planner/trace.go`), so the explanation cannot drift from the
+placement it describes. Those trace types are part of the versioned explain
+schema. v2 adds `ordering` (including the actual `tie_break`/`tie_break_detail`
+and consideration `position`/`total`), per-task `dispositions`,
+`consideration_order_before`, `spillover`, and rejection breakdowns
+(`rejected_external/pin/pinned/placed_earlier`,
 `rejected_before_bound/outside_plan`) alongside the v1 fields.
+
+The stderr JSONL records described above are diagnostics, not this result
+schema.
