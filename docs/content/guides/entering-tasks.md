@@ -282,6 +282,34 @@ suppressed Task). Flip the parent back to `TODO`/`DOING` and the subtree
 re-enters the ordering. Marking `Draft proposal` itself `DONE` instead
 satisfies its dependents immediately.
 
+## Partial completion: recording progress
+
+There is no progress field. `duration::` always means the *remaining*
+estimate, so after working 1h on a 4h Task, lower the same block to `3h`.
+Keep the block (its UUID is the Task identity across runs); splitting into
+two `TODO` + `duration::` leaves instead creates new UUIDs, orphans the old
+calendar events, and turns the parent into an unscheduled container.
+
+```markdown
+- TODO Reconcile supplier invoice
+  duration:: 3h
+  - DONE 2026-11-15: 1h done, checked opening balance
+```
+
+What Lodo sees:
+
+- The parent stays the one schedulable Task with `3h` remaining. Flip it to
+  `DOING` while work is in flight if you want the in-progress signal;
+  scheduling treats `TODO`/`DOING` identically.
+- The nested `DONE` without `duration::` is history only: `DONE` blocks never
+  enter the ordering and never make the parent a container, and suppression
+  runs parent-down so the child does not hide the parent.
+- Do not mark the parent `DONE` until the full remainder is done — `DONE`
+  immediately satisfies `depends::` dependents. Do not delete calendar Blocks
+  to mean "worked an hour" — that records `stood-down`, which blocks
+  dependents until the Task inputs change. Editing `duration::` clears
+  `stood-down` via snapshot mismatch, so the new remainder is replanned.
+
 ## Check feedback loop
 
 - `lodo check`: `todo-missing-duration`, `bad-property-value`,
