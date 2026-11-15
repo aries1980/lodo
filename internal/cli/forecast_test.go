@@ -15,6 +15,8 @@ import (
 	_ "time/tzdata"
 
 	"golang.org/x/oauth2"
+
+	"github.com/aries1980/lodo/internal/wire"
 )
 
 // fakeGoogle is one httptest server for both endpoints the CLI needs: the
@@ -114,7 +116,8 @@ func TestForecastEndToEndWithFakeGoogle(t *testing.T) {
 	}
 
 	var view struct {
-		Blocks []struct {
+		SchemaVersion int `json:"schema_version"`
+		Blocks        []struct {
 			TaskID string    `json:"task_id"`
 			Start  time.Time `json:"start"`
 			End    time.Time `json:"end"`
@@ -126,6 +129,9 @@ func TestForecastEndToEndWithFakeGoogle(t *testing.T) {
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("stdout is not the JSON contract: %v\n%s", err, stdout.String())
+	}
+	if view.SchemaVersion != wire.ForecastVersion {
+		t.Fatalf("schema_version = %d, want %d", view.SchemaVersion, wire.ForecastVersion)
 	}
 
 	// The client refreshed exactly once, with the stored refresh token.

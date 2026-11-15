@@ -16,68 +16,8 @@ import (
 	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/run"
+	"github.com/aries1980/lodo/internal/wire"
 )
-
-// explainSchemaVersion is the stable --json schema version. v2 adds ordering,
-// dispositions, consideration predecessors and rejection breakdowns; all
-// additive over v1 (v1 readers ignore unknown fields).
-const explainSchemaVersion = 2
-
-type explainReport struct {
-	SchemaVersion int                          `json:"schema_version"`
-	Context       explainContext               `json:"context"`
-	Task          explainTask                  `json:"task"`
-	Eligibility   planner.Eligibility          `json:"eligibility"`
-	Ordering      planner.Ordering             `json:"ordering"`
-	Properties    []resolve.PropertyProvenance `json:"effective_properties,omitempty"`
-	Dependency    planner.Dependency           `json:"dependency_gate"`
-	Window        planner.Window               `json:"plan_window"`
-	TimeMaps      planner.TimeMaps             `json:"time_maps"`
-	Placement     *planner.Placement           `json:"placement,omitempty"`
-	Blocks        []planner.BlockDecision      `json:"final_blocks,omitempty"`
-	Outcome       planner.Outcome              `json:"outcome"`
-	Dispositions  []dispositionJSON            `json:"dispositions,omitempty"`
-	Predecessors  []string                     `json:"consideration_order_before,omitempty"`
-	Spillover     *explainSpillover            `json:"spillover,omitempty"`
-	Issues        []resolve.Issue              `json:"graph_issues,omitempty"`
-	Report        *shortfallJSON               `json:"report,omitempty"`
-	Busy          *busyJSON                    `json:"busy_sources,omitempty"`
-}
-
-type explainSpillover struct {
-	PrimaryPlaced  int    `json:"primary_placed"`
-	FallbackPlaced int    `json:"fallback_placed"`
-	Summary        string `json:"summary"`
-}
-
-type explainContext struct {
-	Command      string    `json:"command"`
-	Now          time.Time `json:"now"`
-	Timezone     string    `json:"timezone"`
-	Granularity  string    `json:"granularity"`
-	WindowDays   int       `json:"window_days"`
-	Calendar     bool      `json:"calendar"`
-	Reconciled   bool      `json:"reconciled"`
-	Dispositions int       `json:"effective_dispositions"`
-}
-
-type explainTask struct {
-	ID           string          `json:"id"`
-	Text         string          `json:"text"`
-	Graph        string          `json:"graph,omitempty"`
-	Marker       model.Marker    `json:"marker"`
-	Duration     string          `json:"duration"`
-	Priority     model.Priority  `json:"priority,omitempty"`
-	PlanStart    string          `json:"plan_start,omitempty"`
-	PlanEnd      string          `json:"plan_end,omitempty"`
-	Pin          *time.Time      `json:"pin,omitempty"`
-	Depends      []string        `json:"depends,omitempty"`
-	Order        model.OrderMode `json:"order,omitempty"`
-	Container    bool            `json:"container,omitempty"`
-	ParentID     string          `json:"parent_id,omitempty"`
-	GraphOrder   int             `json:"graph_order,omitempty"`
-	OutlineOrder int             `json:"outline_order"`
-}
 
 // runExplain is read-only except for the one allowed graph write: creating a
 // missing Time Maps page only on confirmation (ADR 0015), like check/forecast.
@@ -107,12 +47,7 @@ func runExplain(ctx context.Context, opts *options, ov configOverrides, query st
 			msg = fmt.Sprintf("ambiguous query %q; matches: %s", query, formatTaskMatches(matches))
 		}
 		if opts.json {
-			_ = printJSON(opts.out, map[string]any{
-				"schema_version": explainSchemaVersion,
-				"error":          msg,
-				"query":          query,
-				"matches":        explainTaskSummaries(matches),
-			})
+			_ = printJSON(opts.out, explainErrorView(query, msg, matches))
 		} else {
 			_, _ = fmt.Fprintln(errWriter(opts), cmd.style.danger("lodo:")+" "+msg)
 		}
@@ -142,49 +77,23 @@ func runExplain(ctx context.Context, opts *options, ov configOverrides, query st
 	spill := explainSpilloverFor(*decision)
 
 	if opts.json {
-		var rep *shortfallJSON
-		if report != nil {
-			r := shortfallViews(outcome.Tasks, []planner.TaskReport{*report})[0]
-			rep = &r
-		}
-		busy := busyView(outcome.Busy)
-		view := explainReport{
-			SchemaVersion: explainSchemaVersion,
-			Context: explainContext{
-				Command: "explain", Now: now, Timezone: loc.String(),
-				Granularity: gran.String(), WindowDays: cmd.cfg.Scheduling.WindowDays,
-				Calendar:   outcome.Busy.WriteCalendar != "" || len(outcome.Busy.Sources) > 0,
-				Reconciled: true, Dispositions: len(outcome.Dispositions),
-			},
-			Task: explainTask{
-				ID: task.ID, Text: task.Text, Graph: task.Graph, Marker: task.Marker,
-				Duration: task.Duration.String(), Priority: task.Priority,
-				Pin: task.Pin, Depends: append([]string(nil), task.Depends...),
-				Order: task.Order, Container: task.Container, ParentID: task.ParentID,
-				GraphOrder: task.GraphOrder, OutlineOrder: task.OutlineOrder,
-			},
-			Eligibility:  decision.Eligibility,
-			Ordering:     decision.Ordering,
-			Properties:   prov.Properties,
-			Dependency:   decision.Dependency,
-			Window:       decision.Window,
-			TimeMaps:     decision.TimeMaps,
-			Placement:    decision.Placement,
-			Blocks:       decision.Blocks,
-			Outcome:      decision.Outcome,
-			Dispositions: dispositionViews(outcome.Tasks, decision.Dispositions),
-			Predecessors: predecessors,
-			Spillover:    spill,
-			Issues:       issues,
-			Report:       rep,
-			Busy:         &busy,
-		}
-		if task.PlanStart != nil {
-			view.Task.PlanStart = task.PlanStart.String()
-		}
-		if task.PlanEnd != nil {
-			view.Task.PlanEnd = task.PlanEnd.String()
-		}
+		view := explainView(explainViewInput{
+			decision:     *decision,
+			task:         *task,
+			provenance:   prov,
+			issues:       issues,
+			report:       report,
+			tasks:        outcome.Tasks,
+			predecessors: predecessors,
+			spillover:    spill,
+			busy:         busyView(outcome.Busy),
+			now:          now,
+			timezone:     loc.String(),
+			granularity:  gran.String(),
+			windowDays:   cmd.cfg.Scheduling.WindowDays,
+			calendar:     outcome.Busy.WriteCalendar != "" || len(outcome.Busy.Sources) > 0,
+			dispositions: len(outcome.Dispositions),
+		})
 		if err := printJSON(opts.out, view); err != nil {
 			return fail(err)
 		}
@@ -216,36 +125,6 @@ func explainPredecessors(decisions []planner.TaskDecision, pos int) []string {
 		out = append(out, p.id)
 	}
 	return out
-}
-
-func explainSpilloverFor(d planner.TaskDecision) *explainSpillover {
-	if len(d.TimeMaps.Passes) == 0 {
-		return nil
-	}
-	primary, fallback := 0, 0
-	for _, p := range d.TimeMaps.Passes {
-		if p.Primary {
-			primary += p.SlotsPlaced
-		} else {
-			fallback += p.SlotsPlaced
-		}
-	}
-	if primary+fallback == 0 {
-		return nil
-	}
-	var summary string
-	switch {
-	case fallback == 0:
-		summary = fmt.Sprintf("placed %d slots in primary maps; no spillover needed", primary)
-	case primary == 0:
-		summary = fmt.Sprintf("placed %d slots in fallback (default) maps; primary maps had no usable time", fallback)
-	default:
-		summary = fmt.Sprintf("placed %d slots in primary maps, spilled %d slots into fallback (default) maps", primary, fallback)
-	}
-	if d.TimeMaps.NoUpwardSpill {
-		summary += "; never spilled into a better tier than the project map's best"
-	}
-	return &explainSpillover{PrimaryPlaced: primary, FallbackPlaced: fallback, Summary: summary}
 }
 
 func findTask(tasks []model.Task, query string) (*model.Task, []model.Task, error) {
@@ -307,14 +186,6 @@ func formatTaskMatches(tasks []model.Task) string {
 	return strings.Join(parts, "; ")
 }
 
-func explainTaskSummaries(tasks []model.Task) []map[string]string {
-	out := make([]map[string]string, 0, len(tasks))
-	for _, t := range tasks {
-		out = append(out, map[string]string{"id": t.ID, "text": t.Text, "graph": t.Graph})
-	}
-	return out
-}
-
 func findDecision(decisions []planner.TaskDecision, id string) *planner.TaskDecision {
 	for i := range decisions {
 		if decisions[i].TaskID == id {
@@ -347,7 +218,7 @@ func issuesForTask(issues []resolve.Issue, id string) []resolve.Issue {
 	return out
 }
 
-func renderExplainText(w io.Writer, cfg config.Config, outcome run.CheckOutcome, task model.Task, d planner.TaskDecision, prov resolve.TaskProvenance, report *planner.TaskReport, issues []resolve.Issue, predecessors []string, spill *explainSpillover, gran time.Duration, now time.Time, verbose bool, st styler) {
+func renderExplainText(w io.Writer, cfg config.Config, outcome run.CheckOutcome, task model.Task, d planner.TaskDecision, prov resolve.TaskProvenance, report *planner.TaskReport, issues []resolve.Issue, predecessors []string, spill *wire.Spillover, gran time.Duration, now time.Time, verbose bool, st styler) {
 	loc := schedulingLocation(cfg)
 	_, _ = fmt.Fprintln(w, st.header("Explain: "+graphLabel(outcome.Tasks, task.ID)))
 	_, _ = fmt.Fprintf(w, "  id: %s\n", task.ID)

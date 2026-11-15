@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +16,7 @@ import (
 	"github.com/aries1980/lodo/internal/jsonx"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/store"
+	"github.com/aries1980/lodo/internal/wire"
 )
 
 func TestExplainTextShowsFullReasoning(t *testing.T) {
@@ -97,8 +101,8 @@ func TestExplainJSONSchemaV2(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("stdout is not explain JSON: %v\n%s", err, stdout.String())
 	}
-	if view.SchemaVersion != 2 {
-		t.Fatalf("schema_version=%d, want 2", view.SchemaVersion)
+	if view.SchemaVersion != wire.ExplainVersion {
+		t.Fatalf("schema_version=%d, want %d", view.SchemaVersion, wire.ExplainVersion)
 	}
 	if view.Ordering.TieBreak == "" || view.Ordering.TieBreakDetail == "" {
 		t.Fatalf("ordering tie-break missing: %+v", view.Ordering)
@@ -111,6 +115,43 @@ func TestExplainJSONSchemaV2(t *testing.T) {
 	}
 	if view.Outcome.Required == 0 || view.Outcome.Placed == 0 {
 		t.Fatalf("outcome missing: %+v", view.Outcome)
+	}
+}
+
+// The explain payload always carries busy_sources, on the degraded path too:
+// context.calendar is what says whether a calendar was consulted. check is the
+// command that drops the key instead.
+func TestExplainJSONBusySourcesAlwaysPresent(t *testing.T) {
+	for _, tc := range checkPathCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := tc.setup(t)
+			stdout, stderr := &bytes.Buffer{}, &strings.Builder{}
+			if code := Run([]string{"--config", conf, "--json", "explain", "t-task-uuid"}, stdout, stderr); code != 0 {
+				t.Fatalf("exit = %d, stderr %q", code, stderr.String())
+			}
+			var view struct {
+				SchemaVersion int `json:"schema_version"`
+				Context       struct {
+					Calendar bool `json:"calendar"`
+				} `json:"context"`
+				Busy *struct {
+					WriteCalendar string `json:"write_calendar"`
+					WriteEvents   int    `json:"write_events"`
+				} `json:"busy_sources"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
+				t.Fatalf("stdout is not explain JSON: %v\n%s", err, stdout.String())
+			}
+			if view.SchemaVersion != wire.ExplainVersion {
+				t.Fatalf("schema_version = %d, want %d", view.SchemaVersion, wire.ExplainVersion)
+			}
+			if view.Busy == nil {
+				t.Fatalf("busy_sources must be present on every explain payload:\n%s", stdout.String())
+			}
+			if view.Context.Calendar != tc.calendar {
+				t.Fatalf("context.calendar = %v, want %v:\n%s", view.Context.Calendar, tc.calendar, stdout.String())
+			}
+		})
 	}
 }
 
@@ -135,7 +176,7 @@ func TestExplainNoMatchJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("stdout is not error JSON: %v\n%s", err, stdout.String())
 	}
-	if view.SchemaVersion != explainSchemaVersion {
+	if view.SchemaVersion != wire.ExplainVersion {
 		t.Fatalf("schema_version=%d", view.SchemaVersion)
 	}
 	if view.Error == "" || view.Query != "no-such-task" {
@@ -146,8 +187,8 @@ func TestExplainNoMatchJSON(t *testing.T) {
 func TestExplainReportDispositionsAreTyped(t *testing.T) {
 	tasks := []model.Task{{ID: "task-1", Text: "Write the note", Graph: "work"}}
 	start := time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC)
-	view := explainReport{
-		SchemaVersion: explainSchemaVersion,
+	view := wire.Explain{
+		SchemaVersion: wire.ExplainVersion,
 		Dispositions: dispositionViews(tasks, []model.Disposition{{
 			TaskID: "task-1", BlockIndex: 1, Kind: model.DispositionPinned,
 			Start: start, End: start.Add(30 * time.Minute), Slots: 2,
@@ -218,7 +259,7 @@ func TestExplainJSONPinnedDisposition(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("stdout is not explain JSON: %v\n%s", err, stdout.String())
 	}
-	if view.SchemaVersion != explainSchemaVersion {
+	if view.SchemaVersion != wire.ExplainVersion {
 		t.Fatalf("schema_version = %d", view.SchemaVersion)
 	}
 	if len(view.Dispositions) != 1 {
@@ -294,6 +335,88 @@ func TestExplainJSONStoodDownDisposition(t *testing.T) {
 	if strings.Contains(stdout.String(), "Snapshot") {
 		t.Fatalf("domain snapshot leaked:\n%s", stdout.String())
 	}
+}
+
+func TestExplainAmbiguousJSONIsTyped(t *testing.T) {
+	api := twoTaskApp(t)
+	conf, _ := writeTestSetup(t, api)
+	fg := &fakeGoogle{}
+	base := fg.mount(t, `{"items":[]}`)
+	pointBoth(t, oauth2.Endpoint{AuthURL: base + "/authorize", TokenURL: base + "/token"}, base)
+
+	stdout, stderr := &bytes.Buffer{}, &strings.Builder{}
+	code := Run([]string{"--config", conf, "--json", "explain", "write"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	var view struct {
+		SchemaVersion int              `json:"schema_version"`
+		Error         string           `json:"error"`
+		Query         string           `json:"query"`
+		Matches       []map[string]any `json:"matches"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
+		t.Fatalf("stdout is not error JSON: %v\n%s", err, stdout.String())
+	}
+	if view.SchemaVersion != wire.ExplainVersion {
+		t.Fatalf("schema_version = %d, want %d", view.SchemaVersion, wire.ExplainVersion)
+	}
+	if view.Error == "" || view.Query != "write" {
+		t.Fatalf("error view: %+v", view)
+	}
+	if len(view.Matches) != 2 {
+		t.Fatalf("matches = %+v", view.Matches)
+	}
+	for _, match := range view.Matches {
+		if len(match) != 2 {
+			t.Fatalf("match keys = %v, want id and text (graph omitted when empty)", match)
+		}
+		if match["id"] == "" || match["text"] == "" {
+			t.Fatalf("match = %+v", match)
+		}
+		if _, ok := match["graph"]; ok {
+			t.Fatalf("empty graph must be omitted: %+v", match)
+		}
+	}
+}
+
+// twoTaskApp is miniApp with two Tasks that share the word "write", so an
+// explain query exercises the ambiguous path.
+func twoTaskApp(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Method string `json:"method"`
+			Args   []any  `json:"args"`
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("bad stub request: %v", err)
+		}
+		switch req.Method {
+		case "logseq.Editor.get_all_pages":
+			_, _ = w.Write([]byte(`[{"name":"2026-01-01","uuid":"d"},{"name":"Time Maps","uuid":"tm"}]`))
+		case "logseq.Editor.get_page_blocks_tree":
+			if req.Args[0].(string) == "Time Maps" {
+				_, _ = w.Write([]byte(`[{"uuid":"map","content":"Deep Work","properties":{"default":true},"children":[{"uuid":"w","content":"Mon-Fri 09:00-12:00"}]}]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[
+				{"uuid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","content":"TODO Write alpha report","marker":"TODO","properties":{"duration":"30m"}},
+				{"uuid":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","content":"TODO Write beta report","marker":"TODO","properties":{"duration":"30m"}}
+			]`))
+		case "logseq.Editor.get_page":
+			_, _ = w.Write([]byte(`{"name":"` + req.Args[0].(string) + `","uuid":"x","properties":null}`))
+		default:
+			http.Error(w, "unexpected method", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 func TestExplainVerboseAddsConsiderationOrder(t *testing.T) {

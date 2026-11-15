@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+
+	"github.com/aries1980/lodo/internal/wire"
 )
 
 // scheduleFake is a Calendar API fake with writes: token refresh, list,
@@ -116,7 +118,8 @@ func TestScheduleWritesThenNoOp(t *testing.T) {
 		t.Fatalf("first schedule exit = %d, stderr %q", code, stderr.String())
 	}
 	var first struct {
-		Blocks []struct {
+		SchemaVersion int `json:"schema_version"`
+		Blocks        []struct {
 			TaskID string `json:"task_id"`
 		} `json:"blocks"`
 		Writes []struct {
@@ -125,6 +128,9 @@ func TestScheduleWritesThenNoOp(t *testing.T) {
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &first); err != nil {
 		t.Fatalf("first schedule JSON: %v\n%s", err, stdout.String())
+	}
+	if first.SchemaVersion != wire.ScheduleVersion {
+		t.Fatalf("schema_version = %d, want %d", first.SchemaVersion, wire.ScheduleVersion)
 	}
 	if len(first.Blocks) == 0 || len(first.Writes) == 0 {
 		t.Fatalf("first schedule must place and write: blocks=%d writes=%d", len(first.Blocks), len(first.Writes))
@@ -217,10 +223,14 @@ calendar:
 		t.Fatalf("refresh with dead graph exit = %d, stderr %q (must not fetch the graph)", code, stderr.String())
 	}
 	var view struct {
-		Dispositions []any `json:"dispositions"`
+		SchemaVersion int   `json:"schema_version"`
+		Dispositions  []any `json:"dispositions"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("refresh JSON: %v", err)
+	}
+	if view.SchemaVersion != wire.RefreshVersion {
+		t.Fatalf("schema_version = %d, want %d", view.SchemaVersion, wire.RefreshVersion)
 	}
 	// Determinism: a second refresh is byte-identical.
 	again := &bytes.Buffer{}

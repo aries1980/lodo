@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/aries1980/lodo/internal/wire"
 )
 
 // appendTheme adds a ui.theme setting to a config file written by
@@ -40,7 +42,7 @@ func TestInvalidThemeNameWarnsAndContinues(t *testing.T) {
 	if got := stderr.String(); !strings.Contains(got, `ui.theme "no-such-theme": unknown theme; falling back to concrete`) {
 		t.Fatalf("stderr must name the bad theme and the fallback, got %q", got)
 	}
-	var view forecastReport
+	var view wire.Forecast
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("stdout must stay the JSON contract: %v\n%s", err, stdout.String())
 	}
@@ -66,7 +68,7 @@ func TestMissingThemeFileWarnsAndContinues(t *testing.T) {
 	if got := stderr.String(); !strings.Contains(got, `ui.theme "/nonexistent/lodo-theme.yaml"`) || !strings.Contains(got, "falling back to concrete") {
 		t.Fatalf("stderr must name the bad theme file and the fallback, got %q", got)
 	}
-	var view forecastReport
+	var view wire.Forecast
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("stdout must stay the JSON contract: %v\n%s", err, stdout.String())
 	}
@@ -92,7 +94,7 @@ func TestValidThemeEmitsNoWarning(t *testing.T) {
 	if got := stderr.String(); strings.Contains(got, "falling back to concrete") {
 		t.Fatalf("a valid theme must not warn, got %q", got)
 	}
-	var view forecastReport
+	var view wire.Forecast
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("stdout must stay the JSON contract: %v\n%s", err, stdout.String())
 	}

@@ -32,19 +32,7 @@ func runSchedule(ctx context.Context, opts *options, ov configOverrides, dryRun,
 	}
 
 	if opts.json {
-		view := scheduleReport{
-			Blocks:      blockViews(outcome.Tasks, outcome.Schedule.Blocks),
-			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
-			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
-			Writes:      scheduleWrites(outcome),
-			Orphans:     orphanViews(outcome.Tasks, outcome.Orphans),
-			Busy:        busyView(outcome.Busy),
-		}
-		if verbose {
-			view.Explanations = explanationViews(outcome.Schedule.Explanations)
-			view.Reconciled = reconcileSummary(outcome)
-			view.Dispositions = dispositionViews(outcome.Tasks, outcome.Dispositions)
-		}
+		view := scheduleView(outcome, verbose)
 		if err := printJSON(opts.out, view); err != nil {
 			return fail(err)
 		}
@@ -79,86 +67,8 @@ func scheduleProblems(outcome run.ScheduleOutcome) int {
 	return len(outcome.Schedule.Report.Tasks) + len(outcome.Orphans)
 }
 
-// The JSON views are structs only; no map-keyed output.
-
-type scheduleReport struct {
-	Blocks       []blockJSON       `json:"blocks,omitempty"`
-	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
-	Suggestions  []suggestionJSON  `json:"suggestions,omitempty"`
-	Explanations []explanationJSON `json:"explanations,omitempty"`
-	Writes       []writeJSON       `json:"writes,omitempty"`
-	Orphans      []orphanJSON      `json:"orphaned,omitempty"`
-	Reconciled   *reconcileJSON    `json:"reconciled,omitempty"`
-	Dispositions []dispositionJSON `json:"dispositions,omitempty"`
-	Busy         busyJSON          `json:"busy_sources"`
-}
-
-type writeJSON struct {
-	Op         string    `json:"op"`
-	EventID    string    `json:"event_id"`
-	TaskID     string    `json:"task_id,omitempty"`
-	Task       string    `json:"task,omitempty"`
-	Graph      string    `json:"graph,omitempty"`
-	BlockIndex int       `json:"block_index,omitempty"`
-	Start      time.Time `json:"start,omitempty"`
-	End        time.Time `json:"end,omitempty"`
-	Summary    string    `json:"summary,omitempty"`
-}
-
-type orphanJSON struct {
-	EventID string `json:"event_id"`
-	TaskID  string `json:"task_id,omitempty"`
-	Task    string `json:"task,omitempty"`
-	Graph   string `json:"graph,omitempty"`
-	Block   int    `json:"block"`
-	Summary string `json:"summary,omitempty"`
-}
-
-type reconcileJSON struct {
-	BindingsUpserted int `json:"bindings_upserted"`
-	BindingsDeleted  int `json:"bindings_deleted"`
-	Dispositions     int `json:"dispositions"`
-}
-
-type dispositionJSON struct {
-	TaskID     string    `json:"task_id"`
-	Task       string    `json:"task"`
-	Graph      string    `json:"graph,omitempty"`
-	BlockIndex int       `json:"block_index"`
-	Kind       string    `json:"kind"`
-	Start      time.Time `json:"start,omitempty"`
-	End        time.Time `json:"end,omitempty"`
-	Slots      int       `json:"slots,omitempty"`
-}
-
-func scheduleWrites(outcome run.ScheduleOutcome) []writeJSON {
-	byText := textByTasks(outcome.Tasks)
-	byGraph := graphByTasks(outcome.Tasks)
-	out := make([]writeJSON, 0, len(outcome.Writes))
-	for _, w := range outcome.Writes {
-		out = append(out, writeJSON{
-			Op: w.Op, EventID: w.EventID, TaskID: w.TaskID, Graph: graphForWrite(outcome.Tasks, byGraph, w),
-			Task:       byText[w.TaskID],
-			BlockIndex: w.BlockIndex, Start: w.Start, End: w.End, Summary: w.Summary,
-		})
-	}
-	return out
-}
-
-func graphForWrite(tasks []model.Task, byGraph map[string]string, w run.WriteOp) string {
-	if w.Graph != "" {
-		return w.Graph
-	}
-	return byGraph[w.TaskID]
-}
-
-func reconcileSummary(outcome run.ScheduleOutcome) *reconcileJSON {
-	return &reconcileJSON{
-		BindingsUpserted: len(outcome.Reconciled.BindingUpserts),
-		BindingsDeleted:  len(outcome.Reconciled.BindingDeletes),
-		Dispositions:     len(outcome.Reconciled.DispositionUpserts),
-	}
-}
+// renderScheduleText renders the forecast view plus the calendar writes and
+// reconciliation the run made.
 
 func renderScheduleText(w interface {
 	Write([]byte) (int, error)

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/wire"
 )
 
 // The headless flow, all the way through the CLI: the raised URL is printed
@@ -166,10 +167,14 @@ func TestAuthGoogleJSONKeepsStdoutMachineReadable(t *testing.T) {
 
 	// stdout must be exactly the JSON result, with no prompt text before it.
 	var result struct {
-		Stored string `json:"stored"`
+		SchemaVersion int    `json:"schema_version"`
+		Stored        string `json:"stored"`
 	}
 	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result.SchemaVersion != wire.AuthVersion {
+		t.Fatalf("schema_version = %d, want %d", result.SchemaVersion, wire.AuthVersion)
 	}
 	if result.Stored != credPath {
 		t.Fatalf("stored = %q, want %q", result.Stored, credPath)

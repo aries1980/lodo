@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/aries1980/lodo/internal/run"
 	"github.com/aries1980/lodo/internal/store"
@@ -25,13 +24,7 @@ func runRefresh(ctx context.Context, opts *options, ov configOverrides) error {
 	}
 
 	if opts.json {
-		view := refreshReport{
-			Dispositions: refreshDispositions(outcome),
-			Adopted:      refreshAdopted(outcome),
-			Captured:     refreshCaptured(outcome),
-			Busy:         busyView(outcome.Busy),
-			Conflicts:    conflictsView(outcome.Conflicts),
-		}
+		view := refreshView(outcome)
 		if err := printJSON(opts.out, view); err != nil {
 			return fail(err)
 		}
@@ -50,56 +43,6 @@ func runRefresh(ctx context.Context, opts *options, ov configOverrides) error {
 		"conflicts": len(outcome.Conflicts),
 	})
 	return nil
-}
-
-type refreshReport struct {
-	Dispositions []dispositionJSON `json:"dispositions,omitempty"`
-	Adopted      []bindingJSON     `json:"adopted,omitempty"`
-	Captured     []dispositionJSON `json:"captured,omitempty"`
-	Busy         busyJSON          `json:"busy_sources"`
-	Conflicts    []conflictJSON    `json:"conflicts,omitempty"`
-}
-
-type bindingJSON struct {
-	TaskID     string    `json:"task_id"`
-	BlockIndex int       `json:"block_index"`
-	EventID    string    `json:"event_id"`
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
-	Slots      int       `json:"slots"`
-}
-
-func refreshDispositions(outcome run.RefreshOutcome) []dispositionJSON {
-	out := make([]dispositionJSON, 0, len(outcome.Dispositions))
-	for _, d := range outcome.Dispositions {
-		out = append(out, dispositionJSON{
-			TaskID: d.TaskID, BlockIndex: d.BlockIndex, Kind: string(d.Kind),
-			Start: d.Start, End: d.End, Slots: d.Slots,
-		})
-	}
-	return out
-}
-
-func refreshAdopted(outcome run.RefreshOutcome) []bindingJSON {
-	out := make([]bindingJSON, 0, len(outcome.Adopted))
-	for _, b := range outcome.Adopted {
-		out = append(out, bindingJSON{
-			TaskID: b.TaskID, BlockIndex: b.BlockIndex, EventID: b.EventID,
-			Start: b.Start, End: b.End, Slots: b.Slots,
-		})
-	}
-	return out
-}
-
-func refreshCaptured(outcome run.RefreshOutcome) []dispositionJSON {
-	out := make([]dispositionJSON, 0, len(outcome.Captured))
-	for _, d := range outcome.Captured {
-		out = append(out, dispositionJSON{
-			TaskID: d.TaskID, BlockIndex: d.BlockIndex, Kind: string(d.Kind),
-			Start: d.Start, End: d.End, Slots: d.Slots,
-		})
-	}
-	return out
 }
 
 func renderRefreshText(w interface {

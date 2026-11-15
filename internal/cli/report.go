@@ -15,12 +15,10 @@ import (
 
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
-	"github.com/aries1980/lodo/internal/jsonx"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/reconcile"
-	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/run"
 )
 
@@ -174,20 +172,7 @@ func runCheck(ctx context.Context, opts *options, ov configOverrides, strict, ye
 // so the report, the log record and the validation exit cannot drift apart.
 func renderCheck(opts *options, cmd *command, outcome run.CheckOutcome, strict bool) error {
 	if opts.json {
-		view := checkReport{
-			GraphIssues: outcome.Issues,
-			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
-			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
-			StoodDown:   checkStoodDown(outcome),
-			Orphaned:    orphanViews(outcome.Tasks, outcome.Orphans),
-		}
-		if cmd.cal != nil {
-			busy := busyView(outcome.Busy)
-			view.Busy = &busy
-		}
-		if opts.verbose {
-			view.Explanations = explanationViews(outcome.Schedule.Explanations)
-		}
+		view := checkView(outcome, cmd.cal != nil, opts.verbose)
 		if err := printJSON(opts.out, view); err != nil {
 			return fail(err)
 		}
@@ -293,16 +278,7 @@ func runForecast(ctx context.Context, opts *options, ov configOverrides, verbose
 	}
 
 	if opts.json {
-		view := forecastReport{
-			Blocks:      blockViews(outcome.Tasks, outcome.Schedule.Blocks),
-			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
-			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
-			Managed:     managedEvents(outcome),
-			Busy:        busyView(outcome.Busy),
-		}
-		if verbose {
-			view.Explanations = explanationViews(outcome.Schedule.Explanations)
-		}
+		view := forecastView(outcome, verbose)
 		if err := printJSON(opts.out, view); err != nil {
 			return fail(err)
 		}
@@ -323,117 +299,7 @@ func runForecast(ctx context.Context, opts *options, ov configOverrides, verbose
 	return nil
 }
 
-// The JSON views are structs only — mapped keys randomise their order,
-// structs keep the output byte-stable run to run.
-
-type checkReport struct {
-	GraphIssues  []resolve.Issue   `json:"graph_issues,omitempty"`
-	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
-	Suggestions  []suggestionJSON  `json:"suggestions,omitempty"`
-	StoodDown    []stoodDownJSON   `json:"stood_down,omitempty"`
-	Orphaned     []orphanJSON      `json:"orphaned,omitempty"`
-	Explanations []explanationJSON `json:"explanations,omitempty"`
-	Busy         *busyJSON         `json:"busy_sources,omitempty"`
-}
-
-type stoodDownJSON struct {
-	TaskID     string `json:"task_id"`
-	Task       string `json:"task"`
-	Graph      string `json:"graph,omitempty"`
-	BlockIndex int    `json:"block_index"`
-	Slots      int    `json:"slots"`
-}
-
-type forecastReport struct {
-	Blocks       []blockJSON       `json:"blocks,omitempty"`
-	Shortfalls   []shortfallJSON   `json:"shortfalls,omitempty"`
-	Suggestions  []suggestionJSON  `json:"suggestions,omitempty"`
-	Explanations []explanationJSON `json:"explanations,omitempty"` // with --verbose
-	// Managed are the calendar's Lodo-made events forecast deliberately
-	// leaves out; schedule's reconciliation closes that hole.
-	Managed []managedJSON `json:"managed_left_out,omitempty"`
-	Busy    busyJSON      `json:"busy_sources"`
-}
-
-// managedJSON is one Managed event run out of the mask, for the note both
-// renderings make.
-type managedJSON struct {
-	ID      string `json:"id"`
-	Summary string `json:"summary,omitempty"`
-}
-
-type blockJSON struct {
-	TaskID string    `json:"task_id"`
-	Task   string    `json:"task"`
-	Graph  string    `json:"graph,omitempty"`
-	Index  int       `json:"index"`
-	Start  time.Time `json:"start"`
-	End    time.Time `json:"end"`
-	Slots  int       `json:"slots"`
-	Kind   string    `json:"kind"`
-}
-
-type shortfallJSON struct {
-	TaskID    string   `json:"task_id"`
-	Task      string   `json:"task"`
-	Graph     string   `json:"graph,omitempty"`
-	Required  int      `json:"required"`
-	Placed    int      `json:"placed"`
-	StoodDown int      `json:"stood_down"`
-	Shortfall int      `json:"shortfall"`
-	Reason    string   `json:"reason"`
-	BlockedBy []string `json:"blocked_by,omitempty"`
-}
-
-type suggestionJSON struct {
-	TaskID string `json:"task_id"`
-	Task   string `json:"task"`
-	Graph  string `json:"graph,omitempty"`
-	Reason string `json:"reason"`
-	Change string `json:"change"`
-	Impact string `json:"impact"`
-	Tier   string `json:"tier,omitempty"`
-}
-
-type explanationJSON struct {
-	TaskID     string    `json:"task_id"`
-	BlockIndex int       `json:"block_index"`
-	Kind       string    `json:"kind"`
-	Start      time.Time `json:"start"`
-	Slots      int       `json:"slots"`
-	RunStart   time.Time `json:"run_start,omitempty"`
-	RunSlots   int       `json:"run_slots,omitempty"`
-}
-
-// managedEvents is the note's payload: the events busy deliberately left
-// out, in view order.
-func managedEvents(outcome run.ForecastOutcome) []managedJSON {
-	return mapViews(outcome.Managed, func(e calendar.Event) managedJSON {
-		return managedJSON{ID: e.ID, Summary: e.Summary}
-	})
-}
-
-// printJSON writes indented, newline-terminated, deterministic JSON.
-func printJSON(w io.Writer, v any) error {
-	raw, err := jsonx.MarshalIndent(v, "  ")
-	if err != nil {
-		return err
-	}
-	raw = append(raw, '\n')
-	_, err = w.Write(raw)
-	return err
-}
-
 // Text rendering, in the Scheduling timezone the blocks were built in.
-
-func checkStoodDown(outcome run.CheckOutcome) []stoodDownJSON {
-	return mapTaskViews(outcome.Tasks, outcome.StoodDown, func(d model.Disposition, labels taskLabels) stoodDownJSON {
-		return stoodDownJSON{
-			TaskID: d.TaskID, Task: labels.text[d.TaskID], Graph: labels.graph[d.TaskID],
-			BlockIndex: d.BlockIndex, Slots: d.Slots,
-		}
-	})
-}
 
 // graphLabel prefixes the task text with [graph] in multi-graph mode.
 func graphLabel(tasks []model.Task, id string) string {

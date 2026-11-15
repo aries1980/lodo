@@ -14,6 +14,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/cli"
 	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/wire"
 )
 
 // stubApp answers the API calls the read side makes, with a tiny graph: one
@@ -212,14 +213,18 @@ func TestCheckJSONEndToEnd(t *testing.T) {
 		t.Fatalf("exit = %d, stderr = %q", code, errOut)
 	}
 	var view struct {
-		GraphIssues []struct{ Kind string } `json:"graph_issues"`
-		Shortfalls  []struct {
+		SchemaVersion int                     `json:"schema_version"`
+		GraphIssues   []struct{ Kind string } `json:"graph_issues"`
+		Shortfalls    []struct {
 			TaskID    string `json:"task_id"`
 			Shortfall int    `json:"shortfall"`
 		} `json:"shortfalls"`
 	}
 	if err := json.Unmarshal([]byte(out), &view); err != nil {
 		t.Fatalf("stdout is not the JSON contract: %v\n%s", err, out)
+	}
+	if view.SchemaVersion != wire.CheckVersion {
+		t.Fatalf("schema_version = %d, want %d", view.SchemaVersion, wire.CheckVersion)
 	}
 	if len(view.GraphIssues) != 1 || view.GraphIssues[0].Kind != "todo-missing-duration" {
 		t.Fatalf("graph_issues = %+v", view.GraphIssues)

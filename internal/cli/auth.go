@@ -87,9 +87,7 @@ func runAuthGoogle(ctx context.Context, opts *options, ov configOverrides, noBro
 func printStored(opts *options, path string) error {
 	st := newStyler(opts.out, opts.disableColors, theme.For(theme.Concrete))
 	if opts.json {
-		if err := printJSON(opts.out, struct {
-			Stored string `json:"stored"`
-		}{Stored: path}); err != nil {
+		if err := printJSON(opts.out, authView(path)); err != nil {
 			return fail(err)
 		}
 		return nil
