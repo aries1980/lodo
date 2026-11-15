@@ -38,7 +38,7 @@ func TestAuthGoogleNoLaunchBrowser(t *testing.T) {
 	// The token endpoint of a fake Google; it records the exchange to
 	// prove the flow's own mechanics still ran.
 	exchanges := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("ParseForm: %v", err)
 		}
@@ -57,7 +57,7 @@ func TestAuthGoogleNoLaunchBrowser(t *testing.T) {
 			"access_token": "1//access", "refresh_token": "1//granted", "expires_in": 3600, "token_type": "Bearer",
 		})
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	oldEndpoint := googleEndpoint
 	googleEndpoint = oauth2.Endpoint{
 		AuthURL:   srv.URL + "/authorize",
@@ -130,7 +130,7 @@ func TestAuthGoogleJSONKeepsStdoutMachineReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("ParseForm: %v", err)
 		}
@@ -142,7 +142,7 @@ func TestAuthGoogleJSONKeepsStdoutMachineReadable(t *testing.T) {
 			"access_token": "1//access", "refresh_token": "1//granted", "expires_in": 3600, "token_type": "Bearer",
 		})
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	oldEndpoint := googleEndpoint
 	googleEndpoint = oauth2.Endpoint{
 		AuthURL:   srv.URL + "/authorize",

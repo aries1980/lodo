@@ -67,7 +67,9 @@ type tokenExchanges struct {
 
 func (s *tokenExchanges) endpoint(t *testing.T) oauth2.Endpoint {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// NewTestServer owns the shutdown; Start() keeps a loopback URL that the
+	// OAuth client, which builds its own transport, can dial.
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST the token endpoint", http.StatusMethodNotAllowed)
 			return
@@ -111,7 +113,7 @@ func (s *tokenExchanges) endpoint(t *testing.T) oauth2.Endpoint {
 			http.Error(w, "unknown grant_type", http.StatusBadRequest)
 		}
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	return oauth2.Endpoint{
 		AuthURL:   srv.URL + "/authorize",
 		TokenURL:  srv.URL + "/token",
@@ -657,7 +659,7 @@ func TestTokenSourceRefreshesTransparently(t *testing.T) {
 	s := &tokenExchanges{}
 	endpoint := s.endpoint(t)
 	seen := 0
-	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	resource := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer 1//access" {
 			t.Errorf("Authorization = %q", got)
 			http.Error(w, "who are you", http.StatusUnauthorized)
@@ -666,7 +668,7 @@ func TestTokenSourceRefreshesTransparently(t *testing.T) {
 		seen++
 		_, _ = w.Write([]byte("ok"))
 	}))
-	t.Cleanup(resource.Close)
+	resource.Start()
 
 	src, err := gauth.TokenSource(t.Context(), endpoint, config.GoogleCredentials{
 		ClientID:     testClientID,

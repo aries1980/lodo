@@ -46,7 +46,9 @@ type fakeAPI struct {
 
 func (f *fakeAPI) serve(t *testing.T) string {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// NewTestServer owns the shutdown; Start() keeps a loopback URL, because
+	// the tests hand it to code that builds its own client.
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.paths = append(f.paths, r.URL.Path)
 		if f.fail {
 			w.Header().Set("Content-Type", "application/json")
@@ -84,7 +86,7 @@ func (f *fakeAPI) serve(t *testing.T) string {
 			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	return srv.URL
 }
 
@@ -414,12 +416,12 @@ func TestTransportInvalidGrantHintsReauth(t *testing.T) {
 }
 
 func TestAPI401HintsReauth(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":{"code":401,"message":"Request had invalid authentication credentials."}}`))
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	c, err := NewClient(nil, "primary", srv.URL)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

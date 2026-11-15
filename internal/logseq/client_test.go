@@ -41,7 +41,9 @@ type stubCall struct {
 func newStubApp(t *testing.T, route func(call stubCall) (string, int)) (logseq.Client, *[]stubCall) {
 	t.Helper()
 	var calls []stubCall
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// NewTestServer owns the shutdown; Start() keeps the loopback URL the
+	// client is built from.
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth := r.Header.Get("Authorization"); auth != "Bearer "+token {
 			http.Error(w, "Access Denied", http.StatusUnauthorized)
 			return
@@ -66,7 +68,7 @@ func newStubApp(t *testing.T, route func(call stubCall) (string, int)) (logseq.C
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 
 	client, err := logseq.NewClient(srv.URL+"/api", token, srv.Client())
 	if err != nil {
@@ -229,9 +231,8 @@ func TestHTTPErrorSurfacesBody(t *testing.T) {
 
 func TestUnreachableApp(t *testing.T) {
 	// A closed port: the adapter reports the cause, not the HTTP plumbing.
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := srv.URL + "/api"
-	srv.Close()
+	// Port 1 has no listener for an unprivileged test process.
+	url := "http://127.0.0.1:1/api"
 
 	client, err := logseq.NewClient(url, token, nil)
 	if err != nil {
@@ -266,7 +267,7 @@ func TestPing(t *testing.T) {
 
 func TestAccessTokenRequired(t *testing.T) {
 	var denied bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			denied = true
 			http.Error(w, "Access Denied", http.StatusUnauthorized)
@@ -274,7 +275,7 @@ func TestAccessTokenRequired(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, "[]")
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 
 	client, err := logseq.NewClient(srv.URL+"/api", "", srv.Client())
 	if err != nil {
@@ -294,10 +295,10 @@ func TestNewClientRejectsBadURL(t *testing.T) {
 }
 
 func TestTLSUnknownAuthorityHintsAtInsecure(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "[]")
 	}))
-	t.Cleanup(srv.Close)
+	srv.StartTLS()
 
 	client, err := logseq.NewClient(srv.URL+"/api", token, nil)
 	if err != nil {
@@ -319,10 +320,10 @@ func TestTLSUnknownAuthorityHintsAtInsecure(t *testing.T) {
 }
 
 func TestInsecureTransportSkipsVerify(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `[{"name":"Time Maps","uuid":"tm"}]`)
 	}))
-	t.Cleanup(srv.Close)
+	srv.StartTLS()
 
 	// Same shape as the insecure config path: a default transport clone
 	// that skips verification, without the test server's RootCAs.

@@ -40,7 +40,7 @@ func (f *multiFake) Paths() []string {
 
 func (f *multiFake) serve(t *testing.T) string {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.paths = append(f.paths, r.URL.Path)
 		f.mu.Unlock()
@@ -77,7 +77,7 @@ func (f *multiFake) serve(t *testing.T) string {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(bodies[page]))
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	return srv.URL
 }
 
@@ -574,7 +574,7 @@ func TestMultiReadsCalendarsConcurrently(t *testing.T) {
 	unblock := func() { once.Do(func() { close(release) }) }
 	defer unblock()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := calendarIDFromPath(r.URL.Path)
 		if id != "primary" {
 			arrived <- id
@@ -583,7 +583,7 @@ func TestMultiReadsCalendarsConcurrently(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[]}`))
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 
 	m, err := NewMultiClient(nil, "primary", []string{"a@example.com", "b@example.com"}, srv.URL, ReadOptions{})
 	if err != nil {
@@ -660,7 +660,7 @@ func TestMultiKeepsConfigOrderWhenReadsFinishOutOfOrder(t *testing.T) {
 }
 
 func TestMultiFirstHardErrorWinsOverCancellation(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch id := calendarIDFromPath(r.URL.Path); id {
 		case "primary":
 			w.Header().Set("Content-Type", "application/json")
@@ -673,7 +673,7 @@ func TestMultiFirstHardErrorWinsOverCancellation(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
 		}
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 
 	m, err := NewMultiClient(nil, "primary", []string{"slow@example.com", "bad@example.com"}, srv.URL, ReadOptions{})
 	if err != nil {
@@ -696,7 +696,7 @@ func TestMultiFirstHardErrorWinsOverCancellation(t *testing.T) {
 
 func TestMultiHonorsCallerCancellation(t *testing.T) {
 	arrived := make(chan string, 2)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calendarIDFromPath(r.URL.Path) != "primary" {
 			arrived <- calendarIDFromPath(r.URL.Path)
 			<-r.Context().Done()
@@ -705,7 +705,7 @@ func TestMultiHonorsCallerCancellation(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[]}`))
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 
 	m, err := NewMultiClient(nil, "primary", []string{"a@example.com", "b@example.com"}, srv.URL, ReadOptions{})
 	if err != nil {

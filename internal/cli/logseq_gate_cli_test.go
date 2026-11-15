@@ -7,17 +7,18 @@ import (
 	"testing"
 )
 
-// deadSetup writes a config pointing at a closed port (connection refused
-// is immediate, unlike a timeout) and a credentials file with a token, so
-// prepare succeeds and the Logseq gate is what fails.
+// deadBase is a loopback address with no listener: connection refused is
+// immediate, unlike a timeout.
+const deadBase = "http://127.0.0.1:1"
+
+// deadSetup writes a config pointing at deadBase and a credentials file with a
+// token, so prepare succeeds and the Logseq gate is what fails.
 func deadSetup(t *testing.T) (conf string, deadURL string) {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	deadURL = srv.URL + "/api"
-	srv.Close()
+	deadURL = deadBase + "/api"
 
 	dir := t.TempDir()
-	conf, err := writeConfig(t, dir, srv.URL, "")
+	conf, err := writeConfig(t, dir, deadBase, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,10 +101,10 @@ func TestRefreshDoesNotRequireLogseq(t *testing.T) {
 }
 
 func TestCheckHintsTokenOnAuthFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Access Denied", http.StatusUnauthorized)
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 
 	dir := t.TempDir()
 	conf, err := writeConfig(t, dir, srv.URL, "")

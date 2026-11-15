@@ -21,7 +21,7 @@ func BenchmarkMultiBusy(b *testing.B) {
 			`{"items":[{"id":"e%d","status":"confirmed","start":{"dateTime":"2026-11-09T10:00:00Z"},"end":{"dateTime":"2026-11-09T11:00:00Z"}}]}`,
 			i)
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(b, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := calendarIDFromPath(r.URL.Path)
 		if id != "primary" {
 			time.Sleep(5 * time.Millisecond)
@@ -33,7 +33,7 @@ func BenchmarkMultiBusy(b *testing.B) {
 		}
 		_, _ = w.Write([]byte(body))
 	}))
-	defer srv.Close()
+	srv.Start()
 
 	m, err := NewMultiClient(nil, "primary", ids, srv.URL, ReadOptions{})
 	if err != nil {

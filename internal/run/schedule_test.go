@@ -37,7 +37,9 @@ func newFakeCal() *fakeCal {
 
 func (f *fakeCal) mount(t *testing.T) string {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// NewTestServer owns the shutdown; Start() keeps a loopback URL that
+	// calendar.NewClient's default transport can dial.
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		path := r.URL.Path
@@ -134,7 +136,7 @@ func (f *fakeCal) mount(t *testing.T) string {
 			http.Error(w, "unexpected "+r.Method+" "+path, http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	return srv.URL
 }
 

@@ -18,7 +18,7 @@ type writeFake struct {
 
 func (f *writeFake) mount(t *testing.T) string {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/events"):
 			w.Header().Set("Content-Type", "application/json")
@@ -67,7 +67,7 @@ func (f *writeFake) mount(t *testing.T) string {
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	return srv.URL
 }
 
@@ -126,12 +126,12 @@ func TestInsertPatchDeleteRoundTrip(t *testing.T) {
 }
 
 func TestWriteErrorSurfacesMessage(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"error":{"message":"calendar is read-only"}}`))
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	c, err := NewClient(nil, "primary", srv.URL)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

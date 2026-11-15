@@ -2,8 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -133,9 +131,7 @@ func TestForecastCalendarFailureIsOperational(t *testing.T) {
 	// An endpoint whose server has gone away: the refresh cannot fetch a
 	// token, so the forecast refuses rather than plan against a silently
 	// free calendar.
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	gone := srv.URL
-	srv.Close()
+	gone := deadBase
 
 	dir := t.TempDir()
 	conf, err := writeConfig(t, dir, gone, "")

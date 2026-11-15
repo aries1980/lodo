@@ -230,7 +230,7 @@ func missingTimeMapsServer(t *testing.T, writes *[]string) *httptest.Server {
 			Children:   []*logseq.Block{{UUID: "w-uuid", Content: "Mon-Fri 09:00-12:00"}},
 		},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api" {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -294,7 +294,7 @@ func missingTimeMapsServer(t *testing.T, writes *[]string) *httptest.Server {
 		}
 		_, _ = io.WriteString(w, out)
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 	return srv
 }
 

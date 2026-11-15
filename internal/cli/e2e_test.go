@@ -180,7 +180,6 @@ func newE2E(t testing.TB, o e2eOptions) (*e2e, error) {
 	t.Setenv("LODO_NOW", now.Format(time.RFC3339))
 
 	e := &e2e{Logseq: api, Calendar: cal, Dir: dir, Conf: conf, Cred: cred}
-	t.Cleanup(e.Close)
 	return e, nil
 }
 
@@ -193,6 +192,9 @@ func mustE2E(t *testing.T, o e2eOptions) *e2e {
 	return e
 }
 
+// Close tears the fixture down early. NewTestServer owns the t cleanup, but a
+// godog suite runs every scenario on one *testing.T, so reset() must release
+// this scenario's listeners before the next one repoints the endpoints.
 func (e *e2e) Close() {
 	e.Logseq.Close()
 	e.Calendar.Close()
@@ -315,7 +317,9 @@ func newLogseqFake(t testing.TB, tasks, maps []*logseq.Block) *logseqFake {
 	f := &logseqFake{}
 	taskRaw, _ := json.Marshal(tasks)
 	mapRaw, _ := json.Marshal(maps)
-	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// NewTestServer owns the shutdown; Start() keeps a loopback URL, because
+	// the CLI builds its own client from the config that carries it.
+	f.srv = httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST", http.StatusMethodNotAllowed)
 			return
@@ -351,7 +355,7 @@ func newLogseqFake(t testing.TB, tasks, maps []*logseq.Block) *logseqFake {
 			http.Error(w, "unexpected method", http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(f.Close)
+	f.srv.Start()
 	return f
 }
 
@@ -429,8 +433,8 @@ func (f *fakeCalendar) SetStatus(id string, status int) {
 // Mount starts the fake and points the CLI's Google endpoints at it.
 func (f *fakeCalendar) Mount(t testing.TB) {
 	t.Helper()
-	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
-	t.Cleanup(f.Close)
+	f.srv = httptest.NewTestServer(t, http.HandlerFunc(f.handle))
+	f.srv.Start()
 	pointGoogle(t, oauth2Endpoint(f.srv.URL), f.srv.URL)
 }
 

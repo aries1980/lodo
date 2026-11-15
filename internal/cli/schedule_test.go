@@ -89,7 +89,7 @@ func TestRefreshNeverFetchesTheGraph(t *testing.T) {
 
 	// Point Logseq at a gone server after setup: refresh must still succeed
 	// because it never resolves the graph.
-	if _, err := writeConfig(t, e.Dir, "http://127.0.0.1:1", ""); err != nil {
+	if _, err := writeConfig(t, e.Dir, deadBase, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -122,7 +122,7 @@ func TestExitCodeMatrix(t *testing.T) {
 	// point at a gone server so a network attempt would also fail fast; the
 	// missing grant must fail before any request.
 	e := mustE2E(t, e2eOptions{})
-	pointGoogle(t, oauth2Endpoint("http://127.0.0.1:1"), "http://127.0.0.1:1")
+	pointGoogle(t, oauth2Endpoint(deadBase), deadBase)
 
 	if code, _, _ := e.Run("schedule"); code != 1 {
 		t.Fatalf("schedule without google exit = %d, want 1", code)

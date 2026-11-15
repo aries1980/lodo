@@ -15,7 +15,7 @@ import (
 // response stays with the page that asked for it, and no decode state is
 // shared between calls.
 func TestClientConcurrentTrees(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Method string `json:"method"`
 			Args   []any  `json:"args"`
@@ -34,7 +34,7 @@ func TestClientConcurrentTrees(t *testing.T) {
 			Content: "TODO " + name,
 		}})
 	}))
-	t.Cleanup(srv.Close)
+	srv.Start()
 
 	client, err := logseq.NewClient(srv.URL+"/api", token, srv.Client())
 	if err != nil {

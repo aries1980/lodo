@@ -357,12 +357,12 @@ func TestCheckLogseqAvailableClassifiesAPIResponses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var calls atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
 				w.WriteHeader(tt.status)
 				_, _ = io.WriteString(w, tt.body)
 			}))
-			t.Cleanup(srv.Close)
+			srv.Start()
 			client, err := logseq.NewClient(srv.URL+"/api", "token", srv.Client())
 			if err != nil {
 				t.Fatal(err)
