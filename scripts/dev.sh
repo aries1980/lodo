@@ -13,7 +13,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.27.3}
+GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.27.4}
 LINT_IMAGE=${LINT_IMAGE:-docker.io/golangci/golangci-lint:v2.15.0-alpine}
 GETTEXT_IMAGE=${GETTEXT_IMAGE:-docker.io/library/alpine:3.21}
 CLIFF_IMAGE=${CLIFF_IMAGE:-docker.io/orhunp/git-cliff:2.14.2} # keep the tag in sync with .github/workflows/release.yml
@@ -111,9 +111,9 @@ ctrun_root() {
 
 go_run() {
 	ctrun \
-		-v "$ROOT:/app" -v /tmp:/tmp \
-		-e GOCACHE=/tmp/lodo-go-cache \
-		-e GOMODCACHE=/tmp/lodo-go-mod-cache \
+		-v "$ROOT:/app" -v /var/tmp:/var/tmp \
+		-e GOCACHE=/var/tmp/lodo-go-cache \
+		-e GOMODCACHE=/var/tmp/lodo-go-mod-cache \
 		-w /app "$@"
 }
 
@@ -121,9 +121,9 @@ lint_run() {
 	# The lint image ships an older Go than the toolchain in go.mod asks for.
 	# GOTOOLCHAIN=local keeps it from downloading a whole toolchain to lint.
 	ctrun \
-		-v "$ROOT:/app" -v /tmp:/tmp \
-		-e GOCACHE=/tmp/lodo-go-cache \
-		-e GOMODCACHE=/tmp/lodo-go-mod-cache \
+		-v "$ROOT:/app" -v /var/tmp:/var/tmp \
+		-e GOCACHE=/var/tmp/lodo-go-cache \
+		-e GOMODCACHE=/var/tmp/lodo-go-mod-cache \
 		-e GOTOOLCHAIN=local \
 		-w /app "$@"
 }

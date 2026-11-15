@@ -107,11 +107,6 @@ func ScheduleSources(ctx context.Context, sources []Source, cal Calendar, runSto
 
 	writes, orphans, planBindings := diffPlan(result.Tasks, schedule, state.managed, state.location)
 
-	// Calendar first, store second (ADR 0007).
-	if err := applyWrites(ctx, cal, writes); err != nil {
-		return ScheduleOutcome{}, err
-	}
-
 	// Store commit: reconciled bindings/dispositions plus this plan's
 	// bindings, plus refreshed snapshots for every resolved Task. Only
 	// schedule writes snapshots.
@@ -125,6 +120,21 @@ func ScheduleSources(ctx context.Context, sources []Source, cal Calendar, runSto
 	allUpserts = dedupeBindings(allUpserts)
 	bindingDeletes := append(append([]store.BindingKey{}, state.reconciliation.BindingDeletes...), orphansToDeletes(orphans, state.bindings, state.reconciliation)...)
 	bindingDeletes = dedupeDeletes(bindingDeletes, planBindings)
+
+	// Record Lodo-initiated deletes before touching the calendar (ADR 0007
+	// recovery): a successful delete followed by a failed commit must not
+	// read as a user deletion on the next run. User deletions need no
+	// pending intent; their events are already gone.
+	orphanDeletes := orphansToDeletes(orphans, state.bindings, state.reconciliation)
+	orphanDeletes = dedupeDeletes(orphanDeletes, planBindings)
+	if err := setPendingDeletes(runStore, orphanDeletes); err != nil {
+		return ScheduleOutcome{}, err
+	}
+
+	// Calendar first, store second (ADR 0007).
+	if err := applyWrites(ctx, cal, writes); err != nil {
+		return ScheduleOutcome{}, err
+	}
 
 	if err := runStore.Commit(allUpserts, bindingDeletes, state.reconciliation.DispositionUpserts, snapMap); err != nil {
 		return ScheduleOutcome{}, err

@@ -9,12 +9,14 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"time"
+
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 
 	_ "modernc.org/sqlite"
 
@@ -113,6 +115,11 @@ CREATE TABLE IF NOT EXISTS runs (
   write_calendar TEXT NOT NULL,
   write_events INTEGER NOT NULL DEFAULT 0,
   sources_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pending_deletes (
+  task_id TEXT NOT NULL,
+  block_index INTEGER NOT NULL,
+  PRIMARY KEY (task_id, block_index)
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("store %s: migrate: %w", s.path, err)
@@ -141,7 +148,13 @@ type RunRecord struct {
 
 // RecordRun appends one run's calendar audit. Sources stay in config order.
 func (s *Store) RecordRun(command, writeCalendar string, writeEvents int, sources []RunSource, recordedAt time.Time) error {
-	raw, err := json.Marshal(sources)
+	raw, err := json.Marshal(sources,
+		json.Deterministic(true),
+		json.FormatNilSliceAsNull(true),
+		json.FormatNilMapAsNull(true),
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.EscapeForHTML(true),
+	)
 	if err != nil {
 		return fmt.Errorf("store: run sources: %w", err)
 	}
@@ -170,7 +183,10 @@ func (s *Store) LastRun() (RunRecord, error) {
 		return RunRecord{}, fmt.Errorf("store: run recorded_at: %w", err)
 	}
 	rec.RecordedAt = recordedAt
-	if err := json.Unmarshal([]byte(sourcesRaw), &rec.Sources); err != nil {
+	if err := json.Unmarshal([]byte(sourcesRaw), &rec.Sources,
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.AllowDuplicateNames(true),
+	); err != nil {
 		return RunRecord{}, fmt.Errorf("store: run sources: %w", err)
 	}
 	return rec, nil
@@ -296,11 +312,16 @@ func (s *Store) ListDispositions() ([]model.Disposition, error) {
 }
 
 // Commit applies one run's store writes atomically: binding upserts and
-// deletes, disposition upserts, and refreshed task snapshots.
+// deletes, disposition upserts, and refreshed task snapshots. It also clears
+// pending deletes for keys this commit resolves (upserted or deleted), so a
+// crash-recovered Lodo-initiated delete does not linger after the plan
+// recreates the block.
 //
 // Contract (ADR 0007): callers perform calendar writes before Commit. A crash
 // between calendar writes and Commit may leave managed/lodo events without a
-// local row; reconciliation on the next run adopts/reconciles them. All writes
+// local row; reconciliation on the next run adopts/reconciles them. Deletes
+// Lodo itself issued are recorded via SetPendingDeletes before the calendar
+// writes, so recovery can tell them apart from user deletions. All writes
 // run in a single SQLite transaction; times are stored as UTC RFC3339Nano.
 func (s *Store) Commit(bindingUpserts []Binding, bindingDeletes []BindingKey, dispositions []TimedDisposition, snapshots map[string]model.Snapshot) error {
 	tx, err := s.db.Begin()
@@ -310,6 +331,10 @@ func (s *Store) Commit(bindingUpserts []Binding, bindingDeletes []BindingKey, di
 	rollback := func() { _ = tx.Rollback() }
 
 	for _, b := range bindingUpserts {
+		if b.TaskID == "" || b.EventID == "" {
+			rollback()
+			return fmt.Errorf("store: upsert binding %s/%d: missing identity", b.TaskID, b.BlockIndex)
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO bindings(task_id, block_index, event_id, start, end, slots) VALUES(?,?,?,?,?,?)
 			 ON CONFLICT(task_id, block_index) DO UPDATE SET event_id=excluded.event_id, start=excluded.start, end=excluded.end, slots=excluded.slots`,
@@ -363,8 +388,75 @@ func (s *Store) Commit(bindingUpserts []Binding, bindingDeletes []BindingKey, di
 			return fmt.Errorf("store: upsert snapshot %s: %w", id, err)
 		}
 	}
+	for _, k := range bindingDeletes {
+		if _, err := tx.Exec(`DELETE FROM pending_deletes WHERE task_id=? AND block_index=?`, k.TaskID, k.BlockIndex); err != nil {
+			rollback()
+			return fmt.Errorf("store: clear pending delete %s/%d: %w", k.TaskID, k.BlockIndex, err)
+		}
+	}
+	for _, b := range bindingUpserts {
+		if _, err := tx.Exec(`DELETE FROM pending_deletes WHERE task_id=? AND block_index=?`, b.TaskID, b.BlockIndex); err != nil {
+			rollback()
+			return fmt.Errorf("store: clear pending delete %s/%d: %w", b.TaskID, b.BlockIndex, err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit: %w", err)
+	}
+	return nil
+}
+
+// PendingDeletes returns Lodo-initiated deletes recorded before calendar
+// writes but not yet committed. Recovery uses them to tell Lodo's own
+// cleanup apart from user deletions.
+func (s *Store) PendingDeletes() ([]BindingKey, error) {
+	rows, err := s.db.Query(`SELECT task_id, block_index FROM pending_deletes ORDER BY task_id, block_index`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list pending deletes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []BindingKey
+	for rows.Next() {
+		var k BindingKey
+		if err := rows.Scan(&k.TaskID, &k.BlockIndex); err != nil {
+			return nil, fmt.Errorf("store: scan pending delete: %w", err)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list pending deletes: %w", err)
+	}
+	return out, nil
+}
+
+// SetPendingDeletes records Lodo-initiated deletes before calendar writes.
+// It runs in its own transaction so a later commit failure still leaves the
+// intent for recovery.
+func (s *Store) SetPendingDeletes(keys []BindingKey) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: pending deletes: %w", err)
+	}
+	rollback := func() { _ = tx.Rollback() }
+	for _, k := range keys {
+		if k.TaskID == "" {
+			rollback()
+			return fmt.Errorf("store: pending delete %s/%d: missing task", k.TaskID, k.BlockIndex)
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO pending_deletes(task_id, block_index) VALUES(?,?)
+			 ON CONFLICT(task_id, block_index) DO NOTHING`,
+			k.TaskID, k.BlockIndex,
+		); err != nil {
+			rollback()
+			return fmt.Errorf("store: pending delete %s/%d: %w", k.TaskID, k.BlockIndex, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: pending deletes: %w", err)
 	}
 	return nil
 }
@@ -409,7 +501,13 @@ func SnapshotToJSON(s model.Snapshot) (string, error) {
 	dto.Deadline = civilToJSON(s.Deadline)
 	dto.PlanStart = civilToJSON(s.PlanStart)
 	dto.PlanEnd = civilToJSON(s.PlanEnd)
-	raw, err := json.Marshal(dto)
+	raw, err := json.Marshal(dto,
+		json.Deterministic(true),
+		json.FormatNilSliceAsNull(true),
+		json.FormatNilMapAsNull(true),
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.EscapeForHTML(true),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -419,7 +517,10 @@ func SnapshotToJSON(s model.Snapshot) (string, error) {
 // SnapshotFromJSON parses one snapshot.
 func SnapshotFromJSON(raw string) (model.Snapshot, error) {
 	var dto snapshotJSON
-	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
+	if err := json.Unmarshal([]byte(raw), &dto,
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.AllowDuplicateNames(true),
+	); err != nil {
 		return model.Snapshot{}, err
 	}
 	out := model.Snapshot{

@@ -16,9 +16,9 @@ import (
 // calendar before committing the store (ADR 0007). --dry-run is forecast:
 // no writes, no store commit. Before any of that, a missing Time Maps page
 // is offered with the recommended defaults on confirmation (or -y).
-func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes bool) error {
+func runSchedule(ctx context.Context, opts *options, ov configOverrides, dryRun, strict, verbose, yes bool) error {
 	if dryRun {
-		return runForecast(opts, ov, verbose, yes)
+		return runForecast(ctx, opts, ov, verbose, yes)
 	}
 	start := logRunStart(opts, "schedule")
 	cfg, sources, creds, err := loadSources(opts, ov)
@@ -30,13 +30,13 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 		_, _ = fmt.Fprintln(errWriter(opts), warn)
 	}
 	style := newStyler(opts.out, opts.disableColors, th)
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "schedule", th)); err != nil {
+	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "schedule", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
+	if _, err := ensureTimeMapsPage(ctx, sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	cal, err := calendarFull(context.Background(), creds, cfg)
+	cal, err := calendarFull(ctx, creds, cfg)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -47,7 +47,7 @@ func runSchedule(opts *options, ov configOverrides, dryRun, strict, verbose, yes
 	defer func() { _ = st.Close() }()
 
 	now := time.Now()
-	outcome, err := run.ScheduleSources(context.Background(), sources, cal, st, cfg, now)
+	outcome, err := run.ScheduleSources(ctx, sources, cal, st, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}

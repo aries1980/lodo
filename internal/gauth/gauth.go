@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -118,6 +119,11 @@ func Run(ctx context.Context, in Inputs) (Result, error) {
 	}
 	defer func() { _ = l.Close() }() // a listener's close error is never actionable
 
+	// Cancel the wait when the command context ends (Ctrl-C): closing the
+	// listener unblocks Accept so the flow fails fast instead of waiting
+	// out the deadline.
+	context.AfterFunc(ctx, func() { _ = l.Close() })
+
 	// One cap for the whole browser-mode wait: the listener accepts no
 	// connection after it, and no connection holds the port for longer
 	// than it. The paste wait is the user's own (Ctrl-C), so the cap does
@@ -161,7 +167,7 @@ func Run(ctx context.Context, in Inputs) (Result, error) {
 	if in.NoBrowser {
 		code, err = pastedCode(in.Lines, state)
 	} else {
-		code, err = redirectToCode(l, deadline, state)
+		code, err = redirectToCode(ctx, l, deadline, state)
 	}
 	if err != nil {
 		return Result{}, err
@@ -203,10 +209,13 @@ func pkceChallenge(verifier string) string {
 // keeps waiting; a mismatched state is a failed wait, not a lesson; missing
 // code after a matching state skips. Answering is best effort: closing the
 // connection is the part the browser actually needs to move on.
-func redirectToCode(l net.Listener, deadline time.Time, state string) (string, error) {
+func redirectToCode(ctx context.Context, l net.Listener, deadline time.Time, state string) (string, error) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return "", ctx.Err()
+			}
 			return "", fmt.Errorf("google auth: no authorization redirect within %s", DefaultTimeout)
 		}
 		_ = conn.SetDeadline(deadline) // the listener's cap on this connection too

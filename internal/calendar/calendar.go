@@ -9,7 +9,6 @@ package calendar
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 
 	"golang.org/x/oauth2"
 
@@ -371,7 +373,13 @@ func (c *Client) write(ctx context.Context, method string, path []string, in any
 
 	var body io.Reader
 	if in != nil {
-		raw, err := json.Marshal(in)
+		raw, err := json.Marshal(in,
+			json.Deterministic(true),
+			json.FormatNilSliceAsNull(true),
+			json.FormatNilMapAsNull(true),
+			json.MatchCaseInsensitiveNames(true),
+			jsontext.EscapeForHTML(true),
+		)
 		if err != nil {
 			return fmt.Errorf("google calendar api: %s (%s): %w", c.label, strings.Join(path, "/"), err)
 		}
@@ -421,7 +429,10 @@ func (c *Client) do(req *http.Request, path string, out any, okStatuses ...int) 
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
 	}
-	if err := json.Unmarshal(data, out); err != nil {
+	if err := json.Unmarshal(data, out,
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.AllowDuplicateNames(true),
+	); err != nil {
 		return fmt.Errorf("google calendar api: %s (%s): decode: %w (body: %s)", c.label, path, err, snippet(data))
 	}
 	return nil
@@ -456,8 +467,7 @@ func (e *APIError) Error() string {
 // surfaces it (wrapped in *url.Error) on the calendar call that triggers
 // the refresh, e.g. `oauth2: "invalid_grant" "Bad Request"`.
 func isAuthFailure(err error) bool {
-	var retrieveErr *oauth2.RetrieveError
-	if errors.As(err, &retrieveErr) {
+	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
 		if retrieveErr.ErrorCode == "invalid_grant" {
 			return true
 		}
@@ -469,8 +479,7 @@ func isAuthFailure(err error) bool {
 // StatusCodeOf unwraps an API failure's HTTP status. False when the error is
 // not an API failure (network, auth refresh, decode).
 func StatusCodeOf(err error) (int, bool) {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		return apiErr.StatusCode, true
 	}
 	return 0, false
@@ -483,7 +492,10 @@ func decodeError(data []byte) string {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
+	if json.Unmarshal(data, &e,
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.AllowDuplicateNames(true),
+	) == nil && e.Error.Message != "" {
 		return e.Error.Message
 	}
 	return ""
@@ -492,8 +504,7 @@ func decodeError(data []byte) string {
 // errorCause shortens the transport noise: a *url.Error wraps the real
 // cause (dial refused, timeout), so it is unwrapped for the message.
 func errorCause(err error) error {
-	var uErr *url.Error
-	if errors.As(err, &uErr) {
+	if uErr, ok := errors.AsType[*url.Error](err); ok {
 		return uErr.Err
 	}
 	return err

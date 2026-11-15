@@ -1,7 +1,7 @@
 package planner
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/model"
@@ -96,7 +96,8 @@ func maxPlaceable(runs []placementRun, required, floor int) int {
 	for i := range runs {
 		lens[i] = runs[i].run.Slots
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(lens)))
+	slices.Sort(lens)
+	slices.Reverse(lens)
 
 	sum := 0
 	for i := 0; i < min(required/floor, len(lens)); i++ {

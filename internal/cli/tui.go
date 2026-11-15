@@ -20,7 +20,7 @@ func isTTY(f *os.File) bool {
 	return st.Mode()&os.ModeCharDevice != 0
 }
 
-func runTUI(opts *options, ov configOverrides) error {
+func runTUI(ctx context.Context, opts *options, ov configOverrides) error {
 	cfg, sources, _, err := loadSources(opts, ov)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
@@ -29,16 +29,15 @@ func runTUI(opts *options, ov configOverrides) error {
 	if warn != "" {
 		_, _ = fmt.Fprintln(errWriter(opts), warn)
 	}
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "tui", th)); err != nil {
+	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "tui", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	ctx := context.Background()
 	data, err := tui.Load(ctx, cfg, sources)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	reload := func() (tui.Data, error) {
-		return tui.Load(context.Background(), cfg, sources)
+		return tui.Load(ctx, cfg, sources)
 	}
 	if err := tui.RunProgram(data, reload, th); err != nil {
 		return &exitError{code: codeError, err: err}

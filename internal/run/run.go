@@ -71,25 +71,6 @@ type ForecastOutcome struct {
 	Provenance map[string]resolve.TaskProvenance
 }
 
-// validateTaskIDs refuses duplicated block UUIDs. Event ids, planner indexes
-// and store keys are built from the UUID alone, so two graphs sharing one
-// (a cloned graph) would collapse into one Task and one calendar event.
-func validateTaskIDs(tasks []model.Task) error {
-	seen := make(map[string]model.Task, len(tasks))
-	for _, t := range tasks {
-		if prev, ok := seen[t.ID]; ok {
-			if prev.Graph == t.Graph {
-				return fmt.Errorf("task UUID %s appears more than once in %s; block UUIDs must be unique",
-					t.ID, graphLabel(t.Graph))
-			}
-			return fmt.Errorf("task UUID %s appears in %s and %s; cloned graphs share block UUIDs — give the Tasks unique UUIDs before scheduling both",
-				t.ID, graphLabel(prev.Graph), graphLabel(t.Graph))
-		}
-		seen[t.ID] = t
-	}
-	return nil
-}
-
 // graphLabel names a source graph in diagnostics; single-graph mode has no
 // slug.
 func graphLabel(graph string) string {
@@ -103,18 +84,21 @@ func graphLabel(graph string) string {
 // Time Maps come from the first source only (canonical page); other
 // sources contribute Tasks and task issues. Time-Maps issues from
 // non-primary sources are dropped — they do not own the page.
+// Time-map slugs in every graph validate against the canonical maps, so a
+// secondary task naming a primary map is not falsely reported.
 // depends:: and order:: chains stay graph-local by construction: each
 // graph resolves in isolation, so a cross-graph ref reports
 // unknown-dependency and blocks.
 func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc *time.Location) (resolve.Result, error) {
 	if len(sources) == 1 {
-		res, err := readOne(ctx, sources[0].Client, timeMapsPage, loc, sources[0].Name, sources[0].Order, sources[0].DefaultTimeMap)
+		res, _, _, _, err := LoadGraph(ctx, sources[0], timeMapsPage, loc)
 		if err != nil {
 			return resolve.Result{}, err
 		}
-		if err := validateTaskIDs(res.Tasks); err != nil {
+		if err := ValidateTaskIDs(res.Tasks); err != nil {
 			return resolve.Result{}, err
 		}
+		res.Issues = RevalidateTimeMaps(res.Tasks, res.TimeMaps, timeMapsPage, res.Issues)
 		return res, nil
 	}
 	var allTasks []model.Task
@@ -123,9 +107,12 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 	provenance := map[string]resolve.TaskProvenance{}
 	first := true
 	for _, s := range sources {
-		res, err := readOne(ctx, s.Client, timeMapsPage, loc, s.Name, s.Order, s.DefaultTimeMap)
+		res, _, _, _, err := LoadGraph(ctx, s, timeMapsPage, loc)
 		if err != nil {
-			return resolve.Result{}, fmt.Errorf("graph %s: %w", s.Name, err)
+			if len(sources) > 1 {
+				return resolve.Result{}, fmt.Errorf("graph %s: %w", s.Name, err)
+			}
+			return resolve.Result{}, err
 		}
 		allTasks = append(allTasks, res.Tasks...)
 		for id, p := range res.Provenance {
@@ -147,55 +134,11 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 			allIssues = append(allIssues, is)
 		}
 	}
-	if err := validateTaskIDs(allTasks); err != nil {
+	if err := ValidateTaskIDs(allTasks); err != nil {
 		return resolve.Result{}, err
 	}
+	allIssues = RevalidateTimeMaps(allTasks, maps, timeMapsPage, allIssues)
 	return resolve.Result{Tasks: allTasks, TimeMaps: maps, Issues: allIssues, Provenance: provenance}, nil
-}
-
-// readOne walks one graph the way logseq-integration.md specifies: enumerate
-// pages, fetch each page's block tree, and the page properties wherever they
-// can matter (task-marked blocks inherit from their page, and the Time Maps
-// page needs its tree even when nothing on it is TODO).
-func readOne(ctx context.Context, client logseq.Client, timeMapsPage string, loc *time.Location, graph string, order int, defaultMap string) (resolve.Result, error) {
-	pages, err := client.Pages(ctx)
-	if err != nil {
-		return resolve.Result{}, err
-	}
-	sortPages(pages)
-
-	tmName := lowerTrim(timeMapsPage)
-	input := resolve.Input{
-		Graph:          graph,
-		GraphOrder:     order,
-		DefaultTimeMap: defaultMap,
-		Pages:          pages,
-		Trees:          make(map[string][]*logseq.Block, len(pages)),
-		TimeMapsPage:   timeMapsPage,
-		Location:       loc,
-	}
-
-	for _, p := range pages {
-		tree, err := client.Tree(ctx, p.Name)
-		if err != nil {
-			return resolve.Result{}, err
-		}
-		input.Trees[p.Name] = tree
-
-		if lowerTrim(p.Name) != tmName && !hasCandidate(tree) {
-			continue // page properties cannot matter for a page with no candidates
-		}
-		info, err := client.Page(ctx, p.Name)
-		if err != nil {
-			return resolve.Result{}, err
-		}
-		if info == nil {
-			continue // the page vanished between enumeration and the fetch
-		}
-		p.Properties = info.Properties
-	}
-
-	return resolve.Resolve(input)
 }
 
 // Forecast reads one graph and plans the Schedule without touching the

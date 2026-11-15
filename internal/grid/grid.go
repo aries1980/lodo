@@ -31,7 +31,7 @@ func Build(now time.Time, loc *time.Location, granularity time.Duration, windowD
 	}
 
 	y, m, d := now.In(loc).Date()
-	for day := 0; day < windowDays; day++ {
+	for day := range windowDays {
 		dayStart := time.Date(y, m, d+day, 0, 0, 0, 0, loc)
 		nextMidnight := time.Date(y, m, d+day+1, 0, 0, 0, 0, loc)
 		for t := dayStart; !t.Add(granularity).After(nextMidnight); t = t.Add(granularity) {
@@ -116,20 +116,37 @@ func (g *Grid) TimeMapMask(tm model.TimeMap) Mask {
 func (g *Grid) inTimeMap(i int, tm model.TimeMap) bool {
 	start, end := g.starts[i], g.End(i)
 	sy, sm, sd := start.Date()
-	ey, em, ed := end.Date()
+	ey, em, ed := end.Add(-time.Nanosecond).Date()
 	if sy != ey || sm != em || sd != ed {
 		return false
 	}
 
-	from := start.Hour()*60 + start.Minute()
-	to := end.Hour()*60 + end.Minute()
-	day := start.Weekday()
 	for _, w := range tm.Windows {
-		if w.CoversDay(day) && from >= w.StartMinute && to <= w.EndMinute {
+		if insideWindow(start, end, w) {
 			return true
 		}
 	}
 	return false
+}
+
+func insideWindow(start, end time.Time, w model.Window) bool {
+	for current := start; current.Before(end); {
+		if !w.CoversDay(current.Weekday()) {
+			return false
+		}
+		stop := end
+		if _, zoneEnd := current.ZoneBounds(); !zoneEnd.IsZero() && zoneEnd.Before(stop) {
+			stop = zoneEnd
+		}
+		from := time.Duration(current.Hour())*time.Hour + time.Duration(current.Minute())*time.Minute +
+			time.Duration(current.Second())*time.Second + time.Duration(current.Nanosecond())
+		to := from + stop.Sub(current)
+		if !stop.After(current) || from < time.Duration(w.StartMinute)*time.Minute || to > time.Duration(w.EndMinute)*time.Minute {
+			return false
+		}
+		current = stop
+	}
+	return true
 }
 
 func (g *Grid) firstEndingAfter(t time.Time) int {

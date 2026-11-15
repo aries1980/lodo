@@ -40,11 +40,42 @@ type Store interface {
 	Commit(bindingUpserts []store.Binding, bindingDeletes []store.BindingKey, dispositions []store.TimedDisposition, snapshots map[string]model.Snapshot) error
 }
 
+// PendingDeleter is the optional crash-recovery surface: stores that
+// persist Lodo-initiated deletes before calendar writes implement it.
+// Fakes that do not implement it skip pending tracking; *store.Store does.
+type PendingDeleter interface {
+	PendingDeletes() ([]store.BindingKey, error)
+	SetPendingDeletes([]store.BindingKey) error
+}
+
 // RunRecorder is the optional audit surface: stores that persist the
 // per-run calendar audit implement it. Fakes that do not implement it skip
 // recording; *store.Store does.
 type RunRecorder interface {
 	RecordRun(command, writeCalendar string, writeEvents int, sources []store.RunSource, recordedAt time.Time) error
+}
+
+// pendingDeletes returns Lodo-initiated deletes recorded before calendar
+// writes but not yet committed. Empty when the store does not support it.
+func pendingDeletes(runStore Store) []store.BindingKey {
+	if p, ok := runStore.(PendingDeleter); ok {
+		if keys, err := p.PendingDeletes(); err == nil {
+			return keys
+		}
+	}
+	return nil
+}
+
+// setPendingDeletes records Lodo-initiated deletes before calendar writes.
+// No-op when the store does not support it.
+func setPendingDeletes(runStore Store, keys []store.BindingKey) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	if p, ok := runStore.(PendingDeleter); ok {
+		return p.SetPendingDeletes(keys)
+	}
+	return nil
 }
 
 // recordRun persists one schedule/refresh run's calendar audit when the
@@ -118,6 +149,7 @@ func loadCalendarState(ctx context.Context, cal CalendarReader, runStore Store, 
 	if err := pinOutOfRange(&reconciliation, outOfRange, bindings, storedDisps, snapshots, granularity, location, now); err != nil {
 		return calendarState{}, err
 	}
+	suppressPendingStoodDown(&reconciliation, pendingDeletes(runStore))
 	state = calendarState{
 		granularity: granularity, location: location, grid: g,
 		busyMask: busyMask, managed: managed, busyReport: busyReport,
@@ -222,6 +254,7 @@ func pinOutOfRange(reconciliation *reconcile.Result, observed []calendar.Event, 
 			stored, known := storedBindings[key]
 			if !known || stored.EventID != event.ID || !stored.Start.Equal(start) || !stored.End.Equal(end) || stored.Slots != slots {
 				reconciliation.BindingUpserts = append(reconciliation.BindingUpserts, store.Binding{
+					TaskID: taskID, BlockIndex: blockIndex, EventID: event.ID,
 					Start: start, End: end, Slots: slots,
 				})
 				freshBindings[key] = true
@@ -244,4 +277,29 @@ func pinOutOfRange(reconciliation *reconcile.Result, observed []calendar.Event, 
 		}
 	}
 	return nil
+}
+
+// suppressPendingStoodDown drops stood-down dispositions for bindings Lodo
+// itself deleted but failed to commit. A successful calendar delete followed
+// by a failed store commit leaves the event gone with the binding still
+// present; without pending intent the next run would read it as a user
+// deletion and silently stand the block down. Pending keys delete the binding
+// without a disposition; the plan then decides whether to recreate it.
+func suppressPendingStoodDown(reconciliation *reconcile.Result, pending []store.BindingKey) {
+	if len(pending) == 0 || len(reconciliation.DispositionUpserts) == 0 {
+		return
+	}
+	pendingSet := make(map[string]bool, len(pending))
+	for _, k := range pending {
+		pendingSet[norm.BlockKey(k.TaskID, k.BlockIndex)] = true
+	}
+	kept := reconciliation.DispositionUpserts[:0]
+	for _, td := range reconciliation.DispositionUpserts {
+		if td.Disposition.Kind == model.DispositionStoodDown &&
+			pendingSet[norm.BlockKey(td.Disposition.TaskID, td.Disposition.BlockIndex)] {
+			continue
+		}
+		kept = append(kept, td)
+	}
+	reconciliation.DispositionUpserts = kept
 }

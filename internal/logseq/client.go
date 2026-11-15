@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 )
 
 // DefaultTimeout bounds one API call. The app runs locally; a call that sits
@@ -58,7 +60,13 @@ type errorBody struct {
 
 // call issues one POST and decodes out (which may be JSON null).
 func (c *apiClient) call(ctx context.Context, method string, args []any, out any) error {
-	body, err := json.Marshal(request{Method: method, Args: args})
+	body, err := json.Marshal(request{Method: method, Args: args},
+		json.Deterministic(true),
+		json.FormatNilSliceAsNull(true),
+		json.FormatNilMapAsNull(true),
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.EscapeForHTML(true),
+	)
 	if err != nil {
 		return fmt.Errorf("logseq api: %s: %w", method, err)
 	}
@@ -89,13 +97,19 @@ func (c *apiClient) call(ctx context.Context, method string, args []any, out any
 	}
 
 	var apiErr errorBody
-	if err := json.Unmarshal(data, &apiErr); err == nil && apiErr.Error != "" {
+	if err := json.Unmarshal(data, &apiErr,
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.AllowDuplicateNames(true),
+	); err == nil && apiErr.Error != "" {
 		return fmt.Errorf("logseq api: %s: %s", method, apiErr.Error)
 	}
 	if out == nil {
 		return nil
 	}
-	if err := json.Unmarshal(data, out); err != nil {
+	if err := json.Unmarshal(data, out,
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.AllowDuplicateNames(true),
+	); err != nil {
 		return fmt.Errorf("logseq api: %s: decode: %w (body: %s)", method, err, snippet(data))
 	}
 	return nil
@@ -109,8 +123,7 @@ const readLimit = 64 << 20
 // errorCause shortens the transport noise: a *url.Error wraps the real
 // cause (dial refused, timeout), so it is unwrapped for the message.
 func errorCause(err error) error {
-	var uErr *url.Error
-	if errors.As(err, &uErr) {
+	if uErr, ok := errors.AsType[*url.Error](err); ok {
 		return uErr.Err
 	}
 	return err
@@ -121,18 +134,15 @@ func errorCause(err error) error {
 // private-CA endpoint fails here with x509 unknown authority. The hint
 // points at the scheme first, then the two ways to trust the endpoint.
 func tlsHint(err error) string {
-	var unknown x509.UnknownAuthorityError
-	if errors.As(err, &unknown) {
+	if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
 		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
 			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
 	}
-	var invalid x509.CertificateInvalidError
-	if errors.As(err, &invalid) {
+	if _, ok := errors.AsType[x509.CertificateInvalidError](err); ok {
 		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
 			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
 	}
-	var verify *tls.CertificateVerificationError
-	if errors.As(err, &verify) {
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
 		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
 			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
 	}
@@ -155,7 +165,7 @@ func snippet(data []byte) string {
 // (App.getCurrentGraph is read-only but version-skewed); decoding into a
 // raw message keeps the probe cheap however large the graph is.
 func (c *apiClient) Ping(ctx context.Context) error {
-	var raw json.RawMessage
+	var raw jsontext.Value
 	if err := c.call(ctx, "logseq.Editor.get_all_pages", []any{}, &raw); err != nil {
 		return err
 	}

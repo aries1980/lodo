@@ -1,7 +1,7 @@
 package theme
 
 import (
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -41,7 +41,7 @@ func Names() []string {
 		}
 		rest = append(rest, n)
 	}
-	sort.Strings(rest)
+	slices.Sort(rest)
 	return append(names, rest...)
 }
 

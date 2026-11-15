@@ -136,19 +136,19 @@ func parsePO(content string) map[string]string {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(line, "msgid ") {
+		if rest, ok := strings.CutPrefix(line, "msgid "); ok {
 			if inID || inStr {
 				flush()
 			}
 			inID = true
 			inStr = false
-			curID.WriteString(unquote(strings.TrimSpace(strings.TrimPrefix(line, "msgid "))))
+			curID.WriteString(unquote(strings.TrimSpace(rest)))
 			continue
 		}
-		if strings.HasPrefix(line, "msgstr ") {
+		if rest, ok := strings.CutPrefix(line, "msgstr "); ok {
 			inStr = true
 			inID = false
-			curStr.WriteString(unquote(strings.TrimSpace(strings.TrimPrefix(line, "msgstr "))))
+			curStr.WriteString(unquote(strings.TrimSpace(rest)))
 			continue
 		}
 		if strings.HasPrefix(line, "\"") {

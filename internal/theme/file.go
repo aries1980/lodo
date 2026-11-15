@@ -262,9 +262,10 @@ func looksLikePath(v string) bool {
 }
 
 func expandPath(p string, configDir string) string {
-	if strings.HasPrefix(p, "~") {
+	if rest, ok := strings.CutPrefix(p, "~"); ok {
 		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, strings.TrimPrefix(p[1:], "/"))
+			rest, _ = strings.CutPrefix(rest, "/")
+			return filepath.Join(home, rest)
 		}
 	}
 	if filepath.IsAbs(p) {

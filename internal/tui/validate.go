@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/aries1980/lodo/internal/logseq"
@@ -10,7 +12,7 @@ import (
 
 func stripHintLines(content string) string {
 	var kept []string
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		if strings.HasPrefix(line, "# lodo-tui:") {
 			continue
 		}
@@ -35,7 +37,7 @@ func isPropLine(line string) bool {
 
 func parsePropLines(content string) map[string]string {
 	out := map[string]string{}
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		if !isPropLine(line) {
 			continue
 		}
@@ -54,8 +56,8 @@ func parsePropLines(content string) map[string]string {
 	return out
 }
 
-func inferMarker(content, fallback string) string {
-	for _, line := range strings.Split(content, "\n") {
+func inferMarker(content string) string {
+	for line := range strings.SplitSeq(content, "\n") {
 		t := strings.TrimSpace(line)
 		if t == "" {
 			continue
@@ -66,15 +68,15 @@ func inferMarker(content, fallback string) string {
 		if strings.HasPrefix(t, "# lodo-tui:") {
 			continue
 		}
-		first, _, _ := strings.Cut(t, " ")
+		first := strings.Fields(t)[0]
 		switch strings.ToUpper(first) {
 		case "TODO", "DOING", "DONE", "CANCELLED":
 			return strings.ToUpper(first)
 		default:
-			return fallback
+			return ""
 		}
 	}
-	return fallback
+	return ""
 }
 
 func deepCopyBlock(b *logseq.Block) *logseq.Block {
@@ -88,16 +90,10 @@ func deepCopyBlock(b *logseq.Block) *logseq.Block {
 		Children: nil,
 	}
 	if b.Properties != nil {
-		out.Properties = make(map[string]any, len(b.Properties))
-		for k, v := range b.Properties {
-			out.Properties[k] = v
-		}
+		out.Properties = maps.Clone(b.Properties)
 	}
 	if b.PropsText != nil {
-		out.PropsText = make(map[string]any, len(b.PropsText))
-		for k, v := range b.PropsText {
-			out.PropsText[k] = v
-		}
+		out.PropsText = maps.Clone(b.PropsText)
 	}
 	if b.Children != nil {
 		out.Children = make([]*logseq.Block, 0, len(b.Children))
@@ -148,13 +144,11 @@ func ValidateEdited(data *Data, uuid, edited string) (model.Task, []resolve.Issu
 	if target == nil {
 		return model.Task{}, nil, false
 	}
-	orig, ok := data.Blocks[uuid]
-	fallback := ""
-	if ok {
-		fallback = orig.Marker
-	}
 	target.Content = clean
-	target.Marker = inferMarker(clean, fallback)
+	target.Marker = inferMarker(clean)
+	if target.Marker != string(model.MarkerTODO) && target.Marker != string(model.MarkerDOING) {
+		return invalidEdit(uuid, "keep the block marked TODO or DOING")
+	}
 	target.Properties = nil
 	props := parsePropLines(clean)
 	if len(props) == 0 {
@@ -167,7 +161,7 @@ func ValidateEdited(data *Data, uuid, edited string) (model.Task, []resolve.Issu
 	}
 	res, err := resolve.Resolve(input)
 	if err != nil {
-		return model.Task{}, nil, false
+		return invalidEdit(uuid, err.Error())
 	}
 	var relevant []resolve.Issue
 	for _, is := range res.Issues {
@@ -187,7 +181,11 @@ func ValidateEdited(data *Data, uuid, edited string) (model.Task, []resolve.Issu
 			return t, nil, true
 		}
 	}
-	return model.Task{}, relevant, len(relevant) == 0
+	return invalidEdit(uuid, "the edited block must remain a Task with an explicit positive duration")
+}
+
+func invalidEdit(uuid, detail string) (model.Task, []resolve.Issue, bool) {
+	return model.Task{}, []resolve.Issue{{Kind: resolve.IssueBadProperty, Context: fmt.Sprintf("block %s", uuid), Detail: detail}}, false
 }
 
 func PatchTimeMap(content, slug string, clear bool) string {

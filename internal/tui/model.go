@@ -72,10 +72,11 @@ func formatDuration(d time.Duration) string {
 		return "—"
 	}
 	s := d.String()
-	s = strings.TrimSuffix(s, "0s")
-	s = strings.TrimSuffix(s, "0m")
-	if s == "" {
-		return d.String()
+	if d%time.Minute == 0 {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if d%time.Hour == 0 {
+		s = strings.TrimSuffix(s, "0m")
 	}
 	return s
 }
@@ -324,6 +325,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.data = msg.data
 		m.table.SetRows(rowsFromTasks(msg.data.Tasks))
+		restored := false
+		if m.selectedID != "" {
+			for i, t := range msg.data.Tasks {
+				if t.ID == m.selectedID {
+					m.table.SetCursor(i)
+					restored = true
+					break
+				}
+			}
+		}
+		if !restored && len(msg.data.Tasks) == 0 {
+			m.selectedID = ""
+		}
 		m.state = stateList
 		m.status = "saved."
 		m.editedContent = ""

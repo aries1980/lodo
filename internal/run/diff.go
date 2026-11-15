@@ -81,7 +81,7 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 		}
 		writes = append(writes, WriteOp{
 			Op: "patch", EventID: observed.ID,
-			TaskID: planBlock.TaskID, BlockIndex: planBlock.Index, Start: planBlock.Start, End: planBlock.End,
+			TaskID: planBlock.TaskID, Graph: graphByTask[planBlock.TaskID], BlockIndex: planBlock.Index, Start: planBlock.Start, End: planBlock.End,
 			Summary: wantTitle,
 		})
 	}
@@ -95,7 +95,7 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 	}
 	slices.SortFunc(writes, func(a, b WriteOp) int {
 		if a.Op != b.Op {
-			return strings.Compare(a.Op, b.Op)
+			return writeOrder(a.Op) - writeOrder(b.Op)
 		}
 		return strings.Compare(a.EventID, b.EventID)
 	})
@@ -107,6 +107,17 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 		return a.BlockIndex - b.BlockIndex
 	})
 	return writes, orphans, bindings
+}
+
+func writeOrder(op string) int {
+	switch op {
+	case "delete":
+		return 0
+	case "patch":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func timedToDispositions(in []store.TimedDisposition) []model.Disposition {

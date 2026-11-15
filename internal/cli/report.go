@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +11,9 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
@@ -140,7 +142,7 @@ func errWriter(opts *options) io.Writer {
 // credentials it falls back to the graph plus stored stood-down (the M3
 // behaviour), so a fresh checkout still checks. It writes nowhere, except
 // for a missing Time Maps page the user confirms (or pre-answers with -y).
-func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
+func runCheck(ctx context.Context, opts *options, ov configOverrides, strict, yes bool) error {
 	start := logRunStart(opts, "check")
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
@@ -151,10 +153,10 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 		_, _ = fmt.Fprintln(errWriter(opts), warn)
 	}
 	style := newStyler(opts.out, opts.disableColors, th)
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "check", th)); err != nil {
+	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "check", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
+	if _, err := ensureTimeMapsPage(ctx, sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	st, err := openStore()
@@ -163,16 +165,16 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	cal, err := calendarFull(context.Background(), creds, cfg)
+	cal, err := calendarFull(ctx, creds, cfg)
 	if err != nil {
 		if strings.Contains(err.Error(), "google credentials") {
-			return runCheckWithoutCalendar(opts, strict, cfg, sources, st, th)
+			return runCheckWithoutCalendar(ctx, opts, strict, cfg, sources, st, th)
 		}
 		return &exitError{code: codeError, err: err}
 	}
 
 	now := time.Now()
-	outcome, err := run.CheckSources(context.Background(), sources, cal, st, cfg, now)
+	outcome, err := run.CheckSources(ctx, sources, cal, st, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -221,7 +223,7 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 // reconcile happens here — with no observed events, every binding would look
 // deleted. Orphaned needs the calendar, so it stays empty. Used by check and
 // explain so the degraded path cannot drift.
-func buildCheckOutcomeWithoutCalendar(cfg config.Config, sources []run.Source, st run.Store, now time.Time) (run.CheckOutcome, error) {
+func buildCheckOutcomeWithoutCalendar(ctx context.Context, cfg config.Config, sources []run.Source, st run.Store, now time.Time) (run.CheckOutcome, error) {
 	location, err := cfg.Scheduling.Location()
 	if err != nil {
 		return run.CheckOutcome{}, err
@@ -230,7 +232,7 @@ func buildCheckOutcomeWithoutCalendar(cfg config.Config, sources []run.Source, s
 	if err != nil {
 		return run.CheckOutcome{}, err
 	}
-	result, err := run.ReadSources(context.Background(), sources, cfg.Logseq.PrimaryTimeMapsPage(), location)
+	result, err := run.ReadSources(ctx, sources, cfg.Logseq.PrimaryTimeMapsPage(), location)
 	if err != nil {
 		return run.CheckOutcome{}, err
 	}
@@ -268,11 +270,11 @@ func buildCheckOutcomeWithoutCalendar(cfg config.Config, sources []run.Source, s
 // Orphaned needs the calendar, so it stays empty. The theme is the one the
 // caller already resolved (and warned about, when invalid), so a bad
 // ui.theme warns exactly once per run.
-func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store, th theme.Theme) error {
+func runCheckWithoutCalendar(ctx context.Context, opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store, th theme.Theme) error {
 	start := logRunStart(opts, "check")
 	style := newStyler(opts.out, opts.disableColors, th)
 	now := time.Now()
-	outcome, err := buildCheckOutcomeWithoutCalendar(cfg, sources, st, now)
+	outcome, err := buildCheckOutcomeWithoutCalendar(ctx, cfg, sources, st, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -317,7 +319,7 @@ func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sour
 // unreachable calendar is an operational error (exit 1), so the forecast
 // never prints against a silently free calendar. The one write it may make
 // is a missing Time Maps page the user confirms (or pre-answers with -y).
-func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
+func runForecast(ctx context.Context, opts *options, ov configOverrides, verbose, yes bool) error {
 	start := logRunStart(opts, "forecast")
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
@@ -328,20 +330,20 @@ func runForecast(opts *options, ov configOverrides, verbose, yes bool) error {
 		_, _ = fmt.Fprintln(errWriter(opts), warn)
 	}
 	style := newStyler(opts.out, opts.disableColors, th)
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "forecast", th)); err != nil {
+	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "forecast", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
+	if _, err := ensureTimeMapsPage(ctx, sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 
-	busy, err := calendarBusy(context.Background(), creds, cfg)
+	busy, err := calendarBusy(ctx, creds, cfg)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 
 	now := time.Now()
-	outcome, err := run.ForecastSources(context.Background(), sources, busy, cfg, now)
+	outcome, err := run.ForecastSources(ctx, sources, busy, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -471,9 +473,20 @@ func managedEvents(outcome run.ForecastOutcome) []managedJSON {
 
 // printJSON writes indented, newline-terminated, deterministic JSON.
 func printJSON(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	raw, err := json.Marshal(v,
+		json.Deterministic(true),
+		json.FormatNilSliceAsNull(true),
+		json.FormatNilMapAsNull(true),
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.EscapeForHTML(true),
+		jsontext.WithIndent("  "),
+	)
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	_, err = w.Write(raw)
+	return err
 }
 
 // Text rendering, in the Scheduling timezone the blocks were built in.

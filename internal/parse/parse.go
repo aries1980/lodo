@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"uuid"
 
 	"github.com/aries1980/lodo/internal/model"
 )
@@ -58,7 +59,7 @@ func ParseDepends(s string) ([]string, error) {
 	}
 	var out []string
 	seen := map[string]bool{}
-	for _, piece := range strings.Split(text, ",") {
+	for piece := range strings.SplitSeq(text, ",") {
 		p := strings.TrimSpace(piece)
 		if p == "" {
 			return nil, fmt.Errorf("parse depends %q: empty entry", s)
@@ -98,18 +99,8 @@ func isUUID(s string) bool {
 	if len(s) != 36 {
 		return false
 	}
-	for i, c := range s {
-		switch {
-		case i == 8 || i == 13 || i == 18 || i == 23:
-			if c != '-' {
-				return false
-			}
-		case (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'):
-		default:
-			return false
-		}
-	}
-	return true
+	_, err := uuid.Parse(s)
+	return err == nil
 }
 
 // ParseCivilDate parses a day-granular date such as "2026-10-20".

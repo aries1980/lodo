@@ -14,7 +14,7 @@ import (
 
 // runRefresh implements lodo refresh: pull-only, reconcile plus store
 // commit. It never resolves the graph and never writes the calendar.
-func runRefresh(opts *options, ov configOverrides) error {
+func runRefresh(ctx context.Context, opts *options, ov configOverrides) error {
 	start := logRunStart(opts, "refresh")
 	cfgPath := opts.config
 	if cfgPath == "" {
@@ -50,7 +50,7 @@ func runRefresh(opts *options, ov configOverrides) error {
 		return &exitError{code: codeError, err: err}
 	}
 	creds = creds.WithCredentialOverrides(ov.credentialOverrides())
-	cal, err := calendarFull(context.Background(), creds, cfg)
+	cal, err := calendarFull(ctx, creds, cfg)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}
@@ -61,7 +61,7 @@ func runRefresh(opts *options, ov configOverrides) error {
 	defer func() { _ = st.Close() }()
 
 	now := time.Now()
-	outcome, err := run.Refresh(context.Background(), cal, st, cfg, now)
+	outcome, err := run.Refresh(ctx, cal, st, cfg, now)
 	if err != nil {
 		return &exitError{code: codeError, err: err}
 	}

@@ -8,13 +8,17 @@ package config
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 
 	"gopkg.in/yaml.v3"
 
@@ -430,6 +434,11 @@ func Apply(cfg Config, o Overrides) (Config, error) {
 type Credentials struct {
 	Logseq LogseqCredentials  `json:"logseq"`
 	Google *GoogleCredentials `json:"google,omitempty"`
+
+	// FlagGraphTokens holds one-run CLI flag overrides for per-graph tokens,
+	// keyed by slug. Flags win over environment and file (configuration.md
+	// Precedence). Runtime only, never persisted.
+	FlagGraphTokens map[string]string `json:"-"`
 }
 
 // LogseqCredentials carries the Logseq HTTP API token.
@@ -482,14 +491,22 @@ func GraphTokenEnvVar(graph string) string {
 	return EnvLogseqToken + "_" + strings.ToUpper(slug)
 }
 
-// TokenForGraph resolves the effective token for one graph: per-graph env
-// wins, then the per-graph file entry (case-insensitive), then the global
-// token (file+env fallback already applied). Empty means unconfigured.
+// TokenForGraph resolves the effective token for one graph: one-run CLI
+// flags win, then per-graph env, then the per-graph file entry
+// (case-insensitive), then the global token (file+env fallback already
+// applied). Empty means unconfigured.
 func (c Credentials) TokenForGraph(graph string) string {
+	want := parse.Slugify(graph)
+	if want != "" && c.FlagGraphTokens != nil {
+		if v, ok := c.FlagGraphTokens[want]; ok {
+			if t := strings.TrimSpace(v); t != "" {
+				return t
+			}
+		}
+	}
 	if v := strings.TrimSpace(os.Getenv(GraphTokenEnvVar(graph))); v != "" {
 		return v
 	}
-	want := parse.Slugify(graph)
 	for name, g := range c.Logseq.Graphs {
 		if parse.Slugify(name) == want {
 			if v := strings.TrimSpace(g.Token); v != "" {
@@ -512,11 +529,21 @@ func (c Credentials) HasAnyLogseqToken() bool {
 			return true
 		}
 	}
+	for _, v := range c.FlagGraphTokens {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, EnvLogseqToken+"_") || e == EnvLogseqToken {
-			if idx := strings.Index(e, "="); idx >= 0 && strings.TrimSpace(e[idx+1:]) != "" {
-				return true
-			}
+		k, v, ok := strings.Cut(e, "=")
+		if !ok || strings.TrimSpace(v) == "" {
+			continue
+		}
+		if k == EnvLogseqToken {
+			return true
+		}
+		if _, ok := strings.CutPrefix(k, EnvLogseqToken+"_"); ok {
+			return true
 		}
 	}
 	return false
@@ -530,14 +557,15 @@ func CredentialsFromEnv() Credentials {
 	c.Logseq.Token = strings.TrimSpace(os.Getenv(EnvLogseqToken))
 	for _, e := range os.Environ() {
 		const prefix = EnvLogseqToken + "_"
-		if !strings.HasPrefix(e, prefix) {
+		key, value, ok := strings.Cut(e, "=")
+		if !ok || strings.TrimSpace(value) == "" {
 			continue
 		}
-		kv := strings.SplitN(e, "=", 2)
-		if len(kv) != 2 || strings.TrimSpace(kv[1]) == "" {
+		suffix, ok := strings.CutPrefix(key, prefix)
+		if !ok {
 			continue
 		}
-		suffix := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(kv[0], prefix)))
+		suffix = strings.ToLower(strings.TrimSpace(suffix))
 		suffix = strings.ReplaceAll(suffix, "_", "-")
 		if parse.Slugify(suffix) == "" {
 			continue
@@ -546,7 +574,7 @@ func CredentialsFromEnv() Credentials {
 			c.Logseq.Graphs = map[string]LogseqGraphCredentials{}
 		}
 		// Key by slug; TokenForGraph matches case-insensitively anyway.
-		c.Logseq.Graphs[suffix] = LogseqGraphCredentials{Token: strings.TrimSpace(kv[1])}
+		c.Logseq.Graphs[suffix] = LogseqGraphCredentials{Token: strings.TrimSpace(value)}
 	}
 	if id := strings.TrimSpace(os.Getenv(EnvGoogleClientID)); id != "" {
 		if c.Google == nil {
@@ -586,6 +614,30 @@ func (c Credentials) isEmpty() bool {
 	return c.Google.ClientID == "" && c.Google.ClientSecret == "" && c.Google.RefreshToken == ""
 }
 
+// canonicalGraphTokens rekeys per-graph tokens by slug so "Work" and "work"
+// collapse to one entry. Later keys win on collision; callers pass maps in
+// precedence order (file, then env, then flags) with sorted keys for
+// determinism.
+func canonicalGraphTokens(in map[string]LogseqGraphCredentials) map[string]LogseqGraphCredentials {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]LogseqGraphCredentials, len(in))
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		slug := parse.Slugify(k)
+		if slug == "" {
+			continue
+		}
+		out[slug] = in[k]
+	}
+	return out
+}
+
 // withEnv overlays the environment onto c: non-empty variables win per
 // field, empty ones keep the file's value. The receiver is never mutated.
 func (c Credentials) withEnv() Credentials {
@@ -594,18 +646,21 @@ func (c Credentials) withEnv() Credentials {
 		c.Logseq.Token = env.Logseq.Token
 	}
 	if len(env.Logseq.Graphs) > 0 {
-		if c.Logseq.Graphs == nil {
-			c.Logseq.Graphs = map[string]LogseqGraphCredentials{}
-		} else {
-			cp := make(map[string]LogseqGraphCredentials, len(c.Logseq.Graphs))
-			for k, v := range c.Logseq.Graphs {
-				cp[k] = v
-			}
-			c.Logseq.Graphs = cp
+		merged := make(map[string]LogseqGraphCredentials, len(c.Logseq.Graphs)+len(env.Logseq.Graphs))
+		for k, v := range canonicalGraphTokens(c.Logseq.Graphs) {
+			merged[k] = v
 		}
 		for k, v := range env.Logseq.Graphs {
-			c.Logseq.Graphs[k] = v
+			merged[k] = v
 		}
+		c.Logseq.Graphs = merged
+	} else if len(c.Logseq.Graphs) > 0 {
+		c.Logseq.Graphs = canonicalGraphTokens(c.Logseq.Graphs)
+	}
+	if c.FlagGraphTokens != nil {
+		cp := make(map[string]string, len(c.FlagGraphTokens))
+		maps.Copy(cp, c.FlagGraphTokens)
+		c.FlagGraphTokens = cp
 	}
 	if env.Google != nil {
 		if c.Google == nil {
@@ -652,20 +707,38 @@ func (c Credentials) WithCredentialOverrides(o CredentialOverrides) Credentials 
 		c.Logseq.Token = v
 	}
 	if len(o.LogseqGraphTokens) > 0 {
-		if c.Logseq.Graphs == nil {
-			c.Logseq.Graphs = map[string]LogseqGraphCredentials{}
-		} else {
-			cp := make(map[string]LogseqGraphCredentials, len(c.Logseq.Graphs))
-			for k, v := range c.Logseq.Graphs {
-				cp[k] = v
-			}
-			c.Logseq.Graphs = cp
+		flags := make(map[string]string, len(o.LogseqGraphTokens))
+		if c.FlagGraphTokens != nil {
+			maps.Copy(flags, c.FlagGraphTokens)
 		}
-		for k, v := range o.LogseqGraphTokens {
-			if vv := strings.TrimSpace(v); vv != "" {
-				c.Logseq.Graphs[k] = LogseqGraphCredentials{Token: vv}
+		merged := canonicalGraphTokens(c.Logseq.Graphs)
+		if merged == nil {
+			merged = map[string]LogseqGraphCredentials{}
+		}
+		keys := make([]string, 0, len(o.LogseqGraphTokens))
+		for k := range o.LogseqGraphTokens {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			if vv := strings.TrimSpace(o.LogseqGraphTokens[k]); vv != "" {
+				if slug := parse.Slugify(k); slug != "" {
+					flags[slug] = vv
+					merged[slug] = LogseqGraphCredentials{Token: vv}
+				}
 			}
 		}
+		c.FlagGraphTokens = flags
+		c.Logseq.Graphs = merged
+	} else if c.FlagGraphTokens != nil {
+		cp := make(map[string]string, len(c.FlagGraphTokens))
+		maps.Copy(cp, c.FlagGraphTokens)
+		c.FlagGraphTokens = cp
+		if len(c.Logseq.Graphs) > 0 {
+			c.Logseq.Graphs = canonicalGraphTokens(c.Logseq.Graphs)
+		}
+	} else if len(c.Logseq.Graphs) > 0 {
+		c.Logseq.Graphs = canonicalGraphTokens(c.Logseq.Graphs)
 	}
 	if v := strings.TrimSpace(o.GoogleClientID); v != "" {
 		if c.Google == nil {
@@ -750,7 +823,10 @@ func ReadFileCredentials(path string) (Credentials, error) {
 		return Credentials{}, fmt.Errorf("credentials file %s: %w", path, err)
 	}
 	var c Credentials
-	if err := json.Unmarshal(data, &c); err != nil {
+	if err := json.Unmarshal(data, &c,
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.AllowDuplicateNames(true),
+	); err != nil {
 		return Credentials{}, fmt.Errorf("credentials file %s: %w", path, err)
 	}
 	return c, nil
@@ -797,32 +873,54 @@ func LoadCredentials(path string) (Credentials, error) {
 
 // SaveCredentials writes c to path, creating the state directory if needed.
 // The file is written 0600 (parent 0700), no matter the umask, because the
-// written token is a secret (configuration.md: 0600).
+// written token is a secret (configuration.md: 0600). The write is atomic:
+// a temp file in the same directory is fsynced and renamed, so a crash
+// never leaves a truncated credentials file.
 func SaveCredentials(path string, c Credentials) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("credential directory %s: %w", dir, err)
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	data, err := json.Marshal(c,
+		json.Deterministic(true),
+		json.FormatNilSliceAsNull(true),
+		json.FormatNilMapAsNull(true),
+		json.MatchCaseInsensitiveNames(true),
+		jsontext.EscapeForHTML(true),
+		jsontext.WithIndent("  "),
+	)
 	if err != nil {
 		return fmt.Errorf("credentials file %s: %w", path, err)
 	}
 	data = append(data, '\n')
 
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	tmp, err := os.CreateTemp(dir, ".credentials-*.tmp")
 	if err != nil {
 		return fmt.Errorf("credentials file %s: %w", path, err)
 	}
+	tmpName := tmp.Name()
 	// O_CREATE honours the umask, so pin the mode explicitly.
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("credentials file %s: %w", path, err)
 	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("credentials file %s: %w", path, err)
 	}
-	if err := f.Close(); err != nil {
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("credentials file %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("credentials file %s: %w", path, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("credentials file %s: %w", path, err)
 	}
 	return nil

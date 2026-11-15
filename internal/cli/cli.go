@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -55,7 +58,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 
-	if err := root.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := root.ExecuteContext(ctx); err != nil {
 		if resolveLogFormat(opts.logFormat) == "json" {
 			cmd, _, _ := root.Find(args)
 			name := ""
@@ -63,8 +69,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				name = cmd.Name()
 			}
 			code := codeError
-			var ee *exitError
-			if errors.As(err, &ee) {
+			if ee, ok := errors.AsType[*exitError](err); ok {
 				code = ee.code
 			}
 			logRunError(stderr, opts.verbose, name, err.Error(), code, nil)
@@ -73,8 +78,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, st.danger("lodo:")+" "+err.Error())
 		}
 
-		var ee *exitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exitError](err); ok {
 			return ee.code
 		}
 
@@ -101,7 +105,7 @@ func newRootCmd(opts *options) *cobra.Command {
 			if !ttyCheck() {
 				return c.Help()
 			}
-			return runTUI(opts, configOverrides{})
+			return runTUI(c.Context(), opts, configOverrides{})
 		},
 	}
 	root.PersistentFlags().BoolVar(&opts.json, "json", false, i18n.T("machine-readable output"))
@@ -136,7 +140,7 @@ func newCheckCmd(opts *options) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
-			return runCheck(opts, overrides, strict, yes)
+			return runCheck(c.Context(), opts, overrides, strict, yes)
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, i18n.T("treat reported problems as a non-zero exit"))
@@ -158,7 +162,7 @@ func newForecastCmd(opts *options) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
-			return runForecast(opts, overrides, opts.verbose, yes)
+			return runForecast(c.Context(), opts, overrides, opts.verbose, yes)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("answer yes to prompts (create a missing Time Maps page without asking)"))
@@ -182,7 +186,7 @@ func newScheduleCmd(opts *options) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
-			return runSchedule(opts, overrides, dryRun, strict, opts.verbose, yes)
+			return runSchedule(c.Context(), opts, overrides, dryRun, strict, opts.verbose, yes)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("same as forecast"))
@@ -203,7 +207,7 @@ func newRefreshCmd(opts *options) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
-			return runRefresh(opts, overrides)
+			return runRefresh(c.Context(), opts, overrides)
 		},
 	}
 	cmd.Flags().StringArrayVar(&overrides.readCalendars, "read-calendar", nil, i18n.T("shared calendar to read for busy time; repeatable, replaces config read_calendars for one run"))
@@ -225,7 +229,7 @@ func newExplainCmd(opts *options) *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
-			return runExplain(opts, overrides, args[0], yes)
+			return runExplain(c.Context(), opts, overrides, args[0], yes)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("answer yes to prompts (create a missing Time Maps page without asking)"))
@@ -253,7 +257,7 @@ func newAuthCmd(opts *options) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
-			return runAuthGoogle(opts, overrides, noBrowser)
+			return runAuthGoogle(c.Context(), opts, overrides, noBrowser)
 		},
 	}
 	cmd.Flags().BoolVar(&noBrowser, "no-launch-browser", false,
@@ -338,8 +342,8 @@ func langFlagFromArgs(args []string) string {
 		if a == "--lang" && i+1 < len(args) {
 			return args[i+1]
 		}
-		if strings.HasPrefix(a, "--lang=") {
-			return strings.TrimPrefix(a, "--lang=")
+		if v, ok := strings.CutPrefix(a, "--lang="); ok {
+			return v
 		}
 		if a == "--" {
 			break

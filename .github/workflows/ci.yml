@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          set -eu
+          out=$(gofmt -d .)
+          if [ -n "$out" ]; then
+            echo "$out"
+            echo "gofmt diff found; run gofmt -w ."
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - run: go test -race -count=1 ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+          args: --timeout=5m ./...
+
+  packaging:
+    name: Packaging smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build and stage
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -eu
+          mkdir -p dist stage
+          go build -trimpath -ldflags '-s -w' -o dist/lodo ./cmd/lodo
+          cp dist/lodo LICENSE README.md stage/
+          mkdir -p stage/themes && cp internal/theme/themes/*.yaml stage/themes/
+          test -f stage/lodo
+          test -d stage/themes
+          ls -l stage stage/themes | head -n 30

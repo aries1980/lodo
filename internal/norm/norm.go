@@ -30,7 +30,11 @@ func Units(d, granularity time.Duration) int {
 	if d <= 0 {
 		return 0
 	}
-	return int((d + granularity - 1) / granularity)
+	units := d / granularity
+	if d%granularity != 0 {
+		units++
+	}
+	return int(units)
 }
 
 // Phrases trims entries, compares them case-insensitively, drops empties,

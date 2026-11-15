@@ -82,7 +82,7 @@ type explainTask struct {
 // It uses the same reconcile + planner logic as check/schedule (calendar busy
 // time and stored dispositions when available; degrades like check without
 // calendar), so the explanation reflects actual decisions, not an approximation.
-func runExplain(opts *options, ov configOverrides, query string, yes bool) error {
+func runExplain(ctx context.Context, opts *options, ov configOverrides, query string, yes bool) error {
 	start := logRunStart(opts, "explain")
 	cfg, sources, creds, err := loadSources(opts, ov)
 	if err != nil {
@@ -93,10 +93,10 @@ func runExplain(opts *options, ov configOverrides, query string, yes bool) error
 		_, _ = fmt.Fprintln(errWriter(opts), warn)
 	}
 	style := newStyler(opts.out, opts.disableColors, th)
-	if err := checkLogseqAvailable(context.Background(), sources, makeLogseqProbeNotify(opts, "explain", th)); err != nil {
+	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "explain", th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
-	if _, err := ensureTimeMapsPage(context.Background(), sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
+	if _, err := ensureTimeMapsPage(ctx, sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
 		return &exitError{code: codeError, err: err}
 	}
 	st, err := openStore()
@@ -105,12 +105,12 @@ func runExplain(opts *options, ov configOverrides, query string, yes bool) error
 	}
 	defer func() { _ = st.Close() }()
 
-	cal, err := calendarFull(context.Background(), creds, cfg)
+	cal, err := calendarFull(ctx, creds, cfg)
 	now := time.Now()
 	var outcome run.CheckOutcome
 	if err != nil {
 		if strings.Contains(err.Error(), "google credentials") {
-			outcome, err = buildCheckOutcomeWithoutCalendar(cfg, sources, st, now)
+			outcome, err = buildCheckOutcomeWithoutCalendar(ctx, cfg, sources, st, now)
 			if err != nil {
 				return &exitError{code: codeError, err: err}
 			}
@@ -118,7 +118,7 @@ func runExplain(opts *options, ov configOverrides, query string, yes bool) error
 			return &exitError{code: codeError, err: err}
 		}
 	} else {
-		outcome, err = run.CheckSources(context.Background(), sources, cal, st, cfg, now)
+		outcome, err = run.CheckSources(ctx, sources, cal, st, cfg, now)
 		if err != nil {
 			return &exitError{code: codeError, err: err}
 		}

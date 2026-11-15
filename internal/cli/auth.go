@@ -30,7 +30,7 @@ var googleEndpoint = gauth.Endpoint
 // flag-supplied refresh token directly or run the loopback flow to mint one.
 // Missing pieces exit 1 with the hint; the flow never asks a question of a
 // user who cannot answer it.
-func runAuthGoogle(opts *options, ov configOverrides, noBrowser bool) error {
+func runAuthGoogle(ctx context.Context, opts *options, ov configOverrides, noBrowser bool) error {
 	start := logRunStart(opts, "auth")
 	path, err := config.DefaultCredentialsPath()
 	if err != nil {
@@ -64,7 +64,7 @@ func runAuthGoogle(opts *options, ov configOverrides, noBrowser bool) error {
 		return nil
 	}
 
-	res, err := gauth.Run(context.Background(), gauth.Inputs{
+	res, err := gauth.Run(ctx, gauth.Inputs{
 		Client:    client,
 		Endpoint:  googleEndpoint,
 		Raise:     raise(opts, noBrowser),
