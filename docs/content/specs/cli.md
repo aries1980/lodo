@@ -52,6 +52,7 @@ pipes, CI, or `--json` runs.
 | `--dry-run` | `schedule` | Same as `forecast`. |
 | `--json` | all | Machine-readable result on stdout. Never launches the TUI. |
 | `--log-format auto\|text\|json` | all | Diagnostic log format on stderr: `text` (default, `auto` is `text`), `json` is JSONL for CI/cron. Also `LODO_LOG_FORMAT`. |
+| `--now RFC3339` | all | **Hidden testing aid.** Pin the scheduling clock (also `LODO_NOW`): the window, the busy mask, and store timestamps derive from one instant. Not for scheduled runs. |
 | `--disable-colors` | all | Disable colors in human-readable output. Also off with `NO_COLOR`, `TERM=dumb`, or non-TTY. |
 | `--no-launch-browser` | `auth google` | Headless machines: finish the grant on another device, paste the redirect back. |
 | `--window-days N`, `--timezone TZ`, … | `schedule`, `forecast` | One-run overrides of config. Not persisted. |
