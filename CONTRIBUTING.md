@@ -52,3 +52,5 @@ form `0.1.1` (no `v` prefix) triggers
   `internal/cli/*`. Task/Time Map/dependency shape changes go through
   `internal/resolve/*` + `internal/model/*`; persistence through
   `internal/store/*` (mind ADR 0007 write ordering).
+- Translating the UI: [`translations/README.md`](translations/README.md)
+  (PO files, `en-US` base, `en-GB` target).
