@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/aries1980/lodo/internal/tui"
@@ -21,26 +20,22 @@ func isTTY(f *os.File) bool {
 }
 
 func runTUI(ctx context.Context, opts *options, ov configOverrides) error {
-	cfg, sources, _, err := loadSources(opts, ov)
+	cmd, err := prepare(ctx, opts, ov, false, "tui")
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
-	th, warn := resolveTheme(cfg, opts.config)
-	if warn != "" {
-		_, _ = fmt.Fprintln(errWriter(opts), warn)
-	}
-	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "tui", th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	data, err := tui.Load(ctx, cfg, sources)
+	defer cmd.close()
+
+	data, err := tui.Load(ctx, cmd.cfg, cmd.sources)
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
 	reload := func() (tui.Data, error) {
-		return tui.Load(ctx, cfg, sources)
+		return tui.Load(ctx, cmd.cfg, cmd.sources)
 	}
-	if err := tui.RunProgram(data, reload, th); err != nil {
-		return &exitError{code: codeError, err: err}
+	if err := tui.RunProgram(data, reload, cmd.theme); err != nil {
+		return fail(err)
 	}
+	cmd.finish(nil)
 	return nil
 }

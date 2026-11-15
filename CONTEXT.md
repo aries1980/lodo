@@ -52,8 +52,9 @@ not resolve the graph or recompute the Schedule.
 
 - `cmd/lodo/main.go`: process entrypoint; calls `cli.Run`.
 - `internal/cli`: Cobra command tree, flags, config loading, command handlers, and
-  human/JSON output. Keep wiring explicit. Read-only commands stay off the calendar
-  and the store commit. New commands render through `views.go`.
+  human/JSON output. Keep wiring explicit. `prepare.go` holds the one `commandNeeds`
+  table of what each command opens, and opens it. Read-only commands stay off the
+  calendar and the store commit. New commands render through `views.go`.
 - `internal/run`: the command loop. `Forecast`/`ForecastSources` read, resolve, and
   plan. `Schedule` and `Check` reconcile, then plan. `Refresh` folds calendar edits
   without recomputing.
@@ -83,6 +84,8 @@ not resolve the graph or recompute the Schedule.
 ## Where to change X
 
 - New CLI flag, command, or override: `internal/cli/*` (constructor, handler, tests).
+  A new command also needs a `commandNeeds` row in `prepare.go`; that table is the
+  single declaration of the config, graph, calendar, and store I/O a command touches.
   Render with the helpers in `views.go`.
 - Task, Time Map, dependency, or provenance resolution: `internal/resolve/*`, with
   `internal/parse` and `internal/model` when the shape changes.

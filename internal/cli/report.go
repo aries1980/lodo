@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
-	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/jsonx"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
@@ -22,27 +22,23 @@ import (
 	"github.com/aries1980/lodo/internal/reconcile"
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/run"
-	"github.com/aries1980/lodo/internal/store"
-	"github.com/aries1980/lodo/internal/theme"
 )
 
-// loadSources loads config and credentials, applies per-run overrides, resolves
-// Logseq tokens per graph (file/LODO_LOGSEQ_TOKEN_<GRAPH>/global fallback), and
-// constructs one run.Source per configured graph. Single-graph mode returns one
-// source with an empty name. It performs config/credential reads but no graph or
-// calendar I/O.
-func loadSources(opts *options, ov configOverrides) (config.Config, []run.Source, config.Credentials, error) {
+// loadConfig loads config and credentials and applies the per-run overrides to
+// both. It performs config/credential reads but no graph, calendar, or store
+// I/O.
+func loadConfig(opts *options, ov configOverrides) (config.Config, config.Credentials, error) {
 	path := opts.config
 	if path == "" {
 		def, err := config.DefaultConfigPath()
 		if err != nil {
-			return config.Config{}, nil, config.Credentials{}, fmt.Errorf("locate the config file: %w", err)
+			return config.Config{}, config.Credentials{}, fmt.Errorf("locate the config file: %w", err)
 		}
 		path = def
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		return config.Config{}, nil, config.Credentials{}, err
+		return config.Config{}, config.Credentials{}, err
 	}
 	cfg, err = config.Apply(cfg, config.Overrides{
 		WindowDays:    ov.windowDays,
@@ -50,44 +46,57 @@ func loadSources(opts *options, ov configOverrides) (config.Config, []run.Source
 		ReadCalendars: ov.readCalendars,
 	})
 	if err != nil {
-		return config.Config{}, nil, config.Credentials{}, err
+		return config.Config{}, config.Credentials{}, err
 	}
 
 	credPath, err := config.DefaultCredentialsPath()
 	if err != nil {
-		return config.Config{}, nil, config.Credentials{}, fmt.Errorf("locate the credentials file: %w", err)
+		return config.Config{}, config.Credentials{}, fmt.Errorf("locate the credentials file: %w", err)
 	}
 	creds, err := config.ReadCredentials(credPath)
 	if err != nil {
-		return config.Config{}, nil, config.Credentials{}, err
+		return config.Config{}, config.Credentials{}, err
 	}
-	creds = creds.WithCredentialOverrides(ov.credentialOverrides())
+	return cfg, creds.WithCredentialOverrides(ov.credentialOverrides()), nil
+}
+
+// buildSources resolves the Logseq token for every configured graph
+// (file/LODO_LOGSEQ_TOKEN_<GRAPH>/global fallback) and constructs one
+// run.Source per graph (ADR 0021). Single-graph mode returns one source with an
+// empty name. It demands a token: a command that never reads the graph
+// (refresh) must not call it.
+func buildSources(cfg config.Config, creds config.Credentials) ([]run.Source, error) {
+	credPath, err := config.DefaultCredentialsPath()
+	if err != nil {
+		return nil, fmt.Errorf("locate the credentials file: %w", err)
+	}
 	if !creds.HasAnyLogseqToken() {
-		return config.Config{}, nil, config.Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or pass --logseq-token", credPath, config.EnvLogseqToken)
+		return nil, missingLogseqTokenError(credPath)
 	}
 
 	hc := httpClient(cfg)
 	if len(cfg.Logseq.Graphs) == 0 {
-		if creds.TokenForGraph("") == "" {
-			return config.Config{}, nil, config.Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or pass --logseq-token", credPath, config.EnvLogseqToken)
+		tok := creds.TokenForGraph("")
+		if tok == "" {
+			return nil, missingLogseqTokenError(credPath)
 		}
-		client, err := logseq.NewClient(cfg.Logseq.APIURL, creds.TokenForGraph(""), hc)
+		client, err := logseq.NewClient(cfg.Logseq.APIURL, tok, hc)
 		if err != nil {
-			return config.Config{}, nil, config.Credentials{}, err
+			return nil, err
 		}
 		sources := []run.Source{{Client: client, APIURL: cfg.Logseq.APIURL}}
-		return cfg, sources, creds, nil
+		return sources, nil
 	}
 
 	sources := make([]run.Source, 0, len(cfg.Logseq.Graphs))
 	for i, g := range cfg.Logseq.Graphs {
 		tok := creds.TokenForGraph(g.Name)
 		if tok == "" {
-			return config.Config{}, nil, config.Credentials{}, fmt.Errorf("graph %s: no Logseq token; set logseq.graphs.%s.token in %s or %s", g.Name, g.Name, credPath, config.GraphTokenEnvVar(g.Name))
+			return nil, fmt.Errorf("graph %s: no Logseq token; set logseq.graphs.%s.token in %s or %s", g.Name, g.Name, credPath, config.GraphTokenEnvVar(g.Name))
 		}
 		client, err := logseq.NewClient(g.APIURL, tok, hc)
 		if err != nil {
-			return config.Config{}, nil, config.Credentials{}, fmt.Errorf("graph %s: %w", g.Name, err)
+			return nil, fmt.Errorf("graph %s: %w", g.Name, err)
 		}
 		sources = append(sources, run.Source{
 			Name:           g.Name,
@@ -97,7 +106,13 @@ func loadSources(opts *options, ov configOverrides) (config.Config, []run.Source
 			APIURL:         g.APIURL,
 		})
 	}
-	return cfg, sources, creds, nil
+	return sources, nil
+}
+
+// missingLogseqTokenError names the credential file and the three ways to fill
+// the token in.
+func missingLogseqTokenError(credPath string) error {
+	return fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or pass --logseq-token", credPath, config.EnvLogseqToken)
 }
 
 // httpClient builds the transport the API adapter speaks through. An
@@ -141,79 +156,76 @@ func errWriter(opts *options) io.Writer {
 // behaviour), so a fresh checkout still checks. It writes nowhere, except
 // for a missing Time Maps page the user confirms (or pre-answers with -y).
 func runCheck(ctx context.Context, opts *options, ov configOverrides, strict, yes bool) error {
-	start := logRunStart(opts, "check")
-	cfg, sources, creds, err := loadSources(opts, ov)
+	cmd, err := prepare(ctx, opts, ov, yes, "check")
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
-	th, warn := resolveTheme(cfg, opts.config)
-	if warn != "" {
-		_, _ = fmt.Fprintln(errWriter(opts), warn)
-	}
-	style := newStyler(opts.out, opts.disableColors, th)
-	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "check", th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	if _, err := ensureTimeMapsPage(ctx, sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	st, err := openStore()
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	defer func() { _ = st.Close() }()
+	defer cmd.close()
 
-	cal, err := calendarFull(ctx, creds, cfg)
+	outcome, err := cmd.checkOutcome(ctx)
 	if err != nil {
-		if strings.Contains(err.Error(), "google credentials") {
-			return runCheckWithoutCalendar(ctx, opts, strict, cfg, sources, st, th)
-		}
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
+	return renderCheck(opts, cmd, outcome, strict)
+}
 
-	now := time.Now()
-	outcome, err := run.CheckSources(ctx, sources, cal, st, cfg, now)
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-
+// renderCheck prints one check outcome — JSON or text — then applies --strict.
+// The calendar and no-calendar paths differ only in the outcome they hand in,
+// so the report, the log record and the validation exit cannot drift apart.
+func renderCheck(opts *options, cmd *command, outcome run.CheckOutcome, strict bool) error {
 	if opts.json {
-		busy := busyView(outcome.Busy)
 		view := checkReport{
 			GraphIssues: outcome.Issues,
 			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
 			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
 			StoodDown:   checkStoodDown(outcome),
 			Orphaned:    orphanViews(outcome.Tasks, outcome.Orphans),
-			Busy:        &busy,
+		}
+		if cmd.cal != nil {
+			busy := busyView(outcome.Busy)
+			view.Busy = &busy
 		}
 		if opts.verbose {
 			view.Explanations = explanationViews(outcome.Schedule.Explanations)
 		}
 		if err := printJSON(opts.out, view); err != nil {
-			return &exitError{code: codeError, err: err}
+			return fail(err)
 		}
 	} else {
-		renderCheckText(opts.out, outcome, opts.verbose, style)
+		renderCheckText(opts.out, outcome, opts.verbose, cmd.style)
 	}
-	logBusyWarnings(opts, "check", outcome.Busy)
-	logRunFinish(opts, "check", start, map[string]any{
+	logBusyWarnings(opts, cmd.name, outcome.Busy)
+	attrs := map[string]any{
 		"graph_issues": len(outcome.Issues),
 		"shortfalls":   len(outcome.Schedule.Report.Tasks),
 		"stood_down":   len(outcome.StoodDown),
-		"orphaned":     len(outcome.Orphans),
-	})
-
-	// --strict: validation failures exit 2 across both sections (cli.md).
-	if strict {
-		n := len(outcome.Issues) + len(outcome.Schedule.Report.Tasks) + len(outcome.StoodDown) + len(outcome.Orphans)
-		if n > 0 {
-			return &exitError{code: codeValidation, err: fmt.Errorf(
-				"check --strict: %d graph issue(s), %d infeasible Task(s), %d stood-down, %d orphaned",
-				len(outcome.Issues), len(outcome.Schedule.Report.Tasks), len(outcome.StoodDown), len(outcome.Orphans))}
-		}
 	}
-	return nil
+	if cmd.cal != nil {
+		attrs["orphaned"] = len(outcome.Orphans)
+	} else {
+		attrs["calendar"] = "none"
+	}
+	cmd.finish(attrs)
+	if !strict {
+		return nil
+	}
+	return checkStrictExit(outcome, cmd.cal != nil)
+}
+
+// checkStrictExit is the --strict refusal, or nil when the run is clean. A run
+// without a calendar cannot report orphans, so it says nothing about them.
+func checkStrictExit(outcome run.CheckOutcome, withCalendar bool) error {
+	n := len(outcome.Issues) + len(outcome.Schedule.Report.Tasks) + len(outcome.StoodDown)
+	msg := fmt.Sprintf("check --strict: %d graph issue(s), %d infeasible Task(s), %d stood-down",
+		len(outcome.Issues), len(outcome.Schedule.Report.Tasks), len(outcome.StoodDown))
+	if withCalendar {
+		n += len(outcome.Orphans)
+		msg += fmt.Sprintf(", %d orphaned", len(outcome.Orphans))
+	}
+	if n == 0 {
+		return nil
+	}
+	return failCode(codeValidation, errors.New(msg))
 }
 
 // buildCheckOutcomeWithoutCalendar is the shared no-credentials fallback:
@@ -262,55 +274,6 @@ func buildCheckOutcomeWithoutCalendar(ctx context.Context, cfg config.Config, so
 	}, nil
 }
 
-// runCheckWithoutCalendar is the no-credentials fallback: the graph plus
-// stored stood-down, planned with no busy time. No in-memory reconcile
-// happens here — with no observed events, every binding would look deleted.
-// Orphaned needs the calendar, so it stays empty. The theme is the one the
-// caller already resolved (and warned about, when invalid), so a bad
-// ui.theme warns exactly once per run.
-func runCheckWithoutCalendar(ctx context.Context, opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store, th theme.Theme) error {
-	start := logRunStart(opts, "check")
-	style := newStyler(opts.out, opts.disableColors, th)
-	now := time.Now()
-	outcome, err := buildCheckOutcomeWithoutCalendar(ctx, cfg, sources, st, now)
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	_ = grid.Build // keep grid import referenced when busy is nil
-	if opts.json {
-		view := checkReport{
-			GraphIssues: outcome.Issues,
-			Shortfalls:  shortfallViews(outcome.Tasks, outcome.Schedule.Report.Tasks),
-			Suggestions: suggestionViews(outcome.Tasks, outcome.Schedule.Suggestions),
-			StoodDown:   checkStoodDown(outcome),
-			Orphaned:    orphanViews(outcome.Tasks, outcome.Orphans),
-		}
-		if opts.verbose {
-			view.Explanations = explanationViews(outcome.Schedule.Explanations)
-		}
-		if err := printJSON(opts.out, view); err != nil {
-			return &exitError{code: codeError, err: err}
-		}
-	} else {
-		renderCheckText(opts.out, outcome, opts.verbose, style)
-	}
-	logRunFinish(opts, "check", start, map[string]any{
-		"graph_issues": len(outcome.Issues),
-		"shortfalls":   len(outcome.Schedule.Report.Tasks),
-		"stood_down":   len(outcome.StoodDown),
-		"calendar":     "none",
-	})
-	if strict {
-		n := len(outcome.Issues) + len(outcome.Schedule.Report.Tasks) + len(outcome.StoodDown)
-		if n > 0 {
-			return &exitError{code: codeValidation, err: fmt.Errorf(
-				"check --strict: %d graph issue(s), %d infeasible Task(s), %d stood-down",
-				len(outcome.Issues), len(outcome.Schedule.Report.Tasks), len(outcome.StoodDown))}
-		}
-	}
-	return nil
-}
-
 // runForecast implements lodo forecast: compute and print the Schedule
 // that would be written; a dry run with no writes. The calendar read is a
 // hard part: resolve (M3), busy time (M4), then the planner — a bad or
@@ -318,32 +281,15 @@ func runCheckWithoutCalendar(ctx context.Context, opts *options, strict bool, cf
 // never prints against a silently free calendar. The one write it may make
 // is a missing Time Maps page the user confirms (or pre-answers with -y).
 func runForecast(ctx context.Context, opts *options, ov configOverrides, verbose, yes bool) error {
-	start := logRunStart(opts, "forecast")
-	cfg, sources, creds, err := loadSources(opts, ov)
+	cmd, err := prepare(ctx, opts, ov, yes, "forecast")
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
-	th, warn := resolveTheme(cfg, opts.config)
-	if warn != "" {
-		_, _ = fmt.Fprintln(errWriter(opts), warn)
-	}
-	style := newStyler(opts.out, opts.disableColors, th)
-	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "forecast", th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	if _, err := ensureTimeMapsPage(ctx, sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
+	defer cmd.close()
 
-	busy, err := calendarBusy(ctx, creds, cfg)
+	outcome, err := run.ForecastSources(ctx, cmd.sources, cmd.cal, cmd.cfg, cmd.now)
 	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-
-	now := time.Now()
-	outcome, err := run.ForecastSources(ctx, sources, busy, cfg, now)
-	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
 
 	if opts.json {
@@ -358,18 +304,18 @@ func runForecast(ctx context.Context, opts *options, ov configOverrides, verbose
 			view.Explanations = explanationViews(outcome.Schedule.Explanations)
 		}
 		if err := printJSON(opts.out, view); err != nil {
-			return &exitError{code: codeError, err: err}
+			return fail(err)
 		}
 	} else {
-		renderForecastText(opts.out, cfg, outcome.Scheduled, outcome.Managed, now, verbose, style)
+		renderForecastText(opts.out, cmd.cfg, outcome.Scheduled, outcome.Managed, cmd.now, verbose, cmd.style)
 	}
-	logBusyWarnings(opts, "forecast", outcome.Busy)
+	logBusyWarnings(opts, cmd.name, outcome.Busy)
 	if len(outcome.Managed) > 0 {
-		logRunWarn(opts, "forecast", "forecast.managed_hole", "managed events left out of busy mask", map[string]any{
+		logRunWarn(opts, cmd.name, "forecast.managed_hole", "managed events left out of busy mask", map[string]any{
 			"managed": len(outcome.Managed),
 		})
 	}
-	logRunFinish(opts, "forecast", start, map[string]any{
+	cmd.finish(map[string]any{
 		"blocks":     len(outcome.Schedule.Blocks),
 		"shortfalls": len(outcome.Schedule.Report.Tasks),
 		"managed":    len(outcome.Managed),

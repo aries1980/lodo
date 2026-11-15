@@ -12,7 +12,6 @@ import (
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/gauth"
-	"github.com/aries1980/lodo/internal/run"
 	"github.com/aries1980/lodo/internal/store"
 )
 
@@ -21,25 +20,11 @@ import (
 // httptest fake; production gets Google's own.
 var googleCalendarBase = calendar.GoogleBase
 
-// calendarBusy builds the read side forecast consumes: the Calendar API
-// reader OAuthed through the credentials' google section, refreshing
-// transparently via the token source `lodo auth google` set up. Errors are
-// operational and exit 1 by construction of the caller — a missing refresh
-// token is the auth hint, a revoked one or an unreachable calendar the
-// operational cause; never a silently empty mask. The write calendar plus
-// every read calendar is read; per-calendar 403/404 warns and continues.
-func calendarBusy(ctx context.Context, creds config.Credentials, cfg config.Config) (run.BusySource, error) {
-	c, err := calendarFull(ctx, creds, cfg)
-	if err != nil {
-		return nil, err
-	}
-	return c, nil
-}
-
-// calendarFull builds the read-write client schedule needs: the same OAuth
-// composition as calendarBusy, but returning the concrete multi-calendar
-// client so inserts, patches and deletes are available on the write calendar
-// only. List/Busy shape the plan; the writes close the loop.
+// calendarFull builds the calendar client a command needs: the credentials'
+// google section OAuthed through the token source `lodo auth google` set up,
+// refreshing transparently. List and Busy shape the plan over the write and
+// read calendars (ADR 0013); inserts, patches and deletes are available on the
+// write calendar only.
 func calendarFull(ctx context.Context, creds config.Credentials, cfg config.Config) (*calendar.MultiClient, error) {
 	g, err := creds.GoogleAuth()
 	if err != nil {

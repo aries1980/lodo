@@ -32,6 +32,12 @@ func (e *exitError) Error() string { return e.err.Error() }
 
 func (e *exitError) Unwrap() error { return e.err }
 
+// fail is the operational exit (code 1) every handler returns for an error.
+func fail(err error) error { return &exitError{code: codeError, err: err} }
+
+// failCode is a handler's exit with an explicit code, e.g. codeValidation.
+func failCode(code int, err error) error { return &exitError{code: code, err: err} }
+
 type options struct {
 	json          bool
 	verbose       bool

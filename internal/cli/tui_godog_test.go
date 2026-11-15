@@ -180,7 +180,11 @@ func (w *tuiWorld) loadData() (tui.Data, error) {
 		return tui.Data{}, err
 	}
 	opts := &options{config: w.conf}
-	cfg, sources, _, err := loadSources(opts, configOverrides{})
+	cfg, creds, err := loadConfig(opts, configOverrides{})
+	if err != nil {
+		return tui.Data{}, err
+	}
+	sources, err := buildSources(cfg, creds)
 	if err != nil {
 		return tui.Data{}, err
 	}

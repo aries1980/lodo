@@ -3,6 +3,7 @@ package cli
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -84,50 +85,21 @@ type explainTask struct {
 // time and stored dispositions when available; degrades like check without
 // calendar), so the explanation reflects actual decisions, not an approximation.
 func runExplain(ctx context.Context, opts *options, ov configOverrides, query string, yes bool) error {
-	start := logRunStart(opts, "explain")
-	cfg, sources, creds, err := loadSources(opts, ov)
+	cmd, err := prepare(ctx, opts, ov, yes, "explain")
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
-	th, warn := resolveTheme(cfg, opts.config)
-	if warn != "" {
-		_, _ = fmt.Fprintln(errWriter(opts), warn)
-	}
-	style := newStyler(opts.out, opts.disableColors, th)
-	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "explain", th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	if _, err := ensureTimeMapsPage(ctx, sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	st, err := openStore()
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	defer func() { _ = st.Close() }()
+	defer cmd.close()
 
-	cal, err := calendarFull(ctx, creds, cfg)
-	now := time.Now()
-	var outcome run.CheckOutcome
+	outcome, err := cmd.checkOutcome(ctx)
 	if err != nil {
-		if strings.Contains(err.Error(), "google credentials") {
-			outcome, err = buildCheckOutcomeWithoutCalendar(ctx, cfg, sources, st, now)
-			if err != nil {
-				return &exitError{code: codeError, err: err}
-			}
-		} else {
-			return &exitError{code: codeError, err: err}
-		}
-	} else {
-		outcome, err = run.CheckSources(ctx, sources, cal, st, cfg, now)
-		if err != nil {
-			return &exitError{code: codeError, err: err}
-		}
+		return fail(err)
 	}
+	now := cmd.now
 
 	task, matches, err := findTask(outcome.Tasks, query)
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
 	if task == nil {
 		msg := fmt.Sprintf("no task matches %q", query)
@@ -142,10 +114,10 @@ func runExplain(ctx context.Context, opts *options, ov configOverrides, query st
 				"matches":        explainTaskSummaries(matches),
 			})
 		} else {
-			_, _ = fmt.Fprintln(errWriter(opts), style.danger("lodo:")+" "+msg)
+			_, _ = fmt.Fprintln(errWriter(opts), cmd.style.danger("lodo:")+" "+msg)
 		}
-		logRunFinish(opts, "explain", start, map[string]any{"matched": false})
-		return &exitError{code: codeError, err: fmt.Errorf("%s", msg)}
+		cmd.finish(map[string]any{"matched": false})
+		return fail(errors.New(msg))
 	}
 
 	decision := findDecision(outcome.Schedule.Decisions, task.ID)
@@ -158,11 +130,11 @@ func runExplain(ctx context.Context, opts *options, ov configOverrides, query st
 	prov := outcome.Provenance[task.ID]
 	report := findShortfall(outcome.Schedule.Report.Tasks, task.ID)
 	issues := issuesForTask(outcome.Issues, task.ID)
-	loc, _ := cfg.Scheduling.Location()
+	loc, _ := cmd.cfg.Scheduling.Location()
 	if loc == nil {
 		loc = time.UTC
 	}
-	gran, _ := config.ParseGranularity(cfg.Scheduling.Granularity)
+	gran, _ := config.ParseGranularity(cmd.cfg.Scheduling.Granularity)
 	if gran == 0 {
 		gran = 15 * time.Minute
 	}
@@ -180,7 +152,7 @@ func runExplain(ctx context.Context, opts *options, ov configOverrides, query st
 			SchemaVersion: explainSchemaVersion,
 			Context: explainContext{
 				Command: "explain", Now: now, Timezone: loc.String(),
-				Granularity: gran.String(), WindowDays: cfg.Scheduling.WindowDays,
+				Granularity: gran.String(), WindowDays: cmd.cfg.Scheduling.WindowDays,
 				Calendar:   outcome.Busy.WriteCalendar != "" || len(outcome.Busy.Sources) > 0,
 				Reconciled: true, Dispositions: len(outcome.Dispositions),
 			},
@@ -214,13 +186,13 @@ func runExplain(ctx context.Context, opts *options, ov configOverrides, query st
 			view.Task.PlanEnd = task.PlanEnd.String()
 		}
 		if err := printJSON(opts.out, view); err != nil {
-			return &exitError{code: codeError, err: err}
+			return fail(err)
 		}
 	} else {
-		renderExplainText(opts.out, cfg, outcome, *task, *decision, prov, report, issues, predecessors, spill, gran, now, opts.verbose, style)
+		renderExplainText(opts.out, cmd.cfg, outcome, *task, *decision, prov, report, issues, predecessors, spill, gran, now, opts.verbose, cmd.style)
 	}
-	logBusyWarnings(opts, "explain", outcome.Busy)
-	logRunFinish(opts, "explain", start, map[string]any{"task": task.ID, "reason": decision.Outcome.Reason})
+	logBusyWarnings(opts, cmd.name, outcome.Busy)
+	cmd.finish(map[string]any{"task": task.ID, "reason": decision.Outcome.Reason})
 	return nil
 }
 

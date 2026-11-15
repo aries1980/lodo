@@ -34,7 +34,7 @@ func runAuthGoogle(ctx context.Context, opts *options, ov configOverrides, noBro
 	start := logRunStart(opts, "auth")
 	path, err := config.DefaultCredentialsPath()
 	if err != nil {
-		return &exitError{code: codeError, err: fmt.Errorf("locate the credentials file: %w", err)}
+		return fail(fmt.Errorf("locate the credentials file: %w", err))
 	}
 	creds, err := config.ReadCredentials(path)
 	if err != nil {
@@ -42,20 +42,20 @@ func runAuthGoogle(ctx context.Context, opts *options, ov configOverrides, noBro
 		// the environment alone so --google-client-id/secret can provision
 		// a fresh machine without a file yet.
 		if msg := err.Error(); !containsNotFoundMsg(msg) {
-			return &exitError{code: codeError, err: err}
+			return fail(err)
 		}
 		creds = config.CredentialsFromEnv()
 	}
 	creds = creds.WithCredentialOverrides(ov.credentialOverrides())
 	client, err := creds.GoogleSetup()
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
 
 	// A flag-supplied refresh token stores directly: no browser round-trip.
 	if strings.TrimSpace(ov.googleRefreshToken) != "" {
 		if err := gauth.PersistWithClient(path, client, gauth.Result{RefreshToken: strings.TrimSpace(ov.googleRefreshToken)}); err != nil {
-			return &exitError{code: codeError, err: err}
+			return fail(err)
 		}
 		if err := printStored(opts, path); err != nil {
 			return err
@@ -72,10 +72,10 @@ func runAuthGoogle(ctx context.Context, opts *options, ov configOverrides, noBro
 		Lines:     stdin(),
 	})
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
 	if err := gauth.PersistWithClient(path, client, res); err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
 	if err := printStored(opts, path); err != nil {
 		return err
@@ -90,7 +90,7 @@ func printStored(opts *options, path string) error {
 		if err := printJSON(opts.out, struct {
 			Stored string `json:"stored"`
 		}{Stored: path}); err != nil {
-			return &exitError{code: codeError, err: err}
+			return fail(err)
 		}
 		return nil
 	}

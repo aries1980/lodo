@@ -6,7 +6,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/run"
 	"github.com/aries1980/lodo/internal/store"
 )
@@ -14,55 +13,15 @@ import (
 // runRefresh implements lodo refresh: pull-only, reconcile plus store
 // commit. It never resolves the graph and never writes the calendar.
 func runRefresh(ctx context.Context, opts *options, ov configOverrides) error {
-	start := logRunStart(opts, "refresh")
-	cfgPath := opts.config
-	if cfgPath == "" {
-		def, err := config.DefaultConfigPath()
-		if err != nil {
-			return &exitError{code: codeError, err: fmt.Errorf("locate the config file: %w", err)}
-		}
-		cfgPath = def
-	}
-	cfg, err := config.Load(cfgPath)
+	cmd, err := prepare(ctx, opts, ov, false, "refresh")
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
-	th, warn := resolveTheme(cfg, cfgPath)
-	if warn != "" {
-		_, _ = fmt.Fprintln(errWriter(opts), warn)
-	}
-	style := newStyler(opts.out, opts.disableColors, th)
-	cfg, err = config.Apply(cfg, config.Overrides{
-		ReadCalendars: ov.readCalendars,
-	})
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	credPath, err := config.DefaultCredentialsPath()
-	if err != nil {
-		return &exitError{code: codeError, err: fmt.Errorf("locate the credentials file: %w", err)}
-	}
-	// Refresh never touches Logseq: ReadCredentials (file, environment, then
-	// CLI flags) is enough, and no logseq.token is demanded.
-	creds, err := config.ReadCredentials(credPath)
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	creds = creds.WithCredentialOverrides(ov.credentialOverrides())
-	cal, err := calendarFull(ctx, creds, cfg)
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	st, err := openStore()
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	defer func() { _ = st.Close() }()
+	defer cmd.close()
 
-	now := time.Now()
-	outcome, err := run.Refresh(ctx, cal, st, cfg, now)
+	outcome, err := run.Refresh(ctx, cmd.cal, cmd.store, cmd.cfg, cmd.now)
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
 
 	if opts.json {
@@ -74,24 +33,18 @@ func runRefresh(ctx context.Context, opts *options, ov configOverrides) error {
 			Conflicts:    conflictsView(outcome.Conflicts),
 		}
 		if err := printJSON(opts.out, view); err != nil {
-			return &exitError{code: codeError, err: err}
+			return fail(err)
 		}
-		logBusyWarnings(opts, "refresh", outcome.Busy)
-		logRunFinish(opts, "refresh", start, map[string]any{
-			"adopted":   len(outcome.Adopted),
-			"captured":  len(outcome.Captured),
-			"conflicts": len(outcome.Conflicts),
-		})
-		return nil
+	} else {
+		renderRefreshText(opts.out, outcome, opts.verbose, cmd.style)
 	}
-	renderRefreshText(opts.out, outcome, opts.verbose, style)
-	logBusyWarnings(opts, "refresh", outcome.Busy)
+	logBusyWarnings(opts, cmd.name, outcome.Busy)
 	for _, c := range outcome.Conflicts {
-		logRunWarn(opts, "refresh", "refresh.conflict", "managed block overlaps shared busy time", map[string]any{
+		logRunWarn(opts, cmd.name, "refresh.conflict", "managed block overlaps shared busy time", map[string]any{
 			"event_id": c.EventID,
 		})
 	}
-	logRunFinish(opts, "refresh", start, map[string]any{
+	cmd.finish(map[string]any{
 		"adopted":   len(outcome.Adopted),
 		"captured":  len(outcome.Captured),
 		"conflicts": len(outcome.Conflicts),

@@ -12,7 +12,7 @@ import (
 
 // deadSetup writes a config pointing at a closed port (connection refused
 // is immediate, unlike a timeout) and a credentials file with a token, so
-// loadSources succeeds and the Logseq gate is what fails.
+// prepare succeeds and the Logseq gate is what fails.
 func deadSetup(t *testing.T) (confPath, credPath, deadURL string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

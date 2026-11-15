@@ -20,36 +20,15 @@ func runSchedule(ctx context.Context, opts *options, ov configOverrides, dryRun,
 	if dryRun {
 		return runForecast(ctx, opts, ov, verbose, yes)
 	}
-	start := logRunStart(opts, "schedule")
-	cfg, sources, creds, err := loadSources(opts, ov)
+	cmd, err := prepare(ctx, opts, ov, yes, "schedule")
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
-	th, warn := resolveTheme(cfg, opts.config)
-	if warn != "" {
-		_, _ = fmt.Fprintln(errWriter(opts), warn)
-	}
-	style := newStyler(opts.out, opts.disableColors, th)
-	if err := checkLogseqAvailable(ctx, sources, makeLogseqProbeNotify(opts, "schedule", th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	if _, err := ensureTimeMapsPage(ctx, sources[0].Client, cfg.Logseq.PrimaryTimeMapsPage(), yes, errWriter(opts), newStyler(errWriter(opts), opts.disableColors, th)); err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	cal, err := calendarFull(ctx, creds, cfg)
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	st, err := openStore()
-	if err != nil {
-		return &exitError{code: codeError, err: err}
-	}
-	defer func() { _ = st.Close() }()
+	defer cmd.close()
 
-	now := time.Now()
-	outcome, err := run.ScheduleSources(ctx, sources, cal, st, cfg, now)
+	outcome, err := run.ScheduleSources(ctx, cmd.sources, cmd.cal, cmd.store, cmd.cfg, cmd.now)
 	if err != nil {
-		return &exitError{code: codeError, err: err}
+		return fail(err)
 	}
 
 	if opts.json {
@@ -67,18 +46,18 @@ func runSchedule(ctx context.Context, opts *options, ov configOverrides, dryRun,
 			view.Dispositions = dispositionViews(outcome.Tasks, outcome.Dispositions)
 		}
 		if err := printJSON(opts.out, view); err != nil {
-			return &exitError{code: codeError, err: err}
+			return fail(err)
 		}
 	} else {
-		renderScheduleText(opts.out, cfg, outcome, now, verbose, style)
+		renderScheduleText(opts.out, cmd.cfg, outcome, cmd.now, verbose, cmd.style)
 	}
-	logBusyWarnings(opts, "schedule", outcome.Busy)
+	logBusyWarnings(opts, cmd.name, outcome.Busy)
 	for _, o := range outcome.Orphans {
-		logRunWarn(opts, "schedule", "schedule.orphan", "orphaned managed event removed", map[string]any{
+		logRunWarn(opts, cmd.name, "schedule.orphan", "orphaned managed event removed", map[string]any{
 			"event_id": o.EventID,
 		})
 	}
-	logRunFinish(opts, "schedule", start, map[string]any{
+	cmd.finish(map[string]any{
 		"blocks":     len(outcome.Schedule.Blocks),
 		"shortfalls": len(outcome.Schedule.Report.Tasks),
 		"writes":     len(outcome.Writes),
@@ -86,9 +65,9 @@ func runSchedule(ctx context.Context, opts *options, ov configOverrides, dryRun,
 	})
 
 	if strict && scheduleProblems(outcome) > 0 {
-		return &exitError{code: codeValidation, err: fmt.Errorf(
+		return failCode(codeValidation, fmt.Errorf(
 			"schedule --strict: %d problem(s) (shortfalls, orphans and deletions count)",
-			scheduleProblems(outcome))}
+			scheduleProblems(outcome)))
 	}
 	return nil
 }
