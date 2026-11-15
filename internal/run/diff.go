@@ -3,8 +3,8 @@
 package run
 
 import (
+	"cmp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/calendar"
@@ -12,6 +12,7 @@ import (
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/reconcile"
+	"github.com/aries1980/lodo/internal/set"
 	"github.com/aries1980/lodo/internal/store"
 )
 
@@ -95,16 +96,13 @@ func diffPlan(tasks []model.Task, schedule planner.Schedule, managed []calendar.
 	}
 	slices.SortFunc(writes, func(a, b WriteOp) int {
 		if a.Op != b.Op {
-			return writeOrder(a.Op) - writeOrder(b.Op)
+			return cmp.Compare(writeOrder(a.Op), writeOrder(b.Op))
 		}
-		return strings.Compare(a.EventID, b.EventID)
+		return cmp.Compare(a.EventID, b.EventID)
 	})
-	slices.SortFunc(orphans, func(a, b Orphan) int { return strings.Compare(a.EventID, b.EventID) })
+	slices.SortFunc(orphans, func(a, b Orphan) int { return cmp.Compare(a.EventID, b.EventID) })
 	slices.SortFunc(bindings, func(a, b store.Binding) int {
-		if a.TaskID != b.TaskID {
-			return strings.Compare(a.TaskID, b.TaskID)
-		}
-		return a.BlockIndex - b.BlockIndex
+		return a.Compare(b.BindingKey)
 	})
 	return writes, orphans, bindings
 }
@@ -155,45 +153,37 @@ func mergeDispositions(stored, fresh []model.Disposition) []model.Disposition {
 		out = append(out, byKey[key])
 	}
 	slices.SortFunc(out, func(a, b model.Disposition) int {
-		if a.TaskID != b.TaskID {
-			return strings.Compare(a.TaskID, b.TaskID)
-		}
-		return a.BlockIndex - b.BlockIndex
+		return cmp.Or(cmp.Compare(a.TaskID, b.TaskID), cmp.Compare(a.BlockIndex, b.BlockIndex))
 	})
 	return out
 }
 
 func dedupeBindings(in []store.Binding) []store.Binding {
-	byKey := make(map[string]store.Binding, len(in))
+	byKey := make(map[store.BindingKey]store.Binding, len(in))
 	for _, binding := range in {
-		byKey[norm.BlockKey(binding.TaskID, binding.BlockIndex)] = binding // later (plan) wins
+		byKey[binding.BindingKey] = binding // later (plan) wins
 	}
 	out := make([]store.Binding, 0, len(byKey))
 	for _, binding := range byKey {
 		out = append(out, binding)
 	}
 	slices.SortFunc(out, func(a, b store.Binding) int {
-		if a.TaskID != b.TaskID {
-			return strings.Compare(a.TaskID, b.TaskID)
-		}
-		return a.BlockIndex - b.BlockIndex
+		return a.Compare(b.BindingKey)
 	})
 	return out
 }
 
 func dedupeDeletes(in []store.BindingKey, keep []store.Binding) []store.BindingKey {
-	keepSet := make(map[string]bool, len(keep))
+	keepSet := make(set.Set[store.BindingKey], len(keep))
 	for _, binding := range keep {
-		keepSet[norm.BlockKey(binding.TaskID, binding.BlockIndex)] = true
+		keepSet.Add(binding.BindingKey)
 	}
-	seen := map[string]bool{}
+	seen := set.New[store.BindingKey]()
 	var out []store.BindingKey
 	for _, delKey := range in {
-		key := norm.BlockKey(delKey.TaskID, delKey.BlockIndex)
-		if keepSet[key] || seen[key] {
+		if keepSet.Has(delKey) || !seen.Add(delKey) {
 			continue
 		}
-		seen[key] = true
 		out = append(out, delKey)
 	}
 	return out
@@ -217,7 +207,7 @@ func orphansToDeletes(orphans []Orphan, bindings []store.Binding, reconciliation
 			continue
 		}
 		if binding, ok := byEvent[orphan.EventID]; ok {
-			out = append(out, store.BindingKey{TaskID: binding.TaskID, BlockIndex: binding.BlockIndex})
+			out = append(out, binding.BindingKey)
 			continue
 		}
 		// Adopted-then-orphaned in the same run, or a deterministic id the

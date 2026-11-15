@@ -182,7 +182,7 @@ func (r *resolver) taskWithAncestors(page *logseq.Page, block *logseq.Block, anc
 
 	var unknown []string
 	for key, v := range blockProps(block) {
-		if !knownKeys[key] {
+		if !knownKeys.Has(key) {
 			unknown = append(unknown, key)
 			continue
 		}
@@ -222,7 +222,7 @@ func (r *resolver) inheritedValue(page *logseq.Page, block *logseq.Block, ancest
 			return v, "ancestor", ancestors[k].UUID
 		}
 	}
-	if !inheritableKeys[key] || page == nil {
+	if !inheritableKeys.Has(key) || page == nil {
 		return "", "", ""
 	}
 	if v := r.pageDefault(page.Name, key, ""); v != "" {

@@ -56,9 +56,9 @@ func (f *fakeAPI) serve(t *testing.T) string {
 			return
 		}
 		switch {
-		case strings.LastIndex(r.URL.Path, "/events/") >= 0:
+		case strings.Contains(r.URL.Path, "/events/"):
 			// events.get: everything after /events/ is the event id.
-			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/events/")+len("/events/"):]
+			_, id, _ := strings.CutLast(r.URL.Path, "/events/")
 			body, ok := f.byID[id]
 			if !ok {
 				w.Header().Set("Content-Type", "application/json")

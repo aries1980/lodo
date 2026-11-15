@@ -1,11 +1,13 @@
 package resolve
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // resolvedTask is one resolved candidate plus its explicit depends before
@@ -23,7 +25,7 @@ type taskGraph struct {
 	resolved    []resolvedTask
 	byID        map[string]int
 	descendants map[int][]int
-	isContainer map[int]bool
+	isContainer set.Set[int]
 }
 
 // resolveCandidates turns candidates into resolved tasks in outline order.
@@ -54,28 +56,27 @@ func indexTaskGraph(res []resolvedTask) taskGraph {
 	}
 	descendants := make(map[int][]int)
 	for i, resolved := range res {
-		seen := map[int]bool{}
+		seen := set.New[int]()
 		for _, ancestor := range resolved.ancestors {
 			id := norm.ID(ancestor.UUID)
 			if id == "" {
 				continue
 			}
-			if j, ok := byID[id]; ok && j != i && !seen[j] {
-				seen[j] = true
+			if j, ok := byID[id]; ok && j != i && seen.Add(j) {
 				descendants[j] = append(descendants[j], i)
 			}
 		}
 	}
-	isContainer := map[int]bool{}
+	isContainer := set.New[int]()
 	for j, leaves := range descendants {
 		if len(leaves) > 0 {
-			isContainer[j] = true
+			isContainer.Add(j)
 		}
 	}
 	// ParentID: nearest ancestor that is a Task.
 	for i, resolved := range res {
-		for k := len(resolved.ancestors) - 1; k >= 0; k-- {
-			id := norm.ID(resolved.ancestors[k].UUID)
+		for _, ancestor := range slices.Backward(resolved.ancestors) {
+			id := norm.ID(ancestor.UUID)
 			if j, ok := byID[id]; ok {
 				res[i].task.ParentID = res[j].task.ID
 				break
@@ -83,7 +84,7 @@ func indexTaskGraph(res []resolvedTask) taskGraph {
 		}
 	}
 	for i := range res {
-		if isContainer[i] {
+		if isContainer.Has(i) {
 			res[i].task.Container = true
 		}
 	}
@@ -93,15 +94,17 @@ func indexTaskGraph(res []resolvedTask) taskGraph {
 // leavesOf returns a container's transitive leaf task indices in outline
 // order; a non-container returns itself.
 func (g *taskGraph) leavesOf(j int) []int {
-	if !g.isContainer[j] {
+	if !g.isContainer.Has(j) {
 		return []int{j}
 	}
 	var out []int
 	for _, descendant := range g.descendants[j] {
-		if !g.isContainer[descendant] {
+		if !g.isContainer.Has(descendant) {
 			out = append(out, descendant)
 		}
 	}
-	slices.SortFunc(out, func(a, b int) int { return g.resolved[a].task.OutlineOrder - g.resolved[b].task.OutlineOrder })
+	slices.SortFunc(out, func(a, b int) int {
+		return cmp.Compare(g.resolved[a].task.OutlineOrder, g.resolved[b].task.OutlineOrder)
+	})
 	return out
 }

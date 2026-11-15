@@ -42,7 +42,7 @@ func (f *writeFake) mount(t *testing.T) string {
 			_ = json.NewEncoder(w).Encode(e)
 		case r.Method == http.MethodPatch:
 			f.calls = append(f.calls, "PATCH")
-			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			_, id, _ := strings.CutLast(r.URL.Path, "/")
 			body, _ := io.ReadAll(r.Body)
 			var p Event
 			_ = json.Unmarshal(body, &p)
@@ -61,7 +61,7 @@ func (f *writeFake) mount(t *testing.T) string {
 			_ = json.NewEncoder(w).Encode(cur)
 		case r.Method == http.MethodDelete:
 			f.calls = append(f.calls, "DELETE")
-			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			_, id, _ := strings.CutLast(r.URL.Path, "/")
 			delete(f.events, id)
 			w.WriteHeader(http.StatusNoContent)
 		default:

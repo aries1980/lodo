@@ -8,6 +8,7 @@
 package store
 
 import (
+	"cmp"
 	"database/sql"
 	"fmt"
 	"os"
@@ -15,28 +16,30 @@ import (
 	"slices"
 	"time"
 
-	"encoding/json/jsontext"
-	"encoding/json/v2"
-
 	_ "modernc.org/sqlite"
 
+	"github.com/aries1980/lodo/internal/jsonx"
 	"github.com/aries1980/lodo/internal/model"
 )
 
 // Binding is one projected Block: the Task→Block→event-id row.
 type Binding struct {
-	TaskID     string
-	BlockIndex int
-	EventID    string
-	Start      time.Time
-	End        time.Time
-	Slots      int
+	BindingKey
+	EventID string
+	Start   time.Time
+	End     time.Time
+	Slots   int
 }
 
 // BindingKey identifies a binding row for deletion.
 type BindingKey struct {
 	TaskID     string
 	BlockIndex int
+}
+
+// Compare orders binding keys by Task ID, then Block index.
+func (k BindingKey) Compare(other BindingKey) int {
+	return cmp.Or(cmp.Compare(k.TaskID, other.TaskID), cmp.Compare(k.BlockIndex, other.BlockIndex))
 }
 
 // TimedDisposition is a disposition row plus its recording time.
@@ -148,13 +151,7 @@ type RunRecord struct {
 
 // RecordRun appends one run's calendar audit. Sources stay in config order.
 func (s *Store) RecordRun(command, writeCalendar string, writeEvents int, sources []RunSource, recordedAt time.Time) error {
-	raw, err := json.Marshal(sources,
-		json.Deterministic(true),
-		json.FormatNilSliceAsNull(true),
-		json.FormatNilMapAsNull(true),
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.EscapeForHTML(true),
-	)
+	raw, err := jsonx.Marshal(sources)
 	if err != nil {
 		return fmt.Errorf("store: run sources: %w", err)
 	}
@@ -163,7 +160,7 @@ func (s *Store) RecordRun(command, writeCalendar string, writeEvents int, source
 	}
 	if _, err := s.db.Exec(
 		`INSERT INTO runs(recorded_at, command, write_calendar, write_events, sources_json) VALUES(?,?,?,?,?)`,
-		recordedAt.UTC().Format(time.RFC3339Nano), command, writeCalendar, writeEvents, string(raw),
+		formatTime(recordedAt), command, writeCalendar, writeEvents, string(raw),
 	); err != nil {
 		return fmt.Errorf("store: record run: %w", err)
 	}
@@ -178,15 +175,12 @@ func (s *Store) LastRun() (RunRecord, error) {
 	if err := row.Scan(&rec.ID, &recordedS, &rec.Command, &rec.WriteCalendar, &rec.WriteEvents, &sourcesRaw); err != nil {
 		return RunRecord{}, fmt.Errorf("store: last run: %w", err)
 	}
-	recordedAt, err := time.Parse(time.RFC3339Nano, recordedS)
+	recordedAt, err := parseTime(recordedS)
 	if err != nil {
 		return RunRecord{}, fmt.Errorf("store: run recorded_at: %w", err)
 	}
 	rec.RecordedAt = recordedAt
-	if err := json.Unmarshal([]byte(sourcesRaw), &rec.Sources,
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.AllowDuplicateNames(true),
-	); err != nil {
+	if err := jsonx.Unmarshal([]byte(sourcesRaw), &rec.Sources); err != nil {
 		return RunRecord{}, fmt.Errorf("store: run sources: %w", err)
 	}
 	return rec, nil
@@ -223,11 +217,11 @@ func (s *Store) ListBindings() ([]Binding, error) {
 		if err := rows.Scan(&b.TaskID, &b.BlockIndex, &b.EventID, &startS, &endS, &b.Slots); err != nil {
 			return nil, fmt.Errorf("store: scan binding: %w", err)
 		}
-		start, err := time.Parse(time.RFC3339Nano, startS)
+		start, err := parseTime(startS)
 		if err != nil {
 			return nil, fmt.Errorf("store: binding %s/%d start: %w", b.TaskID, b.BlockIndex, err)
 		}
-		end, err := time.Parse(time.RFC3339Nano, endS)
+		end, err := parseTime(endS)
 		if err != nil {
 			return nil, fmt.Errorf("store: binding %s/%d end: %w", b.TaskID, b.BlockIndex, err)
 		}
@@ -283,14 +277,14 @@ func (s *Store) ListDispositions() ([]model.Disposition, error) {
 		}
 		d := model.Disposition{TaskID: taskID, BlockIndex: blockIndex, Kind: model.DispositionKind(kind), Slots: slots}
 		if startS != "" {
-			start, err := time.Parse(time.RFC3339Nano, startS)
+			start, err := parseTime(startS)
 			if err != nil {
 				return nil, fmt.Errorf("store: disposition %s/%d start: %w", taskID, blockIndex, err)
 			}
 			d.Start = start
 		}
 		if endS != "" {
-			end, err := time.Parse(time.RFC3339Nano, endS)
+			end, err := parseTime(endS)
 			if err != nil {
 				return nil, fmt.Errorf("store: disposition %s/%d end: %w", taskID, blockIndex, err)
 			}
@@ -324,86 +318,63 @@ func (s *Store) ListDispositions() ([]model.Disposition, error) {
 // writes, so recovery can tell them apart from user deletions. All writes
 // run in a single SQLite transaction; times are stored as UTC RFC3339Nano.
 func (s *Store) Commit(bindingUpserts []Binding, bindingDeletes []BindingKey, dispositions []TimedDisposition, snapshots map[string]model.Snapshot) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("store: commit: %w", err)
-	}
-	rollback := func() { _ = tx.Rollback() }
-
-	for _, b := range bindingUpserts {
-		if b.TaskID == "" || b.EventID == "" {
-			rollback()
-			return fmt.Errorf("store: upsert binding %s/%d: missing identity", b.TaskID, b.BlockIndex)
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO bindings(task_id, block_index, event_id, start, end, slots) VALUES(?,?,?,?,?,?)
+	return s.execTx("commit", func(tx *sql.Tx) error {
+		for _, b := range bindingUpserts {
+			if b.TaskID == "" || b.EventID == "" {
+				return fmt.Errorf("store: upsert binding %s/%d: missing identity", b.TaskID, b.BlockIndex)
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO bindings(task_id, block_index, event_id, start, end, slots) VALUES(?,?,?,?,?,?)
 			 ON CONFLICT(task_id, block_index) DO UPDATE SET event_id=excluded.event_id, start=excluded.start, end=excluded.end, slots=excluded.slots`,
-			b.TaskID, b.BlockIndex, b.EventID, b.Start.UTC().Format(time.RFC3339Nano), b.End.UTC().Format(time.RFC3339Nano), b.Slots,
-		); err != nil {
-			rollback()
-			return fmt.Errorf("store: upsert binding %s/%d: %w", b.TaskID, b.BlockIndex, err)
+				b.TaskID, b.BlockIndex, b.EventID, formatTime(b.Start), formatTime(b.End), b.Slots,
+			); err != nil {
+				return fmt.Errorf("store: upsert binding %s/%d: %w", b.TaskID, b.BlockIndex, err)
+			}
 		}
-	}
-	for _, k := range bindingDeletes {
-		if _, err := tx.Exec(`DELETE FROM bindings WHERE task_id=? AND block_index=?`, k.TaskID, k.BlockIndex); err != nil {
-			rollback()
-			return fmt.Errorf("store: delete binding %s/%d: %w", k.TaskID, k.BlockIndex, err)
+		for _, k := range bindingDeletes {
+			if _, err := tx.Exec(`DELETE FROM bindings WHERE task_id=? AND block_index=?`, k.TaskID, k.BlockIndex); err != nil {
+				return fmt.Errorf("store: delete binding %s/%d: %w", k.TaskID, k.BlockIndex, err)
+			}
 		}
-	}
-	for _, td := range dispositions {
-		d := td.Disposition
-		startS, endS := "", ""
-		if !d.Start.IsZero() {
-			startS = d.Start.UTC().Format(time.RFC3339Nano)
-		}
-		if !d.End.IsZero() {
-			endS = d.End.UTC().Format(time.RFC3339Nano)
-		}
-		snapRaw, err := SnapshotToJSON(d.Snapshot)
-		if err != nil {
-			rollback()
-			return fmt.Errorf("store: disposition %s/%d snapshot: %w", d.TaskID, d.BlockIndex, err)
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO dispositions(task_id, block_index, kind, start, end, slots, snapshot_json, recorded_at) VALUES(?,?,?,?,?,?,?,?)
+		for _, td := range dispositions {
+			d := td.Disposition
+			snapRaw, err := SnapshotToJSON(d.Snapshot)
+			if err != nil {
+				return fmt.Errorf("store: disposition %s/%d snapshot: %w", d.TaskID, d.BlockIndex, err)
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO dispositions(task_id, block_index, kind, start, end, slots, snapshot_json, recorded_at) VALUES(?,?,?,?,?,?,?,?)
 			 ON CONFLICT(task_id, block_index) DO UPDATE SET kind=excluded.kind, start=excluded.start, end=excluded.end, slots=excluded.slots, snapshot_json=excluded.snapshot_json, recorded_at=excluded.recorded_at`,
-			d.TaskID, d.BlockIndex, string(d.Kind), startS, endS, d.Slots, snapRaw, td.RecordedAt.UTC().Format(time.RFC3339Nano),
-		); err != nil {
-			rollback()
-			return fmt.Errorf("store: upsert disposition %s/%d: %w", d.TaskID, d.BlockIndex, err)
+				d.TaskID, d.BlockIndex, string(d.Kind), formatOptionalTime(d.Start), formatOptionalTime(d.End), d.Slots, snapRaw, formatTime(td.RecordedAt),
+			); err != nil {
+				return fmt.Errorf("store: upsert disposition %s/%d: %w", d.TaskID, d.BlockIndex, err)
+			}
 		}
-	}
-	for id, snap := range snapshots {
-		raw, err := SnapshotToJSON(snap)
-		if err != nil {
-			rollback()
-			return fmt.Errorf("store: snapshot %s: %w", id, err)
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO tasks_snapshot(task_id, snapshot_json) VALUES(?,?)
+		for id, snap := range snapshots {
+			raw, err := SnapshotToJSON(snap)
+			if err != nil {
+				return fmt.Errorf("store: snapshot %s: %w", id, err)
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO tasks_snapshot(task_id, snapshot_json) VALUES(?,?)
 			 ON CONFLICT(task_id) DO UPDATE SET snapshot_json=excluded.snapshot_json`,
-			id, raw,
-		); err != nil {
-			rollback()
-			return fmt.Errorf("store: upsert snapshot %s: %w", id, err)
+				id, raw,
+			); err != nil {
+				return fmt.Errorf("store: upsert snapshot %s: %w", id, err)
+			}
 		}
-	}
-	for _, k := range bindingDeletes {
-		if _, err := tx.Exec(`DELETE FROM pending_deletes WHERE task_id=? AND block_index=?`, k.TaskID, k.BlockIndex); err != nil {
-			rollback()
-			return fmt.Errorf("store: clear pending delete %s/%d: %w", k.TaskID, k.BlockIndex, err)
+		for _, k := range bindingDeletes {
+			if err := clearPendingDelete(tx, k); err != nil {
+				return err
+			}
 		}
-	}
-	for _, b := range bindingUpserts {
-		if _, err := tx.Exec(`DELETE FROM pending_deletes WHERE task_id=? AND block_index=?`, b.TaskID, b.BlockIndex); err != nil {
-			rollback()
-			return fmt.Errorf("store: clear pending delete %s/%d: %w", b.TaskID, b.BlockIndex, err)
+		for _, b := range bindingUpserts {
+			if err := clearPendingDelete(tx, b.BindingKey); err != nil {
+				return err
+			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit: %w", err)
-	}
-	return nil
+		return nil
+	})
 }
 
 // PendingDeletes returns Lodo-initiated deletes recorded before calendar
@@ -436,29 +407,21 @@ func (s *Store) SetPendingDeletes(keys []BindingKey) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("store: pending deletes: %w", err)
-	}
-	rollback := func() { _ = tx.Rollback() }
-	for _, k := range keys {
-		if k.TaskID == "" {
-			rollback()
-			return fmt.Errorf("store: pending delete %s/%d: missing task", k.TaskID, k.BlockIndex)
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO pending_deletes(task_id, block_index) VALUES(?,?)
+	return s.execTx("pending deletes", func(tx *sql.Tx) error {
+		for _, k := range keys {
+			if k.TaskID == "" {
+				return fmt.Errorf("store: pending delete %s/%d: missing task", k.TaskID, k.BlockIndex)
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO pending_deletes(task_id, block_index) VALUES(?,?)
 			 ON CONFLICT(task_id, block_index) DO NOTHING`,
-			k.TaskID, k.BlockIndex,
-		); err != nil {
-			rollback()
-			return fmt.Errorf("store: pending delete %s/%d: %w", k.TaskID, k.BlockIndex, err)
+				k.TaskID, k.BlockIndex,
+			); err != nil {
+				return fmt.Errorf("store: pending delete %s/%d: %w", k.TaskID, k.BlockIndex, err)
+			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: pending deletes: %w", err)
-	}
-	return nil
+		return nil
+	})
 }
 
 // snapshotJSON is M2's model.Snapshot marshalled from a struct for
@@ -501,13 +464,7 @@ func SnapshotToJSON(s model.Snapshot) (string, error) {
 	dto.Deadline = civilToJSON(s.Deadline)
 	dto.PlanStart = civilToJSON(s.PlanStart)
 	dto.PlanEnd = civilToJSON(s.PlanEnd)
-	raw, err := json.Marshal(dto,
-		json.Deterministic(true),
-		json.FormatNilSliceAsNull(true),
-		json.FormatNilMapAsNull(true),
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.EscapeForHTML(true),
-	)
+	raw, err := jsonx.Marshal(dto)
 	if err != nil {
 		return "", err
 	}
@@ -517,10 +474,7 @@ func SnapshotToJSON(s model.Snapshot) (string, error) {
 // SnapshotFromJSON parses one snapshot.
 func SnapshotFromJSON(raw string) (model.Snapshot, error) {
 	var dto snapshotJSON
-	if err := json.Unmarshal([]byte(raw), &dto,
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.AllowDuplicateNames(true),
-	); err != nil {
+	if err := jsonx.Unmarshal([]byte(raw), &dto); err != nil {
 		return model.Snapshot{}, err
 	}
 	out := model.Snapshot{

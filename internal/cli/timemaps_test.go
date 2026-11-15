@@ -11,6 +11,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/parse"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // memClient is an in-memory Logseq graph for the bootstrap tests: pages and
@@ -230,16 +231,15 @@ func assertDefaultTimeMaps(t *testing.T, c *memClient) {
 		t.Fatalf("top-level blocks = %d, want 3 maps (writes %v)", len(tree), c.writes)
 	}
 	defaults := 0
-	seen := map[string]bool{}
+	seen := set.New[string]()
 	for _, m := range tree {
 		name := m.Content
 		if i := strings.Index(name, "\n"); i >= 0 {
 			name = name[:i]
 		}
-		if name == "" || seen[name] {
+		if name == "" || !seen.Add(name) {
 			t.Fatalf("map name %q is empty or duplicated", m.Content)
 		}
-		seen[name] = true
 		if len(m.Children) == 0 {
 			t.Fatalf("map %q has no windows", name)
 		}

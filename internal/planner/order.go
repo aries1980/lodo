@@ -1,24 +1,28 @@
 package planner
 
 import (
+	"cmp"
+	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // topoOrder runs Kahn over Task-to-Task edges (placeable non-Pin only; Pin
 // edges are temporal only since Pins are already placed) with the existing
 // comparator as tie-break among unrelated Tasks.
-func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[string][]string) (order []*taskPlan, cycleSet map[string]bool) {
+func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[string][]string) (order []*taskPlan, cycleSet set.Set[string]) {
 	indegree := make(map[string]int)
 	dependents := make(map[string][]string)
 	for _, plan := range candidates {
 		if _, blocked := blockedUnknown[plan.task.ID]; blocked {
 			continue
 		}
-		seen := map[string]bool{}
+		seen := set.New[string]()
 		for _, dep := range plan.task.Depends {
 			depPlan, ok := lookup.lookup(dep)
 			if !ok {
@@ -33,8 +37,7 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 			if depPlan.task.ID == plan.task.ID {
 				continue // self-edge handled as cycle below
 			}
-			if !seen[depPlan.task.ID] {
-				seen[depPlan.task.ID] = true
+			if seen.Add(depPlan.task.ID) {
 				indegree[plan.task.ID]++
 				dependents[depPlan.task.ID] = append(dependents[depPlan.task.ID], plan.task.ID)
 			}
@@ -62,14 +65,11 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 	}
 	// origIndegree remembers which tasks had ordering-edge dependencies so
 	// explain can report dependency-forced positions truthfully.
-	origIndegree := make(map[string]int, len(indegree))
-	for id, n := range indegree {
-		origIndegree[id] = n
-	}
+	origIndegree := maps.Clone(indegree)
 	// orderingDeps lists the ordering-edge dependency IDs for detail strings.
 	orderingDeps := func(plan *taskPlan) []string {
 		var out []string
-		seen := map[string]bool{}
+		seen := set.New[string]()
 		for _, dep := range plan.task.Depends {
 			depPlan, ok := lookup.lookup(dep)
 			if !ok {
@@ -85,8 +85,7 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 				out = append(out, depPlan.task.ID)
 				continue
 			}
-			if !seen[depPlan.task.ID] {
-				seen[depPlan.task.ID] = true
+			if seen.Add(depPlan.task.ID) {
 				out = append(out, depPlan.task.ID)
 			}
 		}
@@ -137,16 +136,16 @@ func topoOrder(candidates []*taskPlan, lookup planLookup, blockedUnknown map[str
 		}
 		sortAvailablePlans(avail, lessPlan)
 	}
-	inOrder := map[string]bool{}
+	inOrder := make(set.Set[string], len(order))
 	for _, plan := range order {
-		inOrder[plan.task.ID] = true
+		inOrder.Add(plan.task.ID)
 	}
 	// Remaining candidates are either on a cycle or downstream of one.
 	// Only the former are cycle members; the latter must report the
 	// dependency that blocks them.
 	var remaining []*taskPlan
 	for _, plan := range candidates {
-		if inOrder[plan.task.ID] {
+		if inOrder.Has(plan.task.ID) {
 			continue
 		}
 		if _, blocked := blockedUnknown[plan.task.ID]; blocked {
@@ -184,11 +183,11 @@ func sortAvailablePlans(avail []*taskPlan, less func(a, b *taskPlan) bool) {
 // cycleMembers returns the Tasks that can reach themselves through
 // dependency edges. topoOrder's leftovers also include dependents of a
 // cycle; those are blocked by it, not members of it.
-func cycleMembers(remaining []*taskPlan, lookup planLookup) map[string]bool {
-	out := map[string]bool{}
+func cycleMembers(remaining []*taskPlan, lookup planLookup) set.Set[string] {
+	out := set.New[string]()
 	for _, plan := range remaining {
-		if reachesTask(plan.task.ID, plan.task.ID, lookup, map[string]bool{}) {
-			out[plan.task.ID] = true
+		if reachesTask(plan.task.ID, plan.task.ID, lookup, set.New[string]()) {
+			out.Add(plan.task.ID)
 		}
 	}
 	return out
@@ -197,11 +196,10 @@ func cycleMembers(remaining []*taskPlan, lookup planLookup) map[string]bool {
 // reachesTask reports whether following dependency edges from id reaches
 // target. Only edges topoOrder counted participate: Pins, containers and
 // fully stood-down/pinned dependencies are temporal, not ordering, edges.
-func reachesTask(id, target string, lookup planLookup, seen map[string]bool) bool {
-	if seen[id] {
+func reachesTask(id, target string, lookup planLookup, seen set.Set[string]) bool {
+	if !seen.Add(id) {
 		return false
 	}
-	seen[id] = true
 	plan, ok := lookup.lookup(id)
 	if !ok || plan.task.Container {
 		return false
@@ -242,19 +240,13 @@ func orderBefore(a, b model.Task) bool {
 }
 
 func compareTasks(a, b model.Task) int {
-	if a.GraphOrder != b.GraphOrder {
-		return a.GraphOrder - b.GraphOrder
-	}
-	if ra, rb := a.Priority.Rank(), b.Priority.Rank(); ra != rb {
-		return ra - rb
-	}
-	if a.OutlineOrder != b.OutlineOrder {
-		return a.OutlineOrder - b.OutlineOrder
-	}
-	if a.Graph != b.Graph {
-		return strings.Compare(a.Graph, b.Graph)
-	}
-	return strings.Compare(a.ID, b.ID)
+	return cmp.Or(
+		cmp.Compare(a.GraphOrder, b.GraphOrder),
+		cmp.Compare(a.Priority.Rank(), b.Priority.Rank()),
+		cmp.Compare(a.OutlineOrder, b.OutlineOrder),
+		cmp.Compare(a.Graph, b.Graph),
+		cmp.Compare(a.ID, b.ID),
+	)
 }
 
 // tieBreakBetween names the first ordering key that distinguishes a (the
@@ -283,10 +275,10 @@ func tieBreakBetween(a, b model.Task) (key, detail string) {
 		return "graph-order", "graph-order: deterministic cross-graph order"
 	}
 	if ra, rb := a.Priority.Rank(), b.Priority.Rank(); ra != rb {
-		return "priority", "priority " + string(a.Priority) + " (rank " + itoa(ra) + ") vs " + string(b.Priority) + " (rank " + itoa(rb) + ")"
+		return "priority", "priority " + string(a.Priority) + " (rank " + strconv.Itoa(ra) + ") vs " + string(b.Priority) + " (rank " + strconv.Itoa(rb) + ")"
 	}
 	if a.OutlineOrder != b.OutlineOrder {
-		return "outline-order", "outline-order " + itoa(a.OutlineOrder) + " vs " + itoa(b.OutlineOrder) + " (depth-first, top-to-bottom Logseq order; moving a block re-prioritises it)"
+		return "outline-order", "outline-order " + strconv.Itoa(a.OutlineOrder) + " vs " + strconv.Itoa(b.OutlineOrder) + " (depth-first, top-to-bottom Logseq order; moving a block re-prioritises it)"
 	}
 	if a.Graph != b.Graph {
 		return "graph", "graph " + a.Graph + " vs " + b.Graph
@@ -295,26 +287,4 @@ func tieBreakBetween(a, b model.Task) (key, detail string) {
 		return "id", "id " + a.ID + " vs " + b.ID
 	}
 	return "equal", "identical ordering keys"
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }

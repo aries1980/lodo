@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 func makeSuggestFixture(tasks []model.Task, maps []model.TimeMap, report Report) (Input, Schedule) {
@@ -184,7 +185,7 @@ func TestSuggestDownstreamOfCycleSuggestsFixCycle(t *testing.T) {
 		{TaskID: "c", Required: 4, Placed: 0, Shortfall: 4, Reason: ReasonBlockedByDependency, BlockedBy: []string{"a"}},
 	}}
 	in, schedule := makeSuggestFixture([]model.Task{a, b, c}, maps, report)
-	cycles := map[string]bool{"a": true, "b": true}
+	cycles := set.New("a", "b")
 	got := Suggest(in, schedule, cycles)
 	found := false
 	for _, s := range got {

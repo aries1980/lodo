@@ -12,12 +12,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"encoding/json/jsontext"
-	"encoding/json/v2"
-
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
 	"github.com/aries1980/lodo/internal/grid"
+	"github.com/aries1980/lodo/internal/jsonx"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/planner"
@@ -464,23 +462,14 @@ type explanationJSON struct {
 // managedEvents is the note's payload: the events busy deliberately left
 // out, in view order.
 func managedEvents(outcome run.ForecastOutcome) []managedJSON {
-	out := make([]managedJSON, 0, len(outcome.Managed))
-	for _, e := range outcome.Managed {
-		out = append(out, managedJSON{ID: e.ID, Summary: e.Summary})
-	}
-	return out
+	return mapViews(outcome.Managed, func(e calendar.Event) managedJSON {
+		return managedJSON{ID: e.ID, Summary: e.Summary}
+	})
 }
 
 // printJSON writes indented, newline-terminated, deterministic JSON.
 func printJSON(w io.Writer, v any) error {
-	raw, err := json.Marshal(v,
-		json.Deterministic(true),
-		json.FormatNilSliceAsNull(true),
-		json.FormatNilMapAsNull(true),
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.EscapeForHTML(true),
-		jsontext.WithIndent("  "),
-	)
+	raw, err := jsonx.MarshalIndent(v, "  ")
 	if err != nil {
 		return err
 	}
@@ -492,16 +481,12 @@ func printJSON(w io.Writer, v any) error {
 // Text rendering, in the Scheduling timezone the blocks were built in.
 
 func checkStoodDown(outcome run.CheckOutcome) []stoodDownJSON {
-	byText := textByTasks(outcome.Tasks)
-	byGraph := graphByTasks(outcome.Tasks)
-	out := make([]stoodDownJSON, 0, len(outcome.StoodDown))
-	for _, d := range outcome.StoodDown {
-		out = append(out, stoodDownJSON{
-			TaskID: d.TaskID, Task: byText[d.TaskID], Graph: byGraph[d.TaskID],
+	return mapTaskViews(outcome.Tasks, outcome.StoodDown, func(d model.Disposition, labels taskLabels) stoodDownJSON {
+		return stoodDownJSON{
+			TaskID: d.TaskID, Task: labels.text[d.TaskID], Graph: labels.graph[d.TaskID],
 			BlockIndex: d.BlockIndex, Slots: d.Slots,
-		})
-	}
-	return out
+		}
+	})
 }
 
 // graphLabel prefixes the task text with [graph] in multi-graph mode.
@@ -656,13 +641,7 @@ func renderForecastText(w io.Writer, cfg config.Config, scheduled run.Scheduled,
 		dayRows = append(dayRows, rows[d])
 	}
 	slices.SortFunc(dayRows, func(a, b *dayRow) int {
-		if a.day.Before(b.day) {
-			return -1
-		}
-		if b.day.Before(a.day) {
-			return 1
-		}
-		return 0
+		return a.day.Compare(b.day)
 	})
 
 	for _, row := range dayRows {
@@ -768,22 +747,7 @@ func renderDecisionSummaries(w io.Writer, decisions []planner.TaskDecision, labe
 		return
 	}
 	ordered := append([]planner.TaskDecision(nil), decisions...)
-	slices.SortFunc(ordered, func(a, b planner.TaskDecision) int {
-		ao, bo := a.Ordering.Position, b.Ordering.Position
-		if ao == 0 && bo == 0 {
-			return strings.Compare(a.TaskID, b.TaskID)
-		}
-		if ao == 0 {
-			return 1
-		}
-		if bo == 0 {
-			return -1
-		}
-		if ao != bo {
-			return ao - bo
-		}
-		return strings.Compare(a.TaskID, b.TaskID)
-	})
+	slices.SortFunc(ordered, compareConsiderationOrder)
 	_, _ = fmt.Fprintln(w, st.bold("Decisions (consideration order):"))
 	for _, d := range ordered {
 		pos := ""

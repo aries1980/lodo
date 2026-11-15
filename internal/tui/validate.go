@@ -8,6 +8,7 @@ import (
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/resolve"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 func stripHintLines(content string) string {
@@ -225,13 +226,12 @@ func PatchTimeMap(content, slug string, clear bool) string {
 }
 
 func TimeMapSlugs(d *Data) []string {
-	seen := map[string]bool{}
+	seen := set.New[string]()
 	var out []string
 	for _, m := range d.TimeMaps {
-		if m.Slug == "" || seen[m.Slug] {
+		if m.Slug == "" || !seen.Add(m.Slug) {
 			continue
 		}
-		seen[m.Slug] = true
 		out = append(out, m.Slug)
 	}
 	return out

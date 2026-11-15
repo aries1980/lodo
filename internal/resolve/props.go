@@ -5,37 +5,20 @@ import (
 	"strings"
 
 	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // knownKeys are the properties Lodo reads: tasks.md's table, plus default::
 // (Time Maps, ADR 0003) and id:: (Logseq's own identity property).
 // Anything else is the graph's own annotation: left alone, but named by
 // check when it sits on a task-marked block.
-var knownKeys = map[string]bool{
-	"duration":   true,
-	"time-map":   true,
-	"priority":   true,
-	"deadline":   true,
-	"plan-start": true,
-	"plan-end":   true,
-	"scheduled":  true,
-	"depends":    true,
-	"order":      true,
-	"default":    true,
-	"id":         true,
-}
+var knownKeys = set.New("duration", "time-map", "priority", "deadline", "plan-start", "plan-end", "scheduled", "depends", "order", "default", "id")
 
 // inheritableKeys are the properties a page may provide as defaults for its
 // blocks (logseq-integration.md): duration, deadline, scheduled and
 // depends:: are each block's own, so they never inherit. order::, like the
 // plan and priority, cascades from parent blocks then the page.
-var inheritableKeys = map[string]bool{
-	"time-map":   true,
-	"priority":   true,
-	"plan-start": true,
-	"plan-end":   true,
-	"order":      true,
-}
+var inheritableKeys = set.New("time-map", "priority", "plan-start", "plan-end", "order")
 
 // normKey compares a property key permissively: case-insensitive, trimmed,
 // with the app's camelCase normalisation folded back to the kebab-case the
@@ -115,7 +98,7 @@ func propsText(v any) (s string, ok bool) {
 // content (e.g. "id:: 3444…"), leaving the block's own text.
 func stripProps(content string) string {
 	var b strings.Builder
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		if isPropLine(line) {
 			continue
 		}

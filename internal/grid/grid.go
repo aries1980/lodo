@@ -7,7 +7,7 @@
 package grid
 
 import (
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/aries1980/lodo/internal/model"
@@ -150,9 +150,16 @@ func insideWindow(start, end time.Time, w model.Window) bool {
 }
 
 func (g *Grid) firstEndingAfter(t time.Time) int {
-	return sort.Search(len(g.starts), func(i int) bool { return g.End(i).After(t) })
+	i, found := slices.BinarySearchFunc(g.starts, t, func(start, target time.Time) int {
+		return start.Add(g.granularity).Compare(target)
+	})
+	if found {
+		i++
+	}
+	return i
 }
 
 func (g *Grid) firstStartingAtOrAfter(t time.Time) int {
-	return sort.Search(len(g.starts), func(i int) bool { return !g.starts[i].Before(t) })
+	i, _ := slices.BinarySearchFunc(g.starts, t, time.Time.Compare)
+	return i
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // candidate is one TODO/DOING block that may become a Task, with its
@@ -29,7 +30,7 @@ type everyBlock struct {
 type blockCollection struct {
 	candidates []candidate
 	all        []everyBlock
-	doneSet    map[string]bool
+	doneSet    set.Set[string]
 }
 
 // collectPageDefaults records inheritable page defaults before the walk.
@@ -60,7 +61,7 @@ func (r *resolver) collectPageDefaults() {
 // returning candidates in outline order (pages sorted, depth-first).
 func (r *resolver) collectCandidates() blockCollection {
 	var cands []candidate
-	doneSet := map[string]bool{}
+	doneSet := set.New[string]()
 	var all []everyBlock
 
 	tmIdx := r.timeMapsIndex()
@@ -83,7 +84,7 @@ func (r *resolver) collectCandidates() blockCollection {
 				marker := model.Marker(strings.ToUpper(strings.TrimSpace(block.Marker)))
 				if marker == model.MarkerDONE || marker == model.MarkerCANCELLED {
 					if id := norm.ID(block.UUID); id != "" {
-						doneSet[id] = true
+						doneSet.Add(id)
 					}
 				}
 				// Suppression: any DONE/CANCELLED ancestor hides the subtree.

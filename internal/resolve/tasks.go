@@ -37,7 +37,7 @@ func (r *resolver) emitTasks(graph *taskGraph) {
 	}
 	for _, task := range r.tasks {
 		for _, slug := range task.TimeMaps {
-			if !r.mapSlugs[slug] {
+			if !r.mapSlugs.Has(slug) {
 				r.issue(IssueUnknownTimeMap, taskContext(task),
 					fmt.Sprintf("time-map:: %s references no Time Map defined on %q", slug, r.in.TimeMapsPage))
 			}

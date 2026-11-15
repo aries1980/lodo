@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
@@ -168,10 +167,7 @@ func renderRefreshText(w interface {
 	}
 	adopted := append([]store.Binding{}, outcome.Adopted...)
 	slices.SortFunc(adopted, func(a, b store.Binding) int {
-		if a.TaskID != b.TaskID {
-			return strings.Compare(a.TaskID, b.TaskID)
-		}
-		return a.BlockIndex - b.BlockIndex
+		return a.Compare(b.BindingKey)
 	})
 	for _, b := range adopted {
 		_, _ = fmt.Fprintf(w, "  adopted %s → %s block %d\n", b.EventID, b.TaskID, b.BlockIndex)

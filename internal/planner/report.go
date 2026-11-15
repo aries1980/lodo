@@ -3,6 +3,8 @@ package planner
 import (
 	"slices"
 	"time"
+
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // reportInput bundles buildReport's inputs so the signature stays readable.
@@ -13,7 +15,7 @@ type reportInput struct {
 	order          []*taskPlan
 	pins           []*taskPlan
 	lookup         planLookup
-	cycleSet       map[string]bool
+	cycleSet       set.Set[string]
 	blockedUnknown map[string][]string
 	blockedReason  map[string]Reason
 	blockedBy      map[string][]string
@@ -24,12 +26,12 @@ type reportInput struct {
 // survivors. Any dependency that is stood down, short, unplaced, or in a
 // cycle blocks the Task entirely. It records ends as the max of pinned and
 // newly placed flexible blocks.
-func placeOrdered(planBuilder *builder, order []*taskPlan, lookup planLookup, cycleSet map[string]bool, scope *placementScope) (blockedReason map[string]Reason, blockedBy map[string][]string) {
+func placeOrdered(planBuilder *builder, order []*taskPlan, lookup planLookup, cycleSet set.Set[string], scope *placementScope) (blockedReason map[string]Reason, blockedBy map[string][]string) {
 	blockedReason = map[string]Reason{}
 	blockedBy = map[string][]string{}
 
 	for _, plan := range order {
-		if cycleSet[plan.task.ID] {
+		if cycleSet.Has(plan.task.ID) {
 			plan.decision.Dependency.CycleMember = true
 		}
 		if plan.task.PlanStart != nil || plan.task.PlanEnd != nil {
@@ -88,7 +90,7 @@ func markBeyondHorizon(plan *taskPlan, scope *placementScope) bool {
 
 // dependencyGate checks finish-to-start predecessors: explicit depends plus
 // sequential-chain edges already expanded into Depends.
-func dependencyGate(plan *taskPlan, lookup planLookup, cycleSet map[string]bool, ends map[string]time.Time) (blockingIDs []string, depEnd time.Time, hasDepEnd bool, blocked bool) {
+func dependencyGate(plan *taskPlan, lookup planLookup, cycleSet set.Set[string], ends map[string]time.Time) (blockingIDs []string, depEnd time.Time, hasDepEnd bool, blocked bool) {
 	for _, dep := range plan.task.Depends {
 		depPlan, ok := lookup.lookup(dep)
 		if !ok {
@@ -108,7 +110,7 @@ func dependencyGate(plan *taskPlan, lookup planLookup, cycleSet map[string]bool,
 			}
 			continue
 		}
-		if cycleSet[depPlan.task.ID] {
+		if cycleSet.Has(depPlan.task.ID) {
 			blockingIDs = append(blockingIDs, depPlan.task.ID)
 			blocked = true
 			continue
@@ -158,9 +160,9 @@ func recordPlacementEnd(plan *taskPlan, planBuilder *builder, ends map[string]ti
 }
 
 func buildReport(in reportInput) Report {
-	inOrder := make(map[string]bool, len(in.order))
+	inOrder := make(set.Set[string], len(in.order))
 	for _, plan := range in.order {
-		inOrder[plan.task.ID] = true
+		inOrder.Add(plan.task.ID)
 	}
 	var report Report
 	for _, plan := range in.candidates {
@@ -178,7 +180,7 @@ func buildReport(in reportInput) Report {
 			})
 			continue
 		}
-		if in.cycleSet[plan.task.ID] {
+		if in.cycleSet.Has(plan.task.ID) {
 			// Blocker: the cycle neighbours for context.
 			var blockers []string
 			for _, dep := range plan.task.Depends {
@@ -198,7 +200,7 @@ func buildReport(in reportInput) Report {
 			})
 			continue
 		}
-		if !inOrder[plan.task.ID] {
+		if !inOrder.Has(plan.task.ID) {
 			// Downstream of a cycle: not a member, blocked by an unplaced
 			// dependency. Name those dependencies for the report.
 			var blockers []string
@@ -207,7 +209,7 @@ func buildReport(in reportInput) Report {
 				if !ok || d.task.Container || d.task.Pin != nil || d.required() == 0 {
 					continue
 				}
-				if !inOrder[d.task.ID] {
+				if !inOrder.Has(d.task.ID) {
 					blockers = append(blockers, d.task.ID)
 				}
 			}

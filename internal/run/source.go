@@ -5,15 +5,16 @@
 package run
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/resolve"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // ValidateTaskIDs refuses duplicated block UUIDs. Event ids, planner indexes
@@ -102,9 +103,9 @@ func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *tim
 // against maps the planner never sees. Unknown-time-map issues are rebuilt
 // from scratch; all other issues pass through untouched.
 func RevalidateTimeMaps(tasks []model.Task, maps []model.TimeMap, timeMapsPage string, issues []resolve.Issue) []resolve.Issue {
-	canonical := make(map[string]bool, len(maps))
+	canonical := make(set.Set[string], len(maps))
 	for _, m := range maps {
-		canonical[m.Slug] = true
+		canonical.Add(m.Slug)
 	}
 	kept := make([]resolve.Issue, 0, len(issues))
 	for _, is := range issues {
@@ -113,13 +114,12 @@ func RevalidateTimeMaps(tasks []model.Task, maps []model.TimeMap, timeMapsPage s
 		}
 	}
 	for _, t := range tasks {
-		seen := make(map[string]bool, len(t.TimeMaps))
+		seen := make(set.Set[string], len(t.TimeMaps))
 		for _, slug := range t.TimeMaps {
-			if seen[slug] {
+			if !seen.Add(slug) {
 				continue
 			}
-			seen[slug] = true
-			if !canonical[slug] {
+			if !canonical.Has(slug) {
 				kept = append(kept, resolve.Issue{
 					Kind:    resolve.IssueUnknownTimeMap,
 					Context: taskContext(t),
@@ -129,13 +129,7 @@ func RevalidateTimeMaps(tasks []model.Task, maps []model.TimeMap, timeMapsPage s
 		}
 	}
 	slices.SortFunc(kept, func(a, b resolve.Issue) int {
-		if a.Kind != b.Kind {
-			return strings.Compare(a.Kind, b.Kind)
-		}
-		if a.Context != b.Context {
-			return strings.Compare(a.Context, b.Context)
-		}
-		return strings.Compare(a.Detail, b.Detail)
+		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Context, b.Context), cmp.Compare(a.Detail, b.Detail))
 	})
 	return kept
 }

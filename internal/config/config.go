@@ -17,13 +17,12 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json/jsontext"
-	"encoding/json/v2"
-
 	"gopkg.in/yaml.v3"
 
+	"github.com/aries1980/lodo/internal/jsonx"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/parse"
+	"github.com/aries1980/lodo/internal/set"
 	"github.com/aries1980/lodo/internal/theme"
 )
 
@@ -316,7 +315,7 @@ func checkAPIURL(raw string) error {
 // validateGraphs checks names (required, slugifiable, unique
 // case-insensitively), per-graph URLs and default_time_map slugs.
 func validateGraphs(graphs []GraphSource) error {
-	seen := map[string]bool{}
+	seen := set.New[string]()
 	for i, g := range graphs {
 		if strings.TrimSpace(g.Name) == "" {
 			return fmt.Errorf("logseq.graphs[%d].name: required (e.g. work)", i)
@@ -325,10 +324,9 @@ func validateGraphs(graphs []GraphSource) error {
 		if slug == "" {
 			return fmt.Errorf("logseq.graphs[%d].name %q: must slugify to a non-empty key", i, g.Name)
 		}
-		if seen[slug] {
+		if !seen.Add(slug) {
 			return fmt.Errorf("logseq.graphs[%d].name %q: duplicate graph name (slug %s)", i, g.Name, slug)
 		}
-		seen[slug] = true
 		if g.APIURL == "" {
 			return fmt.Errorf("logseq.graphs[%d].api_url: required", i)
 		}
@@ -823,10 +821,7 @@ func ReadFileCredentials(path string) (Credentials, error) {
 		return Credentials{}, fmt.Errorf("credentials file %s: %w", path, err)
 	}
 	var c Credentials
-	if err := json.Unmarshal(data, &c,
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.AllowDuplicateNames(true),
-	); err != nil {
+	if err := jsonx.Unmarshal(data, &c); err != nil {
 		return Credentials{}, fmt.Errorf("credentials file %s: %w", path, err)
 	}
 	return c, nil
@@ -881,14 +876,7 @@ func SaveCredentials(path string, c Credentials) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("credential directory %s: %w", dir, err)
 	}
-	data, err := json.Marshal(c,
-		json.Deterministic(true),
-		json.FormatNilSliceAsNull(true),
-		json.FormatNilMapAsNull(true),
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.EscapeForHTML(true),
-		jsontext.WithIndent("  "),
-	)
+	data, err := jsonx.MarshalIndent(c, "  ")
 	if err != nil {
 		return fmt.Errorf("credentials file %s: %w", path, err)
 	}

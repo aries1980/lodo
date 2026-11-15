@@ -1,10 +1,42 @@
 package cli
 
 import (
+	"cmp"
+
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/run"
 )
+
+type taskLabels struct {
+	text  map[string]string
+	graph map[string]string
+}
+
+// mapViews preserves order and keeps empty views as JSON arrays rather than null.
+func mapViews[T, V any](items []T, view func(T) V) []V {
+	out := make([]V, len(items))
+	for i, item := range items {
+		out[i] = view(item)
+	}
+	return out
+}
+
+func mapTaskViews[T, V any](tasks []model.Task, items []T, view func(T, taskLabels) V) []V {
+	labels := taskLabels{text: textByTasks(tasks), graph: graphByTasks(tasks)}
+	return mapViews(items, func(item T) V { return view(item, labels) })
+}
+
+func compareConsiderationOrder(a, b planner.TaskDecision) int {
+	ao, bo := a.Ordering.Position, b.Ordering.Position
+	if ao == 0 && bo != 0 {
+		return 1
+	}
+	if bo == 0 && ao != 0 {
+		return -1
+	}
+	return cmp.Or(cmp.Compare(ao, bo), cmp.Compare(a.TaskID, b.TaskID))
+}
 
 // textByTasks indexes Task display text by ID for O(1) rendering lookups.
 // All JSON/text converters below build it once instead of scanning tasks
@@ -23,11 +55,7 @@ func labelFor(byText map[string]string, id string) string {
 
 // blockerLabels maps dependency IDs to display text.
 func blockerLabels(byText map[string]string, ids []string) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, labelFor(byText, id))
-	}
-	return out
+	return mapViews(ids, func(id string) string { return labelFor(byText, id) })
 }
 
 // graphByTasks indexes Task graph slug by ID. The first Task wins when two
@@ -38,87 +66,65 @@ func graphByTasks(tasks []model.Task) map[string]string {
 
 // blockViews converts planner blocks with resolved task text.
 func blockViews(tasks []model.Task, blocks []model.Block) []blockJSON {
-	byText := textByTasks(tasks)
-	byGraph := graphByTasks(tasks)
-	out := make([]blockJSON, 0, len(blocks))
-	for _, b := range blocks {
-		out = append(out, blockJSON{
-			TaskID: b.TaskID, Task: byText[b.TaskID], Graph: byGraph[b.TaskID],
+	return mapTaskViews(tasks, blocks, func(b model.Block, labels taskLabels) blockJSON {
+		return blockJSON{
+			TaskID: b.TaskID, Task: labels.text[b.TaskID], Graph: labels.graph[b.TaskID],
 			Index: b.Index, Start: b.Start, End: b.End, Slots: b.Slots, Kind: string(b.Kind),
-		})
-	}
-	return out
+		}
+	})
 }
 
 // shortfallViews converts planner task reports with resolved task text.
 func shortfallViews(tasks []model.Task, reports []planner.TaskReport) []shortfallJSON {
-	byText := textByTasks(tasks)
-	byGraph := graphByTasks(tasks)
-	out := make([]shortfallJSON, 0, len(reports))
-	for _, r := range reports {
-		out = append(out, shortfallJSON{
-			TaskID: r.TaskID, Task: byText[r.TaskID], Graph: byGraph[r.TaskID],
+	return mapTaskViews(tasks, reports, func(r planner.TaskReport, labels taskLabels) shortfallJSON {
+		return shortfallJSON{
+			TaskID: r.TaskID, Task: labels.text[r.TaskID], Graph: labels.graph[r.TaskID],
 			Required: r.Required, Placed: r.Placed, StoodDown: r.StoodDown,
 			Shortfall: r.Shortfall, Reason: string(r.Reason),
 			BlockedBy: append([]string(nil), r.BlockedBy...),
-		})
-	}
-	return out
+		}
+	})
 }
 
 // suggestionViews converts planner suggestions with resolved task text.
 func suggestionViews(tasks []model.Task, suggestions []planner.Suggestion) []suggestionJSON {
-	byText := textByTasks(tasks)
-	byGraph := graphByTasks(tasks)
-	out := make([]suggestionJSON, 0, len(suggestions))
-	for _, s := range suggestions {
-		out = append(out, suggestionJSON{
-			TaskID: s.TaskID, Task: byText[s.TaskID], Graph: byGraph[s.TaskID],
+	return mapTaskViews(tasks, suggestions, func(s planner.Suggestion, labels taskLabels) suggestionJSON {
+		return suggestionJSON{
+			TaskID: s.TaskID, Task: labels.text[s.TaskID], Graph: labels.graph[s.TaskID],
 			Reason: s.Reason, Change: s.Change, Impact: s.Impact, Tier: s.Tier,
-		})
-	}
-	return out
+		}
+	})
 }
 
 // explanationViews converts planner explanations.
 func explanationViews(expls []planner.Explanation) []explanationJSON {
-	out := make([]explanationJSON, 0, len(expls))
-	for _, e := range expls {
-		out = append(out, explanationJSON{
+	return mapViews(expls, func(e planner.Explanation) explanationJSON {
+		return explanationJSON{
 			TaskID: e.TaskID, BlockIndex: e.BlockIndex, Kind: string(e.Kind),
 			Start: e.Start, Slots: e.Slots, RunStart: e.RunStart, RunSlots: e.RunSlots,
-		})
-	}
-	return out
+		}
+	})
 }
 
 // dispositionViews converts dispositions with resolved task text.
 func dispositionViews(tasks []model.Task, disps []model.Disposition) []dispositionJSON {
-	byText := textByTasks(tasks)
-	byGraph := graphByTasks(tasks)
-	out := make([]dispositionJSON, 0, len(disps))
-	for _, d := range disps {
-		out = append(out, dispositionJSON{
-			TaskID: d.TaskID, Task: byText[d.TaskID], Graph: byGraph[d.TaskID], BlockIndex: d.BlockIndex,
+	return mapTaskViews(tasks, disps, func(d model.Disposition, labels taskLabels) dispositionJSON {
+		return dispositionJSON{
+			TaskID: d.TaskID, Task: labels.text[d.TaskID], Graph: labels.graph[d.TaskID], BlockIndex: d.BlockIndex,
 			Kind: string(d.Kind), Start: d.Start, End: d.End, Slots: d.Slots,
-		})
-	}
-	return out
+		}
+	})
 }
 
 // orphanViews converts schedule orphans with resolved task text.
 func orphanViews(tasks []model.Task, orphans []run.Orphan) []orphanJSON {
-	byText := textByTasks(tasks)
-	byGraph := graphByTasks(tasks)
-	out := make([]orphanJSON, 0, len(orphans))
-	for _, o := range orphans {
-		out = append(out, orphanJSON{
-			EventID: o.EventID, TaskID: o.TaskID, Graph: byGraph[o.TaskID],
-			Task:  byText[o.TaskID],
+	return mapTaskViews(tasks, orphans, func(o run.Orphan, labels taskLabels) orphanJSON {
+		return orphanJSON{
+			EventID: o.EventID, TaskID: o.TaskID, Graph: labels.graph[o.TaskID],
+			Task:  labels.text[o.TaskID],
 			Block: o.Block, Summary: o.Summary,
-		})
-	}
-	return out
+		}
+	})
 }
 
 // orphanLabel renders one orphan's task reference for text output.

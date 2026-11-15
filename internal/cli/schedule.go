@@ -1,10 +1,10 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
@@ -222,10 +222,7 @@ func renderScheduleText(w interface {
 			_, _ = fmt.Fprintln(w, st.bold("Dispositions in force:"))
 			ordered := append([]model.Disposition{}, outcome.Dispositions...)
 			slices.SortFunc(ordered, func(a, b model.Disposition) int {
-				if a.TaskID != b.TaskID {
-					return strings.Compare(a.TaskID, b.TaskID)
-				}
-				return a.BlockIndex - b.BlockIndex
+				return cmp.Or(cmp.Compare(a.TaskID, b.TaskID), cmp.Compare(a.BlockIndex, b.BlockIndex))
 			})
 			for _, d := range ordered {
 				_, _ = fmt.Fprintf(w, "  %s block %d: %s\n",

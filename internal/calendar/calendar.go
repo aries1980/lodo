@@ -17,12 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json/jsontext"
-	"encoding/json/v2"
-
 	"golang.org/x/oauth2"
 
 	"github.com/aries1980/lodo/internal/grid"
+	"github.com/aries1980/lodo/internal/jsonx"
 )
 
 // GoogleBase is the Calendar API v3 root the real client talks to.
@@ -373,13 +371,7 @@ func (c *Client) write(ctx context.Context, method string, path []string, in any
 
 	var body io.Reader
 	if in != nil {
-		raw, err := json.Marshal(in,
-			json.Deterministic(true),
-			json.FormatNilSliceAsNull(true),
-			json.FormatNilMapAsNull(true),
-			json.MatchCaseInsensitiveNames(true),
-			jsontext.EscapeForHTML(true),
-		)
+		raw, err := jsonx.Marshal(in)
 		if err != nil {
 			return fmt.Errorf("google calendar api: %s (%s): %w", c.label, strings.Join(path, "/"), err)
 		}
@@ -429,10 +421,7 @@ func (c *Client) do(req *http.Request, path string, out any, okStatuses ...int) 
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
 	}
-	if err := json.Unmarshal(data, out,
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.AllowDuplicateNames(true),
-	); err != nil {
+	if err := jsonx.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("google calendar api: %s (%s): decode: %w (body: %s)", c.label, path, err, snippet(data))
 	}
 	return nil
@@ -492,10 +481,7 @@ func decodeError(data []byte) string {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(data, &e,
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.AllowDuplicateNames(true),
-	) == nil && e.Error.Message != "" {
+	if jsonx.Unmarshal(data, &e) == nil && e.Error.Message != "" {
 		return e.Error.Message
 	}
 	return ""

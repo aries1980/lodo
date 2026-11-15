@@ -1,11 +1,12 @@
 package planner
 
 import (
+	"cmp"
 	"slices"
-	"strings"
 
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // decisionsInput bundles buildDecisions' inputs so the signature stays readable.
@@ -15,7 +16,7 @@ type decisionsInput struct {
 	explanations   []Explanation
 	order          []*taskPlan
 	pins           []*taskPlan
-	cycleSet       map[string]bool
+	cycleSet       set.Set[string]
 	blockedUnknown map[string][]string
 	blockedReason  map[string]Reason
 	blockedBy      map[string][]string
@@ -24,9 +25,9 @@ type decisionsInput struct {
 }
 
 func buildDecisions(in decisionsInput) []TaskDecision {
-	inOrder := make(map[string]bool, len(in.order))
+	inOrder := make(set.Set[string], len(in.order))
 	for _, plan := range in.order {
-		inOrder[plan.task.ID] = true
+		inOrder.Add(plan.task.ID)
 	}
 	blocksByTask := map[string][]model.Block{}
 	for _, blk := range in.blocks {
@@ -53,10 +54,7 @@ func buildDecisions(in decisionsInput) []TaskDecision {
 		disps := append([]model.Disposition(nil), plan.pinnedDisps...)
 		disps = append(disps, plan.stoodDownDisps...)
 		slices.SortFunc(disps, func(a, b model.Disposition) int {
-			if a.BlockIndex != b.BlockIndex {
-				return a.BlockIndex - b.BlockIndex
-			}
-			return strings.Compare(string(a.Kind), string(b.Kind))
+			return cmp.Or(cmp.Compare(a.BlockIndex, b.BlockIndex), cmp.Compare(a.Kind, b.Kind))
 		})
 		if len(disps) > 0 {
 			plan.decision.Dispositions = disps
@@ -102,19 +100,13 @@ func buildDecisions(in decisionsInput) []TaskDecision {
 		decisions = append(decisions, plan.decision)
 	}
 	slices.SortFunc(decisions, func(a, b TaskDecision) int {
-		if a.Graph != b.Graph {
-			return strings.Compare(a.Graph, b.Graph)
-		}
-		if a.TaskID != b.TaskID {
-			return strings.Compare(a.TaskID, b.TaskID)
-		}
-		return 0
+		return cmp.Or(cmp.Compare(a.Graph, b.Graph), cmp.Compare(a.TaskID, b.TaskID))
 	})
 	return decisions
 }
 
 // markEligibility records why a plan entered (or skipped) flexible placement.
-func markEligibility(plan *taskPlan, inOrder map[string]bool, cycleSet map[string]bool, blockedUnknown map[string][]string, blockedReason map[string]Reason, blockedBy map[string][]string) {
+func markEligibility(plan *taskPlan, inOrder set.Set[string], cycleSet set.Set[string], blockedUnknown map[string][]string, blockedReason map[string]Reason, blockedBy map[string][]string) {
 	if plan.task.Pin != nil {
 		plan.decision.Eligibility = Eligibility{Pin: true, RequiredSlots: plan.n, PinnedSlots: plan.n, FlexibleSlots: 0, Considered: true}
 		plan.decision.Ordering.Kind = "pin"
@@ -138,7 +130,7 @@ func markEligibility(plan *taskPlan, inOrder map[string]bool, cycleSet map[strin
 		ids = append([]string(nil), ids...)
 		slices.Sort(ids)
 		plan.decision.Dependency.BlockedBy = ids
-	} else if cycleSet[plan.task.ID] {
+	} else if cycleSet.Has(plan.task.ID) {
 		plan.decision.Eligibility.Considered = false
 		plan.decision.Eligibility.SkipReason = "dependency cycle"
 		plan.decision.Ordering.Kind = "cycle-blocked"
@@ -147,7 +139,7 @@ func markEligibility(plan *taskPlan, inOrder map[string]bool, cycleSet map[strin
 		plan.decision.Dependency.Blocked = true
 		plan.decision.Dependency.BlockReason = string(ReasonDependencyCycle)
 		plan.decision.Dependency.CycleMember = true
-	} else if !inOrder[plan.task.ID] && plan.task.Pin == nil && !plan.task.Container && plan.required() > 0 {
+	} else if !inOrder.Has(plan.task.ID) && plan.task.Pin == nil && !plan.task.Container && plan.required() > 0 {
 		plan.decision.Eligibility.Considered = false
 		if plan.decision.Ordering.Kind == "" {
 			plan.decision.Ordering.Kind = "blocked"

@@ -17,6 +17,7 @@
 package planner
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"time"
@@ -280,13 +281,7 @@ func collectPins(plans []*taskPlan) []*taskPlan {
 		}
 	}
 	slices.SortFunc(pins, func(a, b *taskPlan) int {
-		if !a.task.Pin.Equal(*b.task.Pin) {
-			if a.task.Pin.Before(*b.task.Pin) {
-				return -1
-			}
-			return 1
-		}
-		return compareTasks(a.task, b.task)
+		return cmp.Or(a.task.Pin.Compare(*b.task.Pin), compareTasks(a.task, b.task))
 	})
 	return pins
 }
@@ -313,13 +308,7 @@ func emitPinned(plans []*taskPlan, planBuilder *builder, granularity time.Durati
 			continue
 		}
 		slices.SortFunc(plan.pinnedDisps, func(a, b model.Disposition) int {
-			if !a.Start.Equal(b.Start) {
-				if a.Start.Before(b.Start) {
-					return -1
-				}
-				return 1
-			}
-			return a.BlockIndex - b.BlockIndex
+			return cmp.Or(a.Start.Compare(b.Start), cmp.Compare(a.BlockIndex, b.BlockIndex))
 		})
 		for _, d := range plan.pinnedDisps {
 			planBuilder.addExact(model.Block{

@@ -1,12 +1,14 @@
 package planner
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 type Suggestion struct {
@@ -55,10 +57,10 @@ const (
 type suggestInput struct {
 	Input
 	report   Report
-	cycleSet map[string]bool
+	cycleSet set.Set[string]
 }
 
-func Suggest(in Input, schedule Schedule, cycleSet map[string]bool) []Suggestion {
+func Suggest(in Input, schedule Schedule, cycleSet set.Set[string]) []Suggestion {
 	s := suggestInput{Input: in, report: schedule.Report, cycleSet: cycleSet}
 	byID := make(map[string]model.Task, len(s.Tasks))
 	for _, t := range s.Tasks {
@@ -106,10 +108,7 @@ func Suggest(in Input, schedule Schedule, cycleSet map[string]bool) []Suggestion
 		out = append(out, suggestCapacity(r, task, s, mapsBySlug, defaults, today, horizonEnd)...)
 	}
 	slices.SortFunc(out, func(a, b Suggestion) int {
-		if a.TaskID != b.TaskID {
-			return strings.Compare(a.TaskID, b.TaskID)
-		}
-		return strings.Compare(a.Reason, b.Reason)
+		return cmp.Or(cmp.Compare(a.TaskID, b.TaskID), cmp.Compare(a.Reason, b.Reason))
 	})
 	return out
 }
@@ -125,7 +124,7 @@ func blockedReason(r Reason) bool {
 	}
 }
 
-func suggestBlocked(r TaskReport, task model.Task, byID map[string]model.Task, cycleSet map[string]bool) []Suggestion {
+func suggestBlocked(r TaskReport, task model.Task, byID map[string]model.Task, cycleSet set.Set[string]) []Suggestion {
 	switch r.Reason {
 	case ReasonBlockedByDependency:
 		if cycleSet != nil && blockedByCycle(r.BlockedBy, cycleSet) {
@@ -218,9 +217,9 @@ func planEndBoundsPlacement(planEnd, horizonEnd model.CivilDate) bool {
 	return planEnd.Before(horizonEnd)
 }
 
-func blockedByCycle(blockedBy []string, cycleSet map[string]bool) bool {
+func blockedByCycle(blockedBy []string, cycleSet set.Set[string]) bool {
 	for _, id := range blockedBy {
-		if cycleSet[id] {
+		if cycleSet.Has(id) {
 			return true
 		}
 	}
@@ -276,15 +275,15 @@ func fallbackMaps(task model.Task, mapsBySlug map[string]model.TimeMap, defaults
 	if len(defaults) == 0 {
 		return nil
 	}
-	primarySlugs := map[string]bool{}
+	primarySlugs := set.New[string]()
 	for _, slug := range task.TimeMaps {
 		if _, ok := mapsBySlug[slug]; ok {
-			primarySlugs[slug] = true
+			primarySlugs.Add(slug)
 		}
 	}
 	var out []model.TimeMap
 	for _, d := range defaults {
-		if !primarySlugs[d.Slug] {
+		if !primarySlugs.Has(d.Slug) {
 			out = append(out, d)
 		}
 	}
@@ -434,10 +433,7 @@ func thinnestWeekdays(maps []model.TimeMap, n int) []time.Weekday {
 	}
 	ordered := append([]time.Weekday(nil), allDays...)
 	slices.SortFunc(ordered, func(a, b time.Weekday) int {
-		if perDay[a] != perDay[b] {
-			return perDay[a] - perDay[b]
-		}
-		return int(a) - int(b)
+		return cmp.Or(cmp.Compare(perDay[a], perDay[b]), cmp.Compare(a, b))
 	})
 	// If every day has generous coverage, still name the thinnest so the
 	// suggestion stays specific; the generic fallback is only for no maps.

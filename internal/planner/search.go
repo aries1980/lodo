@@ -1,12 +1,13 @@
 package planner
 
 import (
+	"cmp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // builder accumulates Blocks while blocking their slots on busy.
@@ -158,7 +159,7 @@ func (b *builder) placeTier(plan *taskPlan, state *tierState, mask grid.Mask, ti
 	runs, belowFloorRuns, belowFloorSlots := eligibleRuns(b.g, free, state.floor)
 	allocs, comparator := choosePlacementTrace(runs, *state.left, state.floor)
 	for _, allocation := range allocs {
-		for plan.reserved[*state.next] {
+		for plan.reserved.Has(*state.next) {
 			*state.next++
 		}
 		first := runs[allocation.run].run.Start
@@ -274,18 +275,18 @@ func (b *builder) splitMaps(t model.Task, maps map[string]model.TimeMap) (primar
 	if len(t.TimeMaps) == 0 {
 		return defaults, nil
 	}
-	primarySlugs := map[string]bool{}
+	primarySlugs := set.New[string]()
 	for _, slug := range t.TimeMaps {
 		if timeMap, ok := maps[slug]; ok {
 			primary = append(primary, timeMap)
-			primarySlugs[timeMap.Slug] = true
+			primarySlugs.Add(timeMap.Slug)
 		}
 	}
 	if len(primary) == 0 {
 		return nil, nil
 	}
 	for _, timeMap := range defaults {
-		if !primarySlugs[timeMap.Slug] {
+		if !primarySlugs.Has(timeMap.Slug) {
 			fallback = append(fallback, timeMap)
 		}
 	}
@@ -384,16 +385,7 @@ func (b *builder) sorted() ([]model.Block, []Explanation) {
 	}
 	slices.SortFunc(order, func(x, y int) int {
 		blkA, blkB := b.blocks[x], b.blocks[y]
-		if !blkA.Start.Equal(blkB.Start) {
-			if blkA.Start.Before(blkB.Start) {
-				return -1
-			}
-			return 1
-		}
-		if blkA.TaskID != blkB.TaskID {
-			return strings.Compare(blkA.TaskID, blkB.TaskID)
-		}
-		return blkA.Index - blkB.Index
+		return cmp.Or(blkA.Start.Compare(blkB.Start), cmp.Compare(blkA.TaskID, blkB.TaskID), cmp.Compare(blkA.Index, blkB.Index))
 	})
 	blocks := make([]model.Block, len(order))
 	expls := make([]Explanation, len(order))

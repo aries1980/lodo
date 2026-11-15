@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // ParseDuration parses a Task duration such as "90m", "2h" or "1h30m".
@@ -58,7 +59,7 @@ func ParseDepends(s string) ([]string, error) {
 		return nil, nil
 	}
 	var out []string
-	seen := map[string]bool{}
+	seen := set.New[string]()
 	for piece := range strings.SplitSeq(text, ",") {
 		p := strings.TrimSpace(piece)
 		if p == "" {
@@ -69,8 +70,7 @@ func ParseDepends(s string) ([]string, error) {
 			return nil, fmt.Errorf("parse depends %q: %q is not a ((uuid)) block reference", s, p)
 		}
 		lower := strings.ToLower(strings.TrimSpace(id))
-		if !seen[lower] {
-			seen[lower] = true
+		if seen.Add(lower) {
 			out = append(out, lower)
 		}
 	}
@@ -80,14 +80,15 @@ func ParseDepends(s string) ([]string, error) {
 // blockRefUUID extracts the UUID from a ((uuid)) block reference, allowing
 // surrounding space inside the parens.
 func blockRefUUID(s string) (string, bool) {
-	v := strings.TrimSpace(s)
-	if !strings.HasPrefix(v, "((") || !strings.HasSuffix(v, "))") || len(v) < 6 {
+	v, ok := strings.CutPrefix(strings.TrimSpace(s), "((")
+	if !ok {
 		return "", false
 	}
-	inner := strings.TrimSpace(v[2 : len(v)-2])
-	if inner == "" {
+	v, ok = strings.CutSuffix(v, "))")
+	if !ok {
 		return "", false
 	}
+	inner := strings.TrimSpace(v)
 	if !isUUID(inner) {
 		return "", false
 	}

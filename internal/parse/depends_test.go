@@ -20,10 +20,18 @@ func TestParseDepends(t *testing.T) {
 		{"two comma", "((" + a + ")), ((" + b + "))", []string{a, b}, false},
 		{"spaces inside", "((  " + a + "  ))", []string{a}, false},
 		{"duplicates collapse", "((" + a + ")), ((" + a + "))", []string{a}, false},
+		{"case-insensitive UUIDs", "((ABCDEFAB-CDEF-4ABC-8ABC-ABCDEFABCDEF)), ((abcdefab-cdef-4abc-8abc-abcdefabcdef))", []string{"abcdefab-cdef-4abc-8abc-abcdefabcdef"}, false},
+		{"missing UUID separator", "((019abcdefabc-7abc-8abc-abcdefabcdef))", nil, true},
+		{"canonical version 7 UUID", "((019abcde-fabc-7abc-8abc-abcdefabcdef))", []string{"019abcde-fabc-7abc-8abc-abcdefabcdef"}, false},
 		{"bare uuid rejected", a, nil, true},
 		{"typo rejected", "((typo-uuid))", nil, true},
 		{"empty entry rejected", "((" + a + ")), ", nil, true},
 		{"non-ref rejected", "hello", nil, true},
+		{"missing opening parens", a + "))", nil, true},
+		{"missing closing parens", "((" + a, nil, true},
+		{"empty ref rejected", "(())", nil, true},
+		{"overlapping parens rejected", "(((", nil, true},
+		{"compact UUID rejected", "((11111111111141118111111111111111))", nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

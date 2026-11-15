@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // ParseWindow parses one Time Map window line, e.g. "Mon-Fri 09:00-11:00" or
@@ -54,27 +55,26 @@ func parseDays(s string) ([]time.Weekday, error) {
 	switch {
 	case strings.Contains(s, ","):
 		var days []time.Weekday
-		seen := make(map[time.Weekday]bool)
-		for _, part := range strings.Split(s, ",") {
+		seen := set.New[time.Weekday]()
+		for part := range strings.SplitSeq(s, ",") {
 			day, ok := dayNames[strings.ToLower(part)]
 			if !ok {
 				return nil, fmt.Errorf("unknown day %q", part)
 			}
-			if !seen[day] {
-				seen[day] = true
+			if seen.Add(day) {
 				days = append(days, day)
 			}
 		}
 		return days, nil
 	case strings.Contains(s, "-"):
-		parts := strings.SplitN(s, "-", 2)
-		from, ok := dayNames[strings.ToLower(parts[0])]
+		firstDay, lastDay, _ := strings.Cut(s, "-")
+		from, ok := dayNames[strings.ToLower(firstDay)]
 		if !ok {
-			return nil, fmt.Errorf("unknown day %q", parts[0])
+			return nil, fmt.Errorf("unknown day %q", firstDay)
 		}
-		to, ok := dayNames[strings.ToLower(parts[1])]
+		to, ok := dayNames[strings.ToLower(lastDay)]
 		if !ok {
-			return nil, fmt.Errorf("unknown day %q", parts[1])
+			return nil, fmt.Errorf("unknown day %q", lastDay)
 		}
 		first, last := mondayFirst(from), mondayFirst(to)
 		if first > last {

@@ -1,14 +1,16 @@
 // Package norm holds small normalizations shared across packages: ID
 // matching, block keys, slot arithmetic and read-calendar lists.
 //
-// It is a leaf package on purpose so model, config, calendar, planner,
-// resolve and run can all use it without import cycles.
+// It stays independent of domain packages so model, config, calendar,
+// planner, resolve and run can all use it without import cycles.
 package norm
 
 import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // ID normalizes a Task UUID, dependency ref or page name for comparison:
@@ -42,13 +44,12 @@ func Units(d, granularity time.Duration) int {
 // when nothing survives.
 func Phrases(in []string) []string {
 	var out []string
-	seen := map[string]bool{}
+	seen := set.New[string]()
 	for _, s := range in {
 		p := strings.ToLower(strings.TrimSpace(s))
-		if p == "" || seen[p] {
+		if p == "" || !seen.Add(p) {
 			continue
 		}
-		seen[p] = true
 		out = append(out, p)
 	}
 	return out
@@ -60,16 +61,15 @@ func Phrases(in []string) []string {
 // survives, so an absent list and an emptied one compare equal.
 func ReadCalendars(writeID string, reads []string) []string {
 	var out []string
-	seen := map[string]bool{}
+	seen := set.New[string]()
 	for _, r := range reads {
 		id := strings.TrimSpace(r)
 		if id == "" || id == writeID {
 			continue
 		}
-		if seen[id] {
+		if !seen.Add(id) {
 			continue
 		}
-		seen[id] = true
 		out = append(out, id)
 	}
 	return out

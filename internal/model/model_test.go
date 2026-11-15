@@ -50,3 +50,33 @@ func TestSnapshotDoesNotAliasTimeMaps(t *testing.T) {
 		t.Fatal("Snapshot must not alias the Task's TimeMaps")
 	}
 }
+
+func TestCivilDateCompare(t *testing.T) {
+	date := CivilDate{Year: 2026, Month: time.October, Day: 20}
+	tests := []struct {
+		name  string
+		other CivilDate
+		want  int
+	}{
+		{"equal", date, 0},
+		{"earlier year", CivilDate{Year: 2025, Month: time.December, Day: 31}, 1},
+		{"later year", CivilDate{Year: 2027, Month: time.January, Day: 1}, -1},
+		{"earlier month", CivilDate{Year: 2026, Month: time.September, Day: 30}, 1},
+		{"later month", CivilDate{Year: 2026, Month: time.November, Day: 1}, -1},
+		{"earlier day", CivilDate{Year: 2026, Month: time.October, Day: 19}, 1},
+		{"later day", CivilDate{Year: 2026, Month: time.October, Day: 21}, -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := date.Compare(tt.other); got != tt.want {
+				t.Fatalf("Compare(%v) = %d, want %d", tt.other, got, tt.want)
+			}
+			if got := tt.other.Compare(date); got != -tt.want {
+				t.Fatalf("reverse Compare = %d, want %d", got, -tt.want)
+			}
+			if date.Before(tt.other) != (tt.want < 0) {
+				t.Fatal("Before and Compare disagree")
+			}
+		})
+	}
+}

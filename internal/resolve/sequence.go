@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/parse"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // orderCache parses explicit order:: values once per block.
@@ -38,8 +40,8 @@ func (r *resolver) effectiveOrder(cache *orderCache, page *logseq.Page, ancestor
 	if mode, ok := cache.explicitOrder(block); ok {
 		return mode
 	}
-	for k := len(ancestors) - 1; k >= 0; k-- {
-		if mode, ok := cache.explicitOrder(ancestors[k]); ok {
+	for _, ancestor := range slices.Backward(ancestors) {
+		if mode, ok := cache.explicitOrder(ancestor); ok {
 			return mode
 		}
 	}
@@ -61,7 +63,7 @@ func (r *resolver) chainSequential(graph *taskGraph, all []everyBlock) {
 	// Ancestor block ID -> descendant leaf task indices (outline order).
 	leavesByAncestor := make(map[string][]int)
 	for idx := range res {
-		if graph.isContainer[idx] {
+		if graph.isContainer.Has(idx) {
 			continue
 		}
 		for _, ancestor := range res[idx].ancestors {
@@ -78,7 +80,7 @@ func (r *resolver) chainSequential(graph *taskGraph, all []everyBlock) {
 		}
 		id := norm.ID(entry.block.UUID)
 		leaves := append([]int(nil), leavesByAncestor[id]...)
-		slices.SortFunc(leaves, func(a, b int) int { return res[a].task.OutlineOrder - res[b].task.OutlineOrder })
+		slices.SortFunc(leaves, func(a, b int) int { return cmp.Compare(res[a].task.OutlineOrder, res[b].task.OutlineOrder) })
 		for k := 1; k < len(leaves); k++ {
 			prev := res[leaves[k-1]].task.ID
 			cur := leaves[k]
@@ -94,25 +96,24 @@ func (r *resolver) chainSequential(graph *taskGraph, all []everyBlock) {
 // order:: sequential.
 func (r *resolver) chainPageSequential(graph *taskGraph) {
 	res := graph.resolved
-	pagesSeen := map[string]bool{}
+	pagesSeen := set.New[string]()
 	for _, resolved := range res {
 		key := norm.ID(resolved.page.Name)
-		if pagesSeen[key] {
+		if !pagesSeen.Add(key) {
 			continue
 		}
-		pagesSeen[key] = true
 		if text := r.pageDefault(resolved.page.Name, "order", ""); text != "" {
 			if mode, err := parse.ParseOrder(text); err == nil && mode == model.OrderSequential {
 				var leaves []int
 				for idx, other := range res {
-					if graph.isContainer[idx] {
+					if graph.isContainer.Has(idx) {
 						continue
 					}
 					if norm.ID(other.page.Name) == key {
 						leaves = append(leaves, idx)
 					}
 				}
-				slices.SortFunc(leaves, func(a, b int) int { return res[a].task.OutlineOrder - res[b].task.OutlineOrder })
+				slices.SortFunc(leaves, func(a, b int) int { return cmp.Compare(res[a].task.OutlineOrder, res[b].task.OutlineOrder) })
 				for k := 1; k < len(leaves); k++ {
 					prev := res[leaves[k-1]].task.ID
 					cur := leaves[k]

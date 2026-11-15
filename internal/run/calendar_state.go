@@ -13,6 +13,7 @@ import (
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/reconcile"
+	"github.com/aries1980/lodo/internal/set"
 	"github.com/aries1980/lodo/internal/store"
 )
 
@@ -164,14 +165,14 @@ func loadCalendarState(ctx context.Context, cal CalendarReader, runStore Store, 
 //
 // List is bounded to [now, windowEnd), so absence alone proves nothing.
 func collectReconcileBindings(ctx context.Context, cal CalendarReader, managed []calendar.Event, bindings []store.Binding, location *time.Location, now time.Time) ([]calendar.Event, []store.Binding, []calendar.Event, error) {
-	managedByID := make(map[string]bool, len(managed))
+	managedByID := make(set.Set[string], len(managed))
 	for _, event := range managed {
-		managedByID[event.ID] = true
+		managedByID.Add(event.ID)
 	}
 	reconcileBindings := make([]store.Binding, 0, len(bindings))
 	var outOfRange []calendar.Event
 	for _, binding := range bindings {
-		if managedByID[binding.EventID] {
+		if managedByID.Has(binding.EventID) {
 			reconcileBindings = append(reconcileBindings, binding)
 			continue
 		}
@@ -196,7 +197,7 @@ func collectReconcileBindings(ctx context.Context, cal CalendarReader, managed [
 			}
 			if end.After(now) {
 				managed = append(managed, event)
-				managedByID[event.ID] = true
+				managedByID.Add(event.ID)
 				outOfRange = append(outOfRange, event)
 			}
 			reconcileBindings = append(reconcileBindings, binding)
@@ -219,15 +220,15 @@ func pinOutOfRange(reconciliation *reconcile.Result, observed []calendar.Event, 
 	if len(observed) == 0 {
 		return nil
 	}
-	freshPins := make(map[string]bool, len(observed))
-	freshBindings := make(map[string]bool, len(observed))
+	freshPins := make(set.Set[string], len(observed))
+	freshBindings := make(set.Set[string], len(observed))
 	for _, timed := range reconciliation.DispositionUpserts {
 		if timed.Disposition.Kind == model.DispositionPinned {
-			freshPins[norm.BlockKey(timed.Disposition.TaskID, timed.Disposition.BlockIndex)] = true
+			freshPins.Add(norm.BlockKey(timed.Disposition.TaskID, timed.Disposition.BlockIndex))
 		}
 	}
 	for _, binding := range reconciliation.BindingUpserts {
-		freshBindings[norm.BlockKey(binding.TaskID, binding.BlockIndex)] = true
+		freshBindings.Add(norm.BlockKey(binding.TaskID, binding.BlockIndex))
 	}
 	storedBindings := make(map[string]store.Binding, len(bindings))
 	for _, binding := range bindings {
@@ -250,17 +251,17 @@ func pinOutOfRange(reconciliation *reconcile.Result, observed []calendar.Event, 
 		}
 		key := norm.BlockKey(taskID, blockIndex)
 		slots := norm.Units(end.Sub(start), granularity)
-		if !freshBindings[key] {
+		if !freshBindings.Has(key) {
 			stored, known := storedBindings[key]
 			if !known || stored.EventID != event.ID || !stored.Start.Equal(start) || !stored.End.Equal(end) || stored.Slots != slots {
 				reconciliation.BindingUpserts = append(reconciliation.BindingUpserts, store.Binding{
 					TaskID: taskID, BlockIndex: blockIndex, EventID: event.ID,
 					Start: start, End: end, Slots: slots,
 				})
-				freshBindings[key] = true
+				freshBindings.Add(key)
 			}
 		}
-		if !freshPins[key] {
+		if !freshPins.Has(key) {
 			stored, known := storedPins[key]
 			if !known || !stored.Start.Equal(start) || !stored.End.Equal(end) || stored.Slots != slots {
 				reconciliation.DispositionUpserts = append(reconciliation.DispositionUpserts, store.TimedDisposition{
@@ -272,7 +273,7 @@ func pinOutOfRange(reconciliation *reconcile.Result, observed []calendar.Event, 
 					},
 					RecordedAt: now,
 				})
-				freshPins[key] = true
+				freshPins.Add(key)
 			}
 		}
 	}
@@ -289,14 +290,11 @@ func suppressPendingStoodDown(reconciliation *reconcile.Result, pending []store.
 	if len(pending) == 0 || len(reconciliation.DispositionUpserts) == 0 {
 		return
 	}
-	pendingSet := make(map[string]bool, len(pending))
-	for _, k := range pending {
-		pendingSet[norm.BlockKey(k.TaskID, k.BlockIndex)] = true
-	}
+	pendingSet := set.New(pending...)
 	kept := reconciliation.DispositionUpserts[:0]
 	for _, td := range reconciliation.DispositionUpserts {
 		if td.Disposition.Kind == model.DispositionStoodDown &&
-			pendingSet[norm.BlockKey(td.Disposition.TaskID, td.Disposition.BlockIndex)] {
+			pendingSet.Has(store.BindingKey{TaskID: td.Disposition.TaskID, BlockIndex: td.Disposition.BlockIndex}) {
 			continue
 		}
 		kept = append(kept, td)

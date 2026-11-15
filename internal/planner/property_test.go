@@ -9,6 +9,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/grid"
 	"github.com/aries1980/lodo/internal/model"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // fixtureInput builds a week with overlapping Time Maps, busy time, a Pin, a
@@ -184,12 +185,11 @@ func TestScheduleProperties(t *testing.T) {
 		planMask := g.Inside(from, to)
 		eligibility := eligibilityMask(g, task, in.TimeMaps)
 
-		seen := make(map[int]bool)
+		seen := set.New[int]()
 		for _, b := range blocks {
-			if seen[b.Index] {
+			if !seen.Add(b.Index) {
 				t.Errorf("task %s: Block index %d used twice", task.ID, b.Index)
 			}
-			seen[b.Index] = true
 
 			if b.Kind != model.BlockFlexible {
 				continue

@@ -77,6 +77,8 @@ not resolve the graph or recompute the Schedule.
   default). Atomic `Commit`; opened per run (no daemon, ADR 0009). Schema is v0.1
   create-if-not-exists (no migration framework).
 - `internal/config`: config and credentials (ADR 0005), plus per-run overrides.
+- `internal/jsonx`: shared JSON v2 encoding and decoding policy, preserving wire and
+  store compatibility. `internal/set`: map-backed membership sets for shared plumbing.
 
 ## Where to change X
 

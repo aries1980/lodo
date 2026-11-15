@@ -19,6 +19,7 @@ import (
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
+	"github.com/aries1980/lodo/internal/set"
 	"github.com/aries1980/lodo/internal/store"
 )
 
@@ -128,13 +129,13 @@ func Reconcile(observed []calendar.Event, bindings []store.Binding, snapshots ma
 	for _, b := range bindings {
 		byEvent[b.EventID] = b
 	}
-	seen := make(map[string]bool, len(observed))
+	seen := make(set.Set[string], len(observed))
 	var out Result
 	for _, e := range observed {
 		if !e.Managed() {
 			continue
 		}
-		seen[e.ID] = true
+		seen.Add(e.ID)
 		taskID, blockIndex, ok := TaskRef(e)
 		if !ok {
 			continue // orphaned: no usable pointer, left for check
@@ -189,7 +190,7 @@ func Reconcile(observed []calendar.Event, bindings []store.Binding, snapshots ma
 		_ = blockIndex // bound above; kept for clarity
 	}
 	for _, b := range bindings {
-		if seen[b.EventID] {
+		if seen.Has(b.EventID) {
 			continue
 		}
 		// Deleted: the binding goes away and the Block stands down with
@@ -198,7 +199,7 @@ func Reconcile(observed []calendar.Event, bindings []store.Binding, snapshots ma
 		if !ok {
 			snap = model.Snapshot{} // adopted-but-never-resolved: matches nothing
 		}
-		out.BindingDeletes = append(out.BindingDeletes, store.BindingKey{TaskID: b.TaskID, BlockIndex: b.BlockIndex})
+		out.BindingDeletes = append(out.BindingDeletes, b.BindingKey)
 		out.DispositionUpserts = append(out.DispositionUpserts, store.TimedDisposition{
 			Disposition: model.Disposition{
 				TaskID: b.TaskID, BlockIndex: b.BlockIndex,

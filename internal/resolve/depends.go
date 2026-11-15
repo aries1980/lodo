@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"github.com/aries1980/lodo/internal/norm"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // validateExplicitDepends expands container refs to leaf Tasks, drops
 // DONE/CANCELLED satisfies, and keeps unknown refs (reported) so the
 // planner can block and report them.
-func (r *resolver) validateExplicitDepends(graph *taskGraph, doneSet map[string]bool) {
+func (r *resolver) validateExplicitDepends(graph *taskGraph, doneSet set.Set[string]) {
 	res := graph.resolved
 	for i := range res {
 		var kept []string
@@ -31,7 +32,7 @@ func (r *resolver) validateExplicitDepends(graph *taskGraph, doneSet map[string]
 				continue
 			}
 			if j, ok := graph.byID[lower]; ok {
-				if graph.isContainer[j] {
+				if graph.isContainer.Has(j) {
 					for _, leaf := range graph.leavesOf(j) {
 						kept = append(kept, res[leaf].task.ID)
 					}
@@ -40,7 +41,7 @@ func (r *resolver) validateExplicitDepends(graph *taskGraph, doneSet map[string]
 				}
 				continue
 			}
-			if doneSet[lower] {
+			if doneSet.Has(lower) {
 				continue // DONE/CANCELLED satisfies.
 			}
 			r.issue(IssueUnknownDependency, taskContext(res[i].task),
@@ -56,7 +57,7 @@ func (r *resolver) validateExplicitDepends(graph *taskGraph, doneSet map[string]
 func finalizeDepends(graph *taskGraph) {
 	res := graph.resolved
 	for i := range res {
-		seen := map[string]bool{}
+		seen := set.New[string]()
 		var out []string
 		for _, dep := range res[i].explicit {
 			key := norm.ID(dep)
@@ -65,8 +66,7 @@ func finalizeDepends(graph *taskGraph) {
 				display = res[j].task.ID
 				key = strings.ToLower(display)
 			}
-			if !seen[key] {
-				seen[key] = true
+			if seen.Add(key) {
 				out = append(out, display)
 			}
 		}

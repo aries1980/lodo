@@ -33,7 +33,7 @@ func (r *resolver) timeMaps() {
 				fmt.Sprintf("map text %q slugs to an empty key; give the map a name", name))
 			continue
 		}
-		if r.mapSlugs[slug] {
+		if r.mapSlugs.Has(slug) {
 			r.issue(IssueDuplicateMap, r.tmBlockContext(mb),
 				fmt.Sprintf("%q slugs to %s, already defined above on the page; the later block is skipped", name, slug))
 			continue
@@ -62,7 +62,7 @@ func (r *resolver) timeMaps() {
 		}
 
 		r.maps = append(r.maps, m)
-		r.mapSlugs[slug] = true
+		r.mapSlugs.Add(slug)
 	}
 
 	switch {

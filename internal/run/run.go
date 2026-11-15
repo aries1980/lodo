@@ -10,6 +10,7 @@
 package run
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -223,9 +224,6 @@ func lowerTrim(s string) string {
 // never depends on the app's internal page order.
 func sortPages(pages []*logseq.Page) {
 	slices.SortFunc(pages, func(a, b *logseq.Page) int {
-		if c := strings.Compare(norm.ID(a.Name), norm.ID(b.Name)); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Name, b.Name)
+		return cmp.Or(cmp.Compare(norm.ID(a.Name), norm.ID(b.Name)), cmp.Compare(a.Name, b.Name))
 	})
 }

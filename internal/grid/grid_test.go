@@ -268,3 +268,47 @@ func TestMaskOperations(t *testing.T) {
 func weekdays() []time.Weekday {
 	return []time.Weekday{time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday}
 }
+
+func TestSlotSearchBounds(t *testing.T) {
+	loc := london(t)
+	tests := []struct {
+		name        string
+		now         time.Time
+		granularity time.Duration
+		days        int
+	}{
+		{"ordinary", at(loc, 9, 0, 0), 15 * time.Minute, 2},
+		{"spring forward", time.Date(2026, time.March, 29, 0, 0, 0, 0, loc), 15 * time.Minute, 2},
+		{"fall back", time.Date(2026, time.October, 25, 0, 0, 0, 0, loc), 15 * time.Minute, 2},
+		{"day remainder", at(loc, 9, 0, 0), 25 * time.Minute, 2},
+		{"empty", at(loc, 9, 0, 0), 15 * time.Minute, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := Build(tt.now, loc, tt.granularity, tt.days)
+			queries := []time.Time{tt.now.Add(-24 * time.Hour), tt.now.Add(4 * 24 * time.Hour)}
+			for i := range g.Len() {
+				for _, boundary := range []time.Time{g.Start(i), g.End(i)} {
+					queries = append(queries, boundary.Add(-time.Nanosecond), boundary, boundary.Add(time.Nanosecond))
+				}
+			}
+			for _, query := range queries {
+				wantStart, wantEnd := g.Len(), g.Len()
+				for i := range g.Len() {
+					if wantStart == g.Len() && !g.Start(i).Before(query) {
+						wantStart = i
+					}
+					if wantEnd == g.Len() && g.End(i).After(query) {
+						wantEnd = i
+					}
+				}
+				if got := g.firstStartingAtOrAfter(query); got != wantStart {
+					t.Fatalf("firstStartingAtOrAfter(%v) = %d, want %d", query, got, wantStart)
+				}
+				if got := g.firstEndingAfter(query); got != wantEnd {
+					t.Fatalf("firstEndingAfter(%v) = %d, want %d", query, got, wantEnd)
+				}
+			}
+		})
+	}
+}

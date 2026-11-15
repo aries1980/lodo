@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,21 +34,9 @@ func managed(id, task string, block int, start, end time.Time) calendar.Event {
 		Start:   calendar.EventTime{DateTime: start.Format(time.RFC3339)},
 		End:     calendar.EventTime{DateTime: end.Format(time.RFC3339)},
 		ExtendedProperties: calendar.Extended{Private: map[string]string{
-			"lodo": "true", "task": task, "block": itoa(block),
+			"lodo": "true", "task": task, "block": strconv.Itoa(block),
 		}},
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var out []byte
-	for n > 0 {
-		out = append([]byte{byte('0' + n%10)}, out...)
-		n /= 10
-	}
-	return string(out)
 }
 
 func TestEventIDStabilityAndCharset(t *testing.T) {

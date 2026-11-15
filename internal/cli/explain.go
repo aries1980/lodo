@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -237,7 +238,7 @@ func explainPredecessors(decisions []planner.TaskDecision, pos int) []string {
 			pairs = append(pairs, pair{pos: d.Ordering.Position, id: d.TaskID})
 		}
 	}
-	slices.SortFunc(pairs, func(a, b pair) int { return a.pos - b.pos })
+	slices.SortFunc(pairs, func(a, b pair) int { return cmp.Compare(a.pos, b.pos) })
 	out := make([]string, 0, len(pairs))
 	for _, p := range pairs {
 		out = append(out, p.id)
@@ -369,10 +370,7 @@ func issuesForTask(issues []resolve.Issue, id string) []resolve.Issue {
 		}
 	}
 	slices.SortFunc(out, func(a, b resolve.Issue) int {
-		if a.Kind != b.Kind {
-			return strings.Compare(a.Kind, b.Kind)
-		}
-		return strings.Compare(a.Context, b.Context)
+		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Context, b.Context))
 	})
 	return out
 }
@@ -576,22 +574,7 @@ func predecessorLabels(outcome run.CheckOutcome, ids []string) []string {
 
 func renderConsiderationOrder(w io.Writer, outcome run.CheckOutcome, currentID string, st styler) {
 	decisions := append([]planner.TaskDecision(nil), outcome.Schedule.Decisions...)
-	slices.SortFunc(decisions, func(a, b planner.TaskDecision) int {
-		ao, bo := a.Ordering.Position, b.Ordering.Position
-		if ao == 0 && bo == 0 {
-			return strings.Compare(a.TaskID, b.TaskID)
-		}
-		if ao == 0 {
-			return 1
-		}
-		if bo == 0 {
-			return -1
-		}
-		if ao != bo {
-			return ao - bo
-		}
-		return strings.Compare(a.TaskID, b.TaskID)
-	})
+	slices.SortFunc(decisions, compareConsiderationOrder)
 	_, _ = fmt.Fprintln(w, st.bold("\nConsideration order (--verbose):"))
 	for _, d := range decisions {
 		marker := " "

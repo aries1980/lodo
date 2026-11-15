@@ -41,7 +41,7 @@ func (f *scheduleFake) mount(t *testing.T, initial []map[string]any) string {
 				"access_token": "fake", "token_type": "Bearer", "expires_in": 3600,
 			})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/events/"):
-			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			_, id, _ := strings.CutLast(r.URL.Path, "/")
 			e, ok := f.events[id]
 			if !ok {
 				w.Header().Set("Content-Type", "application/json")
@@ -70,7 +70,7 @@ func (f *scheduleFake) mount(t *testing.T, initial []map[string]any) string {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(e)
 		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/events/"):
-			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			_, id, _ := strings.CutLast(r.URL.Path, "/")
 			body, _ := io.ReadAll(r.Body)
 			var p map[string]any
 			_ = json.Unmarshal(body, &p)
@@ -86,7 +86,7 @@ func (f *scheduleFake) mount(t *testing.T, initial []map[string]any) string {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(cur)
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/events/"):
-			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			_, id, _ := strings.CutLast(r.URL.Path, "/")
 			f.writes = append(f.writes, "DELETE "+id)
 			delete(f.events, id)
 			w.WriteHeader(http.StatusNoContent)

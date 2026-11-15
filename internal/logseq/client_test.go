@@ -3,6 +3,7 @@ package logseq_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -217,6 +218,13 @@ func TestHTTPErrorSurfacesBody(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "502") || !strings.Contains(err.Error(), "the graph is closed") {
 		t.Fatalf("error = %q, want status and body", err.Error())
+	}
+	apiErr, ok := errors.AsType[*logseq.APIError](err)
+	if !ok || apiErr.StatusCode != http.StatusBadGateway {
+		t.Fatalf("error lost HTTP status: %v", err)
+	}
+	if want := "logseq api: logseq.Editor.get_all_pages: HTTP 502 Bad Gateway: the graph is closed"; err.Error() != want {
+		t.Fatalf("diagnostic changed: %q, want %q", err, want)
 	}
 }
 

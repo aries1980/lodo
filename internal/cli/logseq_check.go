@@ -9,11 +9,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/run"
 	"github.com/aries1980/lodo/internal/theme"
 )
@@ -83,7 +86,7 @@ func checkLogseqAvailable(ctx context.Context, sources []run.Source, notify func
 				break
 			}
 			lastErr = err
-			if isLogseqAuthFailure(err.Error()) || ctx.Err() != nil {
+			if isLogseqAuthFailure(err) || ctx.Err() != nil {
 				break
 			}
 			if attempt+1 < attempts && notify != nil {
@@ -152,7 +155,7 @@ func logseqUnavailableError(s run.Source, err error, attempts int) error {
 	} else if attempts > 1 {
 		cause += fmt.Sprintf(" (after %d attempt(s))", attempts)
 	}
-	if isLogseqAuthFailure(cause) {
+	if isLogseqAuthFailure(err) {
 		if s.Name != "" {
 			return fmt.Errorf("graph %q: logseq denied access at %s: %s; check logseq.token (Logseq Settings → Integrations), %s, or pass --logseq-token / --logseq-graph-token %s=TOKEN",
 				s.Name, displayLogseqEndpoint(s), cause, config.EnvLogseqToken, s.Name)
@@ -177,12 +180,15 @@ func displayLogseqEndpoint(s run.Source) string {
 	return "(unknown api_url)"
 }
 
-// isLogseqAuthFailure reports whether the probe failure looks like a bad
-// token rather than a dead app: the stub and the app answer 401/403 with
-// an Access Denied body.
-func isLogseqAuthFailure(cause string) bool {
-	lower := strings.ToLower(cause)
-	for _, want := range []string{"401", "403", "access denied", "unauthorized", "forbidden"} {
+// isLogseqAuthFailure recognizes HTTP 401/403 and the app's denial messages,
+// which Logseq may also return with HTTP 500 or in a successful HTTP response.
+func isLogseqAuthFailure(err error) bool {
+	if apiErr, ok := errors.AsType[*logseq.APIError](err); ok &&
+		(apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	for _, want := range []string{"access denied", "unauthorized", "forbidden"} {
 		if strings.Contains(lower, want) {
 			return true
 		}

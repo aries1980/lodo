@@ -1,14 +1,15 @@
 package resolve
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 // Input is the raw graph as read from the app plus how to interpret it,
@@ -74,7 +75,7 @@ func Resolve(in Input) (Result, error) {
 		return Result{}, fmt.Errorf("resolve: location is required")
 	}
 
-	r := &resolver{in: in, mapSlugs: map[string]bool{}, pageProps: map[string]string{}, provenance: map[string]TaskProvenance{}}
+	r := &resolver{in: in, mapSlugs: set.New[string](), pageProps: map[string]string{}, provenance: map[string]TaskProvenance{}}
 	r.timeMaps()
 	r.resolveTasks()
 	return Result{Tasks: r.tasks, TimeMaps: r.maps, Issues: r.issues, Provenance: r.provenance}, nil
@@ -86,7 +87,7 @@ type resolver struct {
 
 	issues     []Issue
 	maps       []model.TimeMap
-	mapSlugs   map[string]bool // slug → a map defines it
+	mapSlugs   set.Set[string] // slug → a map defines it
 	tasks      []model.Task
 	pageProps  map[string]string // page\x00key → inherited default text
 	provenance map[string]TaskProvenance
@@ -133,10 +134,7 @@ func (r *resolver) sortedPages() []*logseq.Page {
 	pages := make([]*logseq.Page, len(r.in.Pages))
 	copy(pages, r.in.Pages)
 	slices.SortFunc(pages, func(a, b *logseq.Page) int {
-		if c := strings.Compare(norm.ID(a.Name), norm.ID(b.Name)); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Name, b.Name)
+		return cmp.Or(cmp.Compare(norm.ID(a.Name), norm.ID(b.Name)), cmp.Compare(a.Name, b.Name))
 	})
 	return pages
 }

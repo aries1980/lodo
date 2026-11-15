@@ -3,6 +3,12 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -284,5 +290,117 @@ func TestProbeRetryMessageNamesGraphAndTimeouts(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("message = %q, want %q", msg, want)
 		}
+	}
+}
+
+type probeTransport func(*http.Request) (*http.Response, error)
+
+func (f probeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestCheckLogseqAvailableRetriesPortsContainingStatusCodes(t *testing.T) {
+	for _, port := range []int{40119, 40389, 34403, 36401} {
+		for _, graph := range []string{"", "work"} {
+			t.Run(fmt.Sprintf("%d/%s", port, graph), func(t *testing.T) {
+				var calls atomic.Int32
+				hc := &http.Client{Transport: probeTransport(func(*http.Request) (*http.Response, error) {
+					calls.Add(1)
+					return nil, &net.OpError{
+						Op: "dial", Net: "tcp",
+						Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: port},
+						Err:  errors.New("connect: connection refused"),
+					}
+				})}
+				endpoint := "http://127.0.0.1:" + strconv.Itoa(port) + "/api"
+				client, err := logseq.NewClient(endpoint, "token", hc)
+				if err != nil {
+					t.Fatal(err)
+				}
+				notices := 0
+				err = checkLogseqAvailable(context.Background(), []run.Source{{Name: graph, Client: client, APIURL: endpoint}}, func(logseqProbeAttempt) {
+					notices++
+				})
+				if err == nil {
+					t.Fatal("dead endpoint was accepted")
+				}
+				msg := err.Error()
+				if !strings.Contains(msg, "logseq unavailable") || !strings.Contains(msg, endpoint) || !strings.Contains(msg, "HTTP API enabled") {
+					t.Fatalf("wrong availability diagnostic: %s", msg)
+				}
+				if strings.Contains(msg, "denied access") {
+					t.Fatalf("port number was mistaken for an auth failure: %s", msg)
+				}
+				if int(calls.Load()) != logseqProbeAttempts || notices != logseqProbeAttempts-1 {
+					t.Fatalf("calls = %d, notices = %d, want %d/%d", calls.Load(), notices, logseqProbeAttempts, logseqProbeAttempts-1)
+				}
+			})
+		}
+	}
+}
+
+func TestCheckLogseqAvailableClassifiesAPIResponses(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		auth   bool
+	}{
+		{"unauthorized", http.StatusUnauthorized, "sign in required", true},
+		{"forbidden", http.StatusForbidden, "request rejected", true},
+		{"app access denied", http.StatusInternalServerError, `{"error":"Access Denied"}`, true},
+		{"app unauthorized", http.StatusOK, `{"error":"Unauthorized"}`, true},
+		{"app forbidden", http.StatusOK, `{"error":"Forbidden"}`, true},
+		{"body contains 401", http.StatusInternalServerError, `{"error":"failed after reading 401 tasks"}`, false},
+		{"body contains 403", http.StatusBadGateway, "gateway error for request 403", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			t.Cleanup(srv.Close)
+			client, err := logseq.NewClient(srv.URL+"/api", "token", srv.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			notices := 0
+			err = checkLogseqAvailable(context.Background(), []run.Source{{Client: client, APIURL: srv.URL + "/api"}}, func(logseqProbeAttempt) {
+				notices++
+			})
+			if err == nil {
+				t.Fatal("API error was accepted")
+			}
+			wantCalls := logseqProbeAttempts
+			wantDiagnostic := "logseq unavailable"
+			if tt.auth {
+				wantCalls = 1
+				wantDiagnostic = "logseq denied access"
+			}
+			if !strings.Contains(err.Error(), wantDiagnostic) {
+				t.Fatalf("diagnostic = %s, want %s", err, wantDiagnostic)
+			}
+			if int(calls.Load()) != wantCalls || notices != wantCalls-1 {
+				t.Fatalf("calls = %d, notices = %d, want %d/%d", calls.Load(), notices, wantCalls, wantCalls-1)
+			}
+		})
+	}
+}
+
+func TestLogseqAuthFailureUnwrapsHTTPStatus(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			err := fmt.Errorf("probe failed: %w", &logseq.APIError{
+				StatusCode: status, Method: "logseq.Editor.get_all_pages", Status: "custom status text",
+				Message: "request 40119 failed after reading 403 records",
+			})
+			want := status != http.StatusInternalServerError
+			if got := isLogseqAuthFailure(err); got != want {
+				t.Fatalf("isLogseqAuthFailure = %v, want %v for status %d", got, want, status)
+			}
+		})
 	}
 }

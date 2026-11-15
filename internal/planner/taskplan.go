@@ -6,6 +6,7 @@ import (
 
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
+	"github.com/aries1980/lodo/internal/set"
 )
 
 func buildPlans(tasks []model.Task, dispositions map[string][]model.Disposition, granularity time.Duration) ([]*taskPlan, error) {
@@ -44,12 +45,12 @@ type taskPlan struct {
 	shortfall      int
 	pinnedDisps    []model.Disposition
 	stoodDownDisps []model.Disposition
-	reserved       map[int]bool
+	reserved       set.Set[int]
 	decision       TaskDecision
 }
 
 func newTaskPlan(task model.Task, dispositions []model.Disposition, granularity time.Duration) *taskPlan {
-	plan := &taskPlan{task: task, n: norm.Units(task.Duration, granularity), reserved: make(map[int]bool)}
+	plan := &taskPlan{task: task, n: norm.Units(task.Duration, granularity), reserved: set.New[int]()}
 	plan.decision = TaskDecision{
 		TaskID: task.ID,
 		Text:   task.Text,
@@ -73,7 +74,7 @@ func newTaskPlan(task model.Task, dispositions []model.Disposition, granularity 
 	stoodDown := 0
 	pinned := 0
 	for _, disposition := range dispositions {
-		plan.reserved[disposition.BlockIndex] = true
+		plan.reserved.Add(disposition.BlockIndex)
 		switch disposition.Kind {
 		case model.DispositionPinned:
 			plan.pinnedDisps = append(plan.pinnedDisps, disposition)
@@ -88,7 +89,7 @@ func newTaskPlan(task model.Task, dispositions []model.Disposition, granularity 
 		// A Pin overrides Plan, Priority and any recorded dispositions.
 		plan.pinnedDisps = nil
 		plan.stoodDownDisps = nil
-		plan.reserved = map[int]bool{}
+		clear(plan.reserved)
 		plan.pinnedSlots = plan.n
 		plan.placed = plan.n
 		plan.decision.Eligibility = Eligibility{Pin: true, RequiredSlots: plan.n, PinnedSlots: plan.n, FlexibleSlots: 0, Considered: true}
@@ -117,7 +118,7 @@ func indexDispositions(dispositions []model.Disposition) (map[string][]model.Dis
 		task  string
 		block int
 	}
-	seen := make(map[key]bool)
+	seen := set.New[key]()
 	for _, disposition := range dispositions {
 		switch disposition.Kind {
 		case model.DispositionPinned:
@@ -135,10 +136,9 @@ func indexDispositions(dispositions []model.Disposition) (map[string][]model.Dis
 			return nil, fmt.Errorf("planner: task %s: negative block index %d", disposition.TaskID, disposition.BlockIndex)
 		}
 		seenKey := key{task: disposition.TaskID, block: disposition.BlockIndex}
-		if seen[seenKey] {
+		if !seen.Add(seenKey) {
 			return nil, fmt.Errorf("planner: task %s: more than one disposition for block %d", disposition.TaskID, disposition.BlockIndex)
 		}
-		seen[seenKey] = true
 		out[disposition.TaskID] = append(out[disposition.TaskID], disposition)
 	}
 	return out, nil

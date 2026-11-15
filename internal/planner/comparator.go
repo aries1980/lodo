@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/aries1980/lodo/internal/grid"
@@ -96,8 +97,7 @@ func maxPlaceable(runs []placementRun, required, floor int) int {
 	for i := range runs {
 		lens[i] = runs[i].run.Slots
 	}
-	slices.Sort(lens)
-	slices.Reverse(lens)
+	slices.SortFunc(lens, func(a, b int) int { return cmp.Compare(b, a) })
 
 	sum := 0
 	for i := 0; i < min(required/floor, len(lens)); i++ {
@@ -116,7 +116,7 @@ func bestSuffixes(runs []placementRun, placed, floor int) [][]seq {
 	}
 	best[len(runs)][0] = seq{}
 
-	for i := len(runs) - 1; i >= 0; i-- {
+	for i := range slices.Backward(runs) {
 		best[i][0] = seq{}
 		limit := runs[i].run.Slots
 		for m := 1; m <= placed; m++ {

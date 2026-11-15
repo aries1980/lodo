@@ -44,7 +44,7 @@ func (f *fakeCal) mount(t *testing.T) string {
 		path := r.URL.Path
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(path, "/events/"):
-			id := path[strings.LastIndex(path, "/")+1:]
+			_, id, _ := strings.CutLast(path, "/")
 			e, ok := f.events[id]
 			if !ok {
 				w.Header().Set("Content-Type", "application/json")
@@ -90,7 +90,7 @@ func (f *fakeCal) mount(t *testing.T) string {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(e)
 		case (r.Method == http.MethodPatch || r.Method == http.MethodPut) && strings.Contains(path, "/events/"):
-			id := path[strings.LastIndex(path, "/")+1:]
+			_, id, _ := strings.CutLast(path, "/")
 			body, _ := io.ReadAll(r.Body)
 			var patch calendar.Event
 			if err := json.Unmarshal(body, &patch); err != nil {
@@ -121,7 +121,7 @@ func (f *fakeCal) mount(t *testing.T) string {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(cur)
 		case r.Method == http.MethodDelete && strings.Contains(path, "/events/"):
-			id := path[strings.LastIndex(path, "/")+1:]
+			_, id, _ := strings.CutLast(path, "/")
 			f.writes = append(f.writes, "DELETE "+id)
 			if _, ok := f.events[id]; !ok {
 				w.Header().Set("Content-Type", "application/json")

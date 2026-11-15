@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"encoding/json/jsontext"
-	"encoding/json/v2"
+
+	"github.com/aries1980/lodo/internal/jsonx"
 )
 
 // DefaultTimeout bounds one API call. The app runs locally; a call that sits
@@ -60,13 +61,7 @@ type errorBody struct {
 
 // call issues one POST and decodes out (which may be JSON null).
 func (c *apiClient) call(ctx context.Context, method string, args []any, out any) error {
-	body, err := json.Marshal(request{Method: method, Args: args},
-		json.Deterministic(true),
-		json.FormatNilSliceAsNull(true),
-		json.FormatNilMapAsNull(true),
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.EscapeForHTML(true),
-	)
+	body, err := jsonx.Marshal(request{Method: method, Args: args})
 	if err != nil {
 		return fmt.Errorf("logseq api: %s: %w", method, err)
 	}
@@ -93,23 +88,17 @@ func (c *apiClient) call(ctx context.Context, method string, args []any, out any
 		return fmt.Errorf("logseq api: %s: %w", method, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("logseq api: %s: HTTP %s: %s", method, resp.Status, snippet(data))
+		return &APIError{StatusCode: resp.StatusCode, Method: method, Status: resp.Status, Message: snippet(data)}
 	}
 
 	var apiErr errorBody
-	if err := json.Unmarshal(data, &apiErr,
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.AllowDuplicateNames(true),
-	); err == nil && apiErr.Error != "" {
+	if err := jsonx.Unmarshal(data, &apiErr); err == nil && apiErr.Error != "" {
 		return fmt.Errorf("logseq api: %s: %s", method, apiErr.Error)
 	}
 	if out == nil {
 		return nil
 	}
-	if err := json.Unmarshal(data, out,
-		json.MatchCaseInsensitiveNames(true),
-		jsontext.AllowDuplicateNames(true),
-	); err != nil {
+	if err := jsonx.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("logseq api: %s: decode: %w (body: %s)", method, err, snippet(data))
 	}
 	return nil
@@ -134,17 +123,16 @@ func errorCause(err error) error {
 // private-CA endpoint fails here with x509 unknown authority. The hint
 // points at the scheme first, then the two ways to trust the endpoint.
 func tlsHint(err error) string {
+	const hint = "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
+		"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
 	if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
-		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
-			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
+		return hint
 	}
 	if _, ok := errors.AsType[x509.CertificateInvalidError](err); ok {
-		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
-			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
+		return hint
 	}
 	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
-		return "check logseq.api_url scheme (Logseq defaults to http://127.0.0.1:12315/api); " +
-			"for self-signed TLS set logseq.insecure: true, or install the CA in the system store"
+		return hint
 	}
 	return ""
 }

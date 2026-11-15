@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"fmt"
 	"time"
 )
@@ -26,13 +27,12 @@ func (d CivilDate) String() string {
 
 // Before reports whether d is before other.
 func (d CivilDate) Before(other CivilDate) bool {
-	if d.Year != other.Year {
-		return d.Year < other.Year
-	}
-	if d.Month != other.Month {
-		return d.Month < other.Month
-	}
-	return d.Day < other.Day
+	return d.Compare(other) < 0
+}
+
+// Compare orders dates by year, month, then day.
+func (d CivilDate) Compare(other CivilDate) int {
+	return cmp.Or(cmp.Compare(d.Year, other.Year), cmp.Compare(d.Month, other.Month), cmp.Compare(d.Day, other.Day))
 }
 
 // AddDays returns d shifted by n calendar days.
