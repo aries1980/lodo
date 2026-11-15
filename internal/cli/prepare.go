@@ -77,7 +77,7 @@ type command struct {
 // order: config and credentials, the graph clients and their probe, the Time
 // Maps page, the calendar, then the store. The store opens last so a run that
 // fails on credentials leaves no database behind; now is captured after the
-// network work, as it always has been.
+// network work, from the pinned clock (--now/LODO_NOW) when one is set.
 func prepare(ctx context.Context, opts *options, ov configOverrides, yes bool, name string) (*command, error) {
 	n, ok := commandNeeds[name]
 	if !ok {
@@ -141,7 +141,7 @@ func prepare(ctx context.Context, opts *options, ov configOverrides, yes bool, n
 		c.store = st
 	}
 
-	c.now = time.Now()
+	c.now = opts.currentTime()
 	return c, nil
 }
 

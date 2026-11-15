@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -51,6 +52,12 @@ type options struct {
 	// errOut receives prompts and operational notes; Run wires in the
 	// process stderr, so --json stdout stays machine-readable.
 	errOut io.Writer
+
+	// now is the scheduling clock; nil means time.Now. --now (and its
+	// LODO_NOW default) pins it.
+	now func() time.Time
+	// nowValue is --now's raw value, parsed once before any command runs.
+	nowValue string
 }
 
 // Run builds the command tree, executes it, and returns the process exit code.
@@ -102,6 +109,9 @@ func newRootCmd(opts *options) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
+		PersistentPreRunE: func(*cobra.Command, []string) error {
+			return opts.resolveNow()
+		},
 		RunE: func(c *cobra.Command, _ []string) error {
 			opts.out = c.OutOrStdout()
 			opts.errOut = c.ErrOrStderr()
@@ -120,6 +130,8 @@ func newRootCmd(opts *options) *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.logFormat, "log-format", logFormatDefault(), i18n.T("diagnostic log format: auto|text|json (auto is text; json is JSONL on stderr for CI/cron)"))
 	root.PersistentFlags().BoolVar(&opts.disableColors, "disable-colors", false, i18n.T("disable colors in human-readable output (also NO_COLOR, TERM=dumb, non-TTY)"))
 	root.PersistentFlags().StringVar(&opts.lang, "lang", "", i18n.T("select language (also LODO_LANG, LANG, LC_ALL, LC_MESSAGES)"))
+	root.PersistentFlags().StringVar(&opts.nowValue, "now", nowDefault(), i18n.T("pin the scheduling clock to an RFC3339 instant (testing aid; also LODO_NOW)"))
+	_ = root.PersistentFlags().MarkHidden("now")
 
 	root.AddCommand(
 		newCheckCmd(opts),
