@@ -112,8 +112,8 @@ ctrun_root() {
 go_run() {
 	ctrun \
 		-v "$ROOT:/app" -v /var/tmp:/var/tmp \
-		-e GOCACHE=/var/tmp/lodo-go-cache \
-		-e GOMODCACHE=/var/tmp/lodo-go-mod-cache \
+		-e GOCACHE=/var/tmp/go-cache \
+		-e GOMODCACHE=/var/tmp/go-mod-cache \
 		-w /app "$@"
 }
 
@@ -122,8 +122,8 @@ lint_run() {
 	# GOTOOLCHAIN=local keeps it from downloading a whole toolchain to lint.
 	ctrun \
 		-v "$ROOT:/app" -v /var/tmp:/var/tmp \
-		-e GOCACHE=/var/tmp/lodo-go-cache \
-		-e GOMODCACHE=/var/tmp/lodo-go-mod-cache \
+		-e GOCACHE=/var/tmp/go-cache \
+		-e GOMODCACHE=/var/tmp/go-mod-cache \
 		-e GOTOOLCHAIN=local \
 		-w /app "$@"
 }
