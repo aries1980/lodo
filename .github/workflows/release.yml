@@ -74,6 +74,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build and package
+        id: pkg
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -87,23 +88,29 @@ jobs:
           go build -trimpath -ldflags '-s -w' -o "dist/lodo${ext}" ./cmd/lodo
           name="lodo_${VERSION}_${GOOS}_${GOARCH}"
           cp "dist/lodo${ext}" LICENSE README.md stage/
-          tar -czf "dist/${name}.tar.gz" -C stage .
+          if [ "$GOOS" = "windows" ]; then
+            (cd stage && zip -qr "../dist/${name}.zip" .)
+            echo "file=${name}.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar -czf "dist/${name}.tar.gz" -C stage .
+            echo "file=${name}.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
           rm -rf stage "dist/lodo${ext}"
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          file: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          file: dist/${{ steps.pkg.outputs.file }}
           format: spdx-json
           output-file: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
           upload-artifact: false
       - name: Attest build provenance
         uses: actions/attest@v4
         with:
-          subject-path: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          subject-path: dist/${{ steps.pkg.outputs.file }}
       - name: Attest SBOM
         uses: actions/attest@v4
         with:
-          subject-path: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          subject-path: dist/${{ steps.pkg.outputs.file }}
           sbom-path: dist/lodo_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.spdx.json
       - uses: actions/upload-artifact@v7
         with:
@@ -112,9 +119,101 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  package:
+    name: Package ${{ matrix.packager }} ${{ matrix.arch }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        packager: [deb, rpm, apk]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: lodo-linux-${{ matrix.arch }}
+          merge-multiple: true
+          path: pkgsrc
+      - name: Build package
+        env:
+          ARCH: ${{ matrix.arch }}
+          PACKAGER: ${{ matrix.packager }}
+        run: |
+          set -eu
+          mkdir -p dist stage
+          tar -xzf "pkgsrc/lodo_${VERSION}_linux_${ARCH}.tar.gz" -C stage
+          test -f stage/lodo
+          case "$ARCH-$PACKAGER" in
+            amd64-deb) PKGARCH=amd64 ;;
+            arm64-deb) PKGARCH=arm64 ;;
+            amd64-rpm|amd64-apk) PKGARCH=x86_64 ;;
+            arm64-rpm|arm64-apk) PKGARCH=aarch64 ;;
+            *) echo "unknown $ARCH-$PACKAGER"; exit 1 ;;
+          esac
+          cat > nfpm.yaml <<EOF
+          name: "lodo"
+          arch: "${PKGARCH}"
+          platform: "linux"
+          version: "${VERSION}"
+          section: "utils"
+          priority: "optional"
+          maintainer: "Janos Feher <517870+aries1980@users.noreply.github.com>"
+          description: "Local-first CLI that reads schedulable Tasks from Logseq and projects them to Google Calendar."
+          vendor: "aries1980"
+          homepage: "https://github.com/aries1980/lodo"
+          license: "MIT"
+          contents:
+            - src: /app/stage/lodo
+              dst: /usr/bin/lodo
+              type: file
+              file_info:
+                mode: 0755
+            - src: /app/stage/LICENSE
+              dst: /usr/share/doc/lodo/copyright
+              type: file
+            - src: /app/stage/README.md
+              dst: /usr/share/doc/lodo/README.md
+              type: file
+          EOF
+          docker run --rm -v "$PWD:/app" -w /app docker.io/goreleaser/nfpm:v2.49.0 package --config /app/nfpm.yaml --packager "$PACKAGER" --target /app/dist/
+          out=$(ls dist/*."$PACKAGER" | head -1)
+          mv "$out" "dist/lodo_${VERSION}_linux_${ARCH}.${PACKAGER}"
+          rm -f nfpm.yaml
+          ls -l dist/
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          file: dist/lodo_${{ env.VERSION }}_linux_${{ matrix.arch }}.${{ matrix.packager }}
+          format: spdx-json
+          output-file: dist/lodo_${{ env.VERSION }}_linux_${{ matrix.arch }}.${{ matrix.packager }}.spdx.json
+          upload-artifact: false
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/lodo_${{ env.VERSION }}_linux_${{ matrix.arch }}.${{ matrix.packager }}
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/lodo_${{ env.VERSION }}_linux_${{ matrix.arch }}.${{ matrix.packager }}
+          sbom-path: dist/lodo_${{ env.VERSION }}_linux_${{ matrix.arch }}.${{ matrix.packager }}.spdx.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lodo-package-${{ matrix.arch }}-${{ matrix.packager }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Publish release
-    needs: build
+    needs: [build, package]
     runs-on: ubuntu-latest
     permissions:
       # Creating the release and uploading its assets.
@@ -157,13 +256,13 @@ jobs:
         run: |
           set -eu
           cd release
-          sha256sum lodo_*.tar.gz > SHA256SUMS
+          sha256sum lodo_*.tar.gz lodo_*.zip lodo_*.deb lodo_*.rpm lodo_*.apk lodo_*.spdx.json > SHA256SUMS
           cat SHA256SUMS
       - uses: sigstore/cosign-installer@v3
       - name: Sign artifacts and checksums
         run: |
           set -eu
-          for f in release/lodo_*.tar.gz; do
+          for f in release/lodo_*.tar.gz release/lodo_*.zip release/lodo_*.deb release/lodo_*.rpm release/lodo_*.apk; do
             cosign sign-blob --yes --bundle "${f}.sigstore.json" "$f"
           done
           cosign sign-blob --yes --bundle release/SHA256SUMS.sigstore.json release/SHA256SUMS

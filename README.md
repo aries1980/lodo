@@ -54,7 +54,9 @@ are owned by you, not root.
 
 A tag of the form `0.1.1` — no `v` prefix — triggers
 [`.github/workflows/release.yml`](.github/workflows/release.yml). It cross-compiles the CLI for
-Linux, macOS and Windows on both amd64 and arm64, and publishes them as a GitHub Release. The
+Linux, macOS and Windows on both amd64 and arm64, publishes `tar.gz` archives for Linux/macOS,
+`zip` archives for Windows, and `deb`/`rpm`/`apk` packages for Linux, and publishes them as a
+GitHub Release. The
 Go version comes from `go.mod`, so there is no second place to pin it.
 
 ```sh
@@ -64,14 +66,15 @@ git push origin 0.1.1
 
 | Asset | What it is |
 | --- | --- |
-| `lodo_<version>_<os>_<arch>.tar.gz` | The binary, plus `LICENSE` and `README.md` |
-| `lodo_<version>_<os>_<arch>.spdx.json` | SPDX SBOM of the matching archive |
-| `SHA256SUMS` | SHA-256 of every archive |
-| `*.sigstore.json` | Keyless Sigstore signature bundle for the archive or the checksums |
+| `lodo_<version>_linux_<arch>.tar.gz`, `lodo_<version>_darwin_<arch>.tar.gz` | The binary, plus `LICENSE` and `README.md` |
+| `lodo_<version>_windows_<arch>.zip` | The `.exe` binary, plus `LICENSE` and `README.md` |
+| `lodo_<version>_linux_<arch>.deb`, `.rpm`, `.apk` | Linux system packages installing to `/usr/bin/lodo` |
+| `lodo_<version>_<os>_<arch>.spdx.json`, `lodo_<version>_linux_<arch>.<deb,rpm,apk>.spdx.json` | SPDX SBOMs of the matching archive or package |
+| `SHA256SUMS` | SHA-256 of every archive, package and SBOM |
+| `*.sigstore.json` | Keyless Sigstore signature bundle for the archive, package or the checksums |
 | `CHANGELOG.md` | The full changelog, regenerated from the history at release time |
 
-Windows archives are gzipped tarballs like the others: Windows 10 and later ship `tar`, so
-`tar -xzf lodo_<version>_windows_amd64.tar.gz` is all it takes.
+Windows archives are zips: expand `lodo_<version>_windows_amd64.zip` and run `lodo.exe`.
 
 ### The changelog
 
