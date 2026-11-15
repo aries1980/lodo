@@ -13,6 +13,7 @@ scheduler: cron (or a manual run) calling `lodo schedule` is the intended deploy
 
 | Command | Side effects | Purpose |
 | --- | --- | --- |
+| `lodo` with no args on a TTY | none until an edit is saved; a saved edit rewrites one Logseq block | Interactive TUI: list Tasks, view raw blocks, edit in `$EDITOR` with per-Task validation (see [`tui.md`](./tui.md)) |
 | `lodo check` | none alone; creates the Time Maps page only on confirmation | Validate the graph and state: TODOs missing `duration::`, unparseable or unknown properties, unknown `time-map::` slugs, `unknown-dependency` / `dependency-cycle`, infeasible Tasks (`blocked by …`, cycles, pin violations), stood-down Blocks, orphaned event IDs. |
 | `lodo forecast` | none alone; creates the Time Maps page only on confirmation | Dry run: compute and print the Schedule that *would* be written, with shortfall reasons including dependency blocks. |
 | `lodo schedule` | calendar + SQLite | The workhorse. Reconciles the calendar, computes, and creates/updates/removes Managed Events. |
@@ -35,12 +36,21 @@ The alternative — having `schedule` trust local state and requiring the user t
 use of *Schedule* as the noun, so the name is kept rather than replaced with
 `run`/`sync`.
 
+### Bare `lodo` opens the TUI
+
+With zero args on an interactive terminal (stdin and stdout are TTYs), `lodo`
+opens the TUI instead of printing help: the Task table, raw-block view, and
+`$EDITOR` editing with a per-Task validation gate before any Logseq write
+(see [`tui.md`](./tui.md)). `lodo --help`, any subcommand, `lodo --json`, or
+zero args without a TTY keeps the existing path — the TUI never starts in
+pipes, CI, or `--json` runs.
+
 ## Flags
 
 | Flag | Applies to | Effect |
 | --- | --- | --- |
 | `--dry-run` | `schedule` | Same as `forecast`. |
-| `--json` | all | Machine-readable result on stdout. |
+| `--json` | all | Machine-readable result on stdout. Never launches the TUI. |
 | `--log-format auto\|text\|json` | all | Diagnostic log format on stderr: `text` (default, `auto` is `text`), `json` is JSONL for CI/cron. Also `LODO_LOG_FORMAT`. |
 | `--disable-colors` | all | Disable colors in human-readable output. Also off with `NO_COLOR`, `TERM=dumb`, or non-TTY. |
 | `--no-launch-browser` | `auth google` | Headless machines: finish the grant on another device, paste the redirect back. |
@@ -64,8 +74,10 @@ and `Weekends` windows (see [`time-maps.md`](./time-maps.md)) — which the user
 then edits in Logseq. Anything but an explicit `y`/`yes` declines (including
 end-of-input, so a non-interactive run without `-y` never hangs), and the run
 continues without the page, reporting `missing-time-maps-page` as before.
-This confirmation is the one graph write Lodo ever makes
-(see [ADR 0015](../ADRs/0015-bootstrap-missing-time-maps-on-confirmation.md));
+This confirmation is the bootstrap write; the TUI's explicit per-Task saves are
+the second graph write path
+(see [ADR 0017](../ADRs/0017-tui-edits-logseq-blocks-on-explicit-save.md) and
+[`tui.md`](./tui.md));
 `check` otherwise writes nowhere.
 
 ## Exit codes

@@ -90,6 +90,18 @@ func newRootCmd(opts *options) *cobra.Command {
 		Short:         i18n.T("Schedule Logseq tasks onto one Google Calendar"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			opts.out = c.OutOrStdout()
+			opts.errOut = c.ErrOrStderr()
+			if opts.json {
+				return c.Help()
+			}
+			if !ttyCheck() {
+				return c.Help()
+			}
+			return runTUI(opts, configOverrides{})
+		},
 	}
 	root.PersistentFlags().BoolVar(&opts.json, "json", false, i18n.T("machine-readable output"))
 	root.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, i18n.T("show placement reasoning (full detail: lodo explain <task-id>)"))
