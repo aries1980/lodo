@@ -23,6 +23,7 @@ import (
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/run"
 	"github.com/aries1980/lodo/internal/store"
+	"github.com/aries1980/lodo/internal/theme"
 )
 
 // loadSources loads config and credentials, applies per-run overrides, resolves
@@ -165,7 +166,7 @@ func runCheck(opts *options, ov configOverrides, strict, yes bool) error {
 	cal, err := calendarFull(context.Background(), creds, cfg)
 	if err != nil {
 		if strings.Contains(err.Error(), "google credentials") {
-			return runCheckWithoutCalendar(opts, strict, cfg, sources, st)
+			return runCheckWithoutCalendar(opts, strict, cfg, sources, st, th)
 		}
 		return &exitError{code: codeError, err: err}
 	}
@@ -264,13 +265,11 @@ func buildCheckOutcomeWithoutCalendar(cfg config.Config, sources []run.Source, s
 // runCheckWithoutCalendar is the no-credentials fallback: the graph plus
 // stored stood-down, planned with no busy time. No in-memory reconcile
 // happens here — with no observed events, every binding would look deleted.
-// Orphaned needs the calendar, so it stays empty.
-func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store) error {
+// Orphaned needs the calendar, so it stays empty. The theme is the one the
+// caller already resolved (and warned about, when invalid), so a bad
+// ui.theme warns exactly once per run.
+func runCheckWithoutCalendar(opts *options, strict bool, cfg config.Config, sources []run.Source, st *store.Store, th theme.Theme) error {
 	start := logRunStart(opts, "check")
-	th, warn := resolveTheme(cfg, opts.config)
-	if warn != "" {
-		_, _ = fmt.Fprintln(errWriter(opts), warn)
-	}
 	style := newStyler(opts.out, opts.disableColors, th)
 	now := time.Now()
 	outcome, err := buildCheckOutcomeWithoutCalendar(cfg, sources, st, now)
