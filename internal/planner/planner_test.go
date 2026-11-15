@@ -77,7 +77,8 @@ func describe(blocks []model.Block) []string {
 	return out
 }
 
-// TestPlacementComparatorGolden is ADR 0010's worked-examples table.
+// TestPlacementComparatorGolden pins the worked-examples table in
+// docs/content/specs/scheduling.md. The key order is ADR 0010.
 func TestPlacementComparatorGolden(t *testing.T) {
 	tests := []struct {
 		name    string

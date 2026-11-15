@@ -3,45 +3,34 @@ title: "Dependencies are strict finish-to-start with SkedPal-parity nesting"
 weight: 110
 ---
 
-Task dependencies plus parent/child nesting were deferred in scope. This record
-fixes both as one slice: explicit `depends:: ((uuid))` edges plus containers
-and `order:: sequential|parallel` chains, SkedPal-style.
+> Status: **accepted.** Property rules live in [tasks.md](../specs/tasks.md).
 
-## Decisions
+Explicit `depends:: ((uuid))` edges and parent/child nesting are one slice. The order
+is strict finish-to-start: a dependent waits until every dependency's placed Blocks
+have ended. Several dependencies are AND. Any shortfall, and any stood-down Block,
+blocks the dependent entirely. `DONE` and `CANCELLED` satisfy a dependency. A missing
+target, a note, or a `TODO` without a duration is an error and blocks. A cycle,
+including a self-reference, is a hard stop. The Tasks in it stay unscheduled, and the
+cycle is reported.
 
-- `depends::` is a strict comma `((uuid))` list (block refs, never typed UUIDs).
-  Finish-to-start on placed Blocks; AND over multiple deps; full-gate (any
-  shortfall blocks the dependent); stood-down counts as unplaced.
-- `DONE`/`CANCELLED` satisfy; missing, notes, and `TODO`-without-duration are
-  `unknown-dependency` errors that block. Malformed entries are
-  `bad-property-value` and block. Cycles (including self) are hard stops, never
-  silently broken (unlike SkedPal, which ignores them).
-- Topological order overrides time-bound/flexible buckets; the existing
-  comparator is the tie-break among unrelated Tasks. Plan wins (never slide past
-  `plan-end::`, report `blocked by …`); Pin wins (stay + report violation).
-- Nesting: a Task with Task descendants is a container (unscheduled, duration
-  ignored); checklist = `TODO` without `duration::`. `order:: sequential`
-  chains descendant leaves in outline order (all upfront, no one-at-a-time).
-  `time-map/priority/plan-*/order` cascade child > parents > page;
-  `depends` never inherits. `DONE` parents suppress subtrees.
+A Task with Task descendants is a container. It is not scheduled, and its own duration
+is ignored. `order:: sequential` chains descendant leaves in outline order, all of them
+up front. `order:: parallel` leaves them unordered. `time-map`, `priority`, `plan-*`,
+and `order` cascade from the child, then parent blocks, then the page. `depends` does
+not inherit. A `DONE` parent suppresses its subtree.
 
-## Alternatives
+The Plan wins over the chain. A dependency does not push a Task past `plan-end::`; the
+shortfall is reported. A Pin wins over the chain. A `scheduled::` stays at its authored
+time, and the violation is reported. Among unrelated Tasks the usual consideration
+order is the tie-break.
 
-- Soft ordering (consider after, allow overlap): rejected — users cannot reason
-  about "draft before review" that overlaps.
-- Container duration summed and scheduled: rejected — double-books real work.
-- Cycle auto-break by outline: rejected — silently violates an explicit order,
-  against scheduling's never-silently-violate rule.
-- SkedPal one-at-a-time sequential and gap fields: deferred to a later slice.
+Soft ordering, where a dependent is merely considered later and may overlap, was
+rejected. "Draft before review" is not a rule a person can check if the two overlap.
+Scheduling a container for the sum of its children was rejected. The leaves are the
+work, and scheduling the parent as well double-books them. Breaking a cycle by outline
+order was rejected. That would drop an explicit order and report nothing. SkedPal's
+one-at-a-time sequential gating, and gap fields, stay deferred.
 
-## Consequences
-
-- Resolver materialises effective `Depends` (explicit + sequential chains,
-  containers expanded to leaves) and reports `unknown-dependency` /
-  `dependency-cycle` in `check`; planner enforces temporal gating and reports
-  `blocked by`, `dependency cycle`, `unknown dependency`, `pin precedes
-  dependency` in `forecast`/`schedule`.
-- `Snapshot` gains `depends` + `order`, so dependency/structure edits release
-  stood-down Blocks.
-- Guides gain `guides/entering-tasks.md` (file-graph template, `((`
-  autocomplete, `Tab` nesting, `check` loop).
+A change to dependencies or nesting is a change to the Task's inputs, so it can release
+a stood-down Block. The resolver reports cycles and unknown dependencies. The planner
+reports a Block left unplaced because a dependency is unmet.

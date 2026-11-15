@@ -3,6 +3,7 @@ title: "Apply writes the calendar before the store"
 weight: 70
 ---
 
+> Status: **accepted.**
 
 Lodo writes to two systems with no shared transaction: Google Calendar and its SQLite
 store. Every `schedule` writes the calendar first and commits the store second. A crash
@@ -26,3 +27,7 @@ and is why it must not be "simplified" away.
 Every individual write is idempotent under replay because event IDs are deterministic,
 derived from the Task's block UUID and Block index. An event whose computed instant
 already matches the store is left untouched, so a no-op run issues no writes.
+
+What a user edit on the write calendar means — a move pins the Block, a delete stands
+it down — is [ADR 0019](./0019-calendar-edits-are-user-intent.md). This record is the
+order of the two writes and the crash marker.

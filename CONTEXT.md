@@ -1,8 +1,9 @@
 # Lodo — agent/developer map
 
 Local-first CLI that reads schedulable Tasks from a Logseq graph, computes a Schedule, and
-projects it to **one** Google Calendar. Logseq is the only interface for intent. The CLI
-renders commands and output; `internal/planner` decides placements.
+projects it to **one** Google Calendar. Intent is authored in Logseq or in the TUI
+(ADR 0017); a TUI save writes the block into the graph, and scheduling reads it
+from there. The CLI renders commands and output; `internal/planner` decides placements.
 
 ## Core pipeline
 
@@ -22,9 +23,11 @@ flowchart LR
   gridPkg --> modelPkg
 ```
 
-1. **Read** Logseq graph payloads (`internal/logseq`) — HTTP only, read-only (ADR 0002).
+1. **Read** Logseq graph payloads (`internal/logseq`) — HTTP only (ADR 0002).
+   Two writes share that API: a missing Time Maps page is created on confirmation
+   (ADR 0015), and the TUI saves one validated block (ADR 0017).
    `internal/run` walks pages and block trees. One Logseq graph is a `run.Source`;
-   several sources are read the same way.
+   several sources are read the same way (ADR 0021).
 2. **Resolve** (`internal/resolve`) turns those payloads into Tasks, Time Maps,
    dependencies, provenance, and validation issues. Resolution is deterministic and
    reports an issue when data is unparseable or ambiguous. Parsing lives in
@@ -35,7 +38,8 @@ flowchart LR
    `run.Forecast` wrapper) is that plan with no store: the dry run behind `forecast`
    and `schedule --dry-run`.
 4. **Reconcile and project** (`internal/reconcile`, `internal/calendar`, `internal/store`).
-   `schedule` and `check` fold calendar edits into dispositions before planning.
+   `schedule` and `check` fold calendar edits into dispositions before planning
+   (a move pins, a delete stands that Block down — ADR 0019).
    `internal/store` (SQLite) is the system of record for bindings, snapshots, and
    dispositions (ADR 0001). The calendar is a projection. Writes go to the calendar
    before the store commit (ADR 0007). `internal/gauth` is the Google OAuth loopback
@@ -64,7 +68,7 @@ not resolve the graph or recompute the Schedule.
 - `internal/parse`, `internal/norm`: parsing and small normalizations. Malformed input
   is an error; callers report issues.
 - `internal/reconcile`: observed calendar events become pinned and stood-down
-  dispositions. Managed Event ids are derived here.
+  dispositions (ADR 0019). Managed Event ids are derived here.
 - `internal/calendar`: Google Calendar list/get/insert/patch/delete and busy masks.
   One calendar is written; the others are busy-only reads.
 - `internal/gauth`: Google OAuth loopback for `lodo auth`.

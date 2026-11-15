@@ -3,6 +3,8 @@ title: "Google Tasks API is out of scope; Calendar Events are the sole projectio
 weight: 120
 ---
 
+> Status: **accepted.**
+
 Lodo does not read or write Google Tasks. The single projection remains Calendar
 Events on the one calendar named by `calendar.id`
 ([`calendar.md`](../specs/calendar.md)).
@@ -16,7 +18,9 @@ second, lossy projection of the same Schedule kept in SQLite
 ## Alternatives
 
 - Mirror unscheduled work or shortfall as a task list: rejected, `check`
-  already reports it, and Logseq stays the only interface.
+  already reports it. Intent is authored in Logseq or in the TUI
+  ([ADR 0017](./0017-tui-edits-logseq-blocks-on-explicit-save.md)), not in a
+  third task list.
 - Write completion back via Tasks: rejected, completion lives in Logseq
   (`DONE`/`CANCELLED`); Calendar reconciliation already reads user intent
   (moves become Pinned Blocks, deletes stand Blocks down).

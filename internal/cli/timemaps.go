@@ -1,8 +1,9 @@
 // The prompted bootstrap of a missing Time Maps page: when the configured
 // page is absent, check/forecast/schedule offer to create it with the
-// recommended defaults below, which the user then edits in Logseq. This is
-// Lodo's one graph write, and it only ever happens on an explicit yes —
-// interactively, or up front with -y/--yes. See ADR 0015.
+// recommended defaults below, which the user then edits in Logseq. The
+// bootstrap writes only that new page, and only on an explicit yes —
+// interactively, or up front with -y/--yes. See ADR 0015. The TUI's block
+// save is a separate graph write (ADR 0017).
 package cli
 
 import (

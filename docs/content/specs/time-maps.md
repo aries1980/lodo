@@ -86,7 +86,8 @@ hours; overload spills tier-first into the default map instead of shortfalling.
 ## Semantics (v0.1)
 
 - Windows recur weekly and are **absolute local times**: they stay 09:00–11:00 in the
-  user's current timezone, mirroring SkedPal's stated behaviour.
+  user's current timezone, mirroring SkedPal's stated behaviour
+  ([ADR 0008](../ADRs/0008-scheduling-timeline-is-a-granularity-grid.md)).
 - Maps may overlap. A Task with several maps draws on the union of their windows;
   where two tiers cover one slot, the better tier wins. A project Task prefers
   its own map first, then spills into the default map at the same tier or

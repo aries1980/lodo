@@ -3,6 +3,7 @@ title: "The Schedule is a pure function of current intent"
 weight: 60
 ---
 
+> Status: **accepted.**
 
 The Schedule is computed from scratch on every run: the planner is a pure function of the
 Tasks, Time Maps, busy time, Pins, Calendar dispositions and config that exist *now*. The
@@ -11,6 +12,14 @@ snapshots and event bindings — not a scheduling input. The two hard guarantees
 [`scheduling.md`](../specs/scheduling.md) then hold by construction: the same inputs
 produce an identical Schedule, and a run with no changed inputs moves nothing. A wiped
 store schedules identically to a populated one.
+
+The objective inside that function is front-loading. A Task is placed as early as its
+Plan, Time Maps, and busy time allow. Packing those hours against the deadline was the
+alternative: earlier free time would sit empty, and a flexible Task would have nothing
+to pack against. The comparator that carries front-loading is
+[ADR 0010](./0010-placement-comparator.md). Preference tiers run before it
+([ADR 0014](./0014-preference-tiers-before-the-comparator.md)), so an earlier yellow
+hour does not beat a later green one.
 
 The price is that "minimal-churn displacement" is an *emergent* property, not an enforced
 one. Priority ordering plus front-loading keep unrelated Blocks put in the normal case,

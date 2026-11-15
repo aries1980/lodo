@@ -76,7 +76,8 @@ calendar:
 ## Multiple graphs
 
 One endpoint always serves its current graph only, so each graph needs its
-own Logseq window on its own HTTP port. List them under `logseq.graphs`
+own Logseq window on its own HTTP port
+([ADR 0021](../ADRs/0021-each-graph-is-its-own-logseq-client.md)). List them under `logseq.graphs`
 (in priority order — ties break by list order, then outline order):
 
 ```yaml

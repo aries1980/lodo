@@ -3,6 +3,8 @@ title: "Preference tiers filter free slots before the placement comparator"
 weight: 140
 ---
 
+> Status: **accepted.**
+
 Time Map windows already carry `green`, `yellow`, or `red`, and an absent tier
 word means green. Placement now uses that word. Hours still required are
 searched in three passes: green, then yellow, then red. Each pass runs the
@@ -29,3 +31,6 @@ is not emitted, and those hours may spill into a later tier.
 - A map that uses yellow or red changes placement on the next `schedule`.
   A map whose windows are all green (the default) places as before.
 - A flexible Task may sit later in the week in order to stay in green.
+- A Task that names its own map prefers that map, then spills into the default map
+  at the same tier or worse. Spill does not climb into a better tier than the
+  Task's own best.

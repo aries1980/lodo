@@ -3,5 +3,5 @@ title: Guides
 weight: 15
 ---
 
-How to use Lodo in Logseq (file-graph). Start with
-[Entering Tasks](entering-tasks.md).
+How to enter Tasks in Logseq (file-graph). The TUI edits the same blocks.
+Start with [Entering Tasks](entering-tasks.md).

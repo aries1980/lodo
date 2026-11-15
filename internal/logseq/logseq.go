@@ -1,5 +1,6 @@
-// Package logseq reads a Logseq graph over its HTTP API (ADR 0002: HTTP only,
-// read-only).
+// Package logseq talks to a Logseq graph over its HTTP API (ADR 0002: HTTP
+// only). Reads are the common path. The two writes are the Time Maps bootstrap
+// (ADR 0015) and a validated TUI block save (ADR 0017).
 //
 // The Client is an interface with one adapter per graph flavour: the
 // file-based graph today, the DB graph after Logseq's planned upgrade. The

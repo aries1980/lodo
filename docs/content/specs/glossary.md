@@ -31,7 +31,8 @@ _Avoid_: locked block, fixed block, override
 _Note_: The time *and span* are pinned, not the title — a Pinned Block stays where
 the user put it, at the length they gave it, and adopts the Task's current text on
 recompute. It persists until its event is deleted — surviving unrelated changes
-to the Task's inputs — and is distinct from a **Pin**, which the user authors in Logseq.
+to the Task's inputs — and is distinct from a **Pin**, which the user authors
+on the Task (`scheduled::`), in Logseq or in the TUI.
 
 **Stood down**:
 A Block whose Managed Event the user deleted in the calendar. Lodo will not recreate
@@ -63,7 +64,8 @@ _Avoid_: fixed event, appointment, booking
 
 **Deadline**:
 A reference due date on a Task, for the user's own benefit and for filtering. A
-Deadline never by itself causes a Task to be scheduled — only a Plan does.
+Deadline never by itself causes a Task to be scheduled — only a Plan does
+([ADR 0018](../ADRs/0018-deadline-is-a-label.md)).
 _Avoid_: due date, plan end, target date
 
 **Priority**:
@@ -79,7 +81,7 @@ peers the order is graph order, `priority::`, outline order, then graph name and
 as final determinism fallbacks. Outline order — depth-first, top-to-bottom Logseq
 order — is the last meaningful tie-break, so moving a block silently re-prioritises
 it; `forecast` / `schedule --verbose` and `lodo explain` surface when it decided
-placement.
+placement ([ADR 0022](../ADRs/0022-outline-order-is-a-priority.md)).
 _Avoid_: tiebreaker, tie breaker
 _Note_: The placement comparator (ADR 0010) needs no tie-break; its keys are total.
 

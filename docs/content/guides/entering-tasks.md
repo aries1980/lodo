@@ -4,10 +4,10 @@ weight: 10
 ---
 
 How to enter a Task in Logseq (file-graph) so Lodo schedules it, including
-`depends::` chains and nesting. Logseq holds intent and Lodo only reads it —
-you author in the graph, Lodo projects Blocks onto the calendar — with one
-exception: if the Time Maps page is missing, Lodo offers to create it with
-recommended defaults on your confirmation (see
+`depends::` chains and nesting. The same block can be edited in the TUI; a
+save writes it back into the graph, which is what scheduling reads. If the
+Time Maps page is missing, Lodo offers to create it with recommended defaults
+on your confirmation (see
 [Missing Time Maps page](../specs/cli.md#missing-time-maps-page)).
 
 Spec references: [`tasks.md`](../specs/tasks.md) (what a Task is),
@@ -318,4 +318,6 @@ What Lodo sees:
 - `lodo forecast`: dry-run Blocks by day + `Shortfall:` with reasons
   (`blocked by incomplete dependencies`, `dependency cycle`, `unknown
   dependency`, `pin precedes dependency`).
-- Fix in Logseq, re-run. No writes to the graph ever happen.
+- Fix the block in Logseq or in the TUI, then re-run. A TUI save writes that
+  block after the validation gate. `check` writes only a missing Time Maps
+  page, and only when you confirm.

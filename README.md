@@ -9,9 +9,10 @@ Calendar.
 
 ## How it fits together
 
-Logseq is where intent lives (Tasks, Time Maps) and is the only interface. Lodo is a CLI
-that computes a schedule and writes it to one Google Calendar. Local SQLite state is the
-source of truth for the schedule; the calendar is a projection of it.
+Tasks and Time Maps are authored in Logseq or in Lodo's TUI. A TUI save writes the
+block back to the graph, which is what a later schedule reads. Lodo computes a schedule
+and writes it to one Google Calendar. Local SQLite state is the source of truth for the
+schedule; the calendar is a projection of it.
 
 ```mermaid
 flowchart LR
@@ -20,7 +21,7 @@ flowchart LR
     CAL[("Google Calendar")]
     LODO{{"Lodo CLI"}}
     DB[("SQLite")]
-    LS -->|read-only| LODO
+    LS <-->|authored blocks| LODO
     CFG --> LODO
     CAL -->|busy time + user edits| LODO
     LODO -->|Managed Events| CAL

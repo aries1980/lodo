@@ -6,16 +6,20 @@ weight: 80
 
 > Status: **draft (v0.1).**
 
-## Direction: read-only, except one prompted bootstrap
+## Direction: reads, plus two explicit writes
 
-In v0.1 Lodo **only reads** the Logseq graph, with one exception: when the
-configured Time Maps page is missing, `check`/`forecast`/`schedule` offer to
-create it with the recommended defaults, on explicit confirmation
+In v0.1 Lodo reads the Logseq graph, with two write paths, both explicit:
+when the configured Time Maps page is missing, `check`/`forecast`/`schedule`
+offer to create it with the recommended defaults, on explicit confirmation
 (interactively, or up front with `-y`/`--yes`). See
 [ADR 0015](../ADRs/0015-bootstrap-missing-time-maps-on-confirmation.md).
-Lodo never writes Tasks, Blocks, or properties. The Schedule lives in SQLite
-and is projected onto the Calendar; the graph
-is the source of truth for *intent* and nothing else.
+And the TUI saves a full Logseq block through `logseq.Editor.update_block`
+only after the user quits `$EDITOR` and the edit passes the per-Task
+validation gate. See [`tui.md`](./tui.md) and
+[ADR 0017](../ADRs/0017-tui-edits-logseq-blocks-on-explicit-save.md).
+Nothing else writes Tasks, Blocks, or properties. Intent is authored in Logseq
+or in the TUI; the TUI's save is what puts that intent in the graph. The
+Schedule lives in SQLite and is projected onto the Calendar.
 
 This is deliberate. Logseq is a second writer to the same graph: writes made behind a
 running Logseq can be overwritten or ignored, and a written-back schedule would have to
@@ -45,9 +49,10 @@ inputs it last read, so it can tell which Tasks changed without diffing the whol
 
 ## Availability probe (fail fast)
 
-Every command that reads the graph (`check` / `forecast` / `schedule` / `explain`)
-probes each source before touching the calendar or the store. `refresh` never reads
-the graph and `auth` never dials it, so neither probes.
+Every command that reads the graph (`check` / `forecast` / `schedule` / `explain`
+plus bare-`lodo` TUI) probes each source before touching the calendar or the
+store. `refresh` never reads the graph and `auth` never dials it, so neither
+probes.
 
 - The first ping gets 2s; each retry doubles it (2s → 4s → 8s, 3 attempts by default),
   so a momentarily busy app gets more room while a dead one still fails fast (~14s

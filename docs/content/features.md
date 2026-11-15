@@ -15,15 +15,16 @@ flowchart LR
     CAL[("Google Calendar")]
     LODO{{"Lodo CLI"}}
     DB[("SQLite")]
-    LS -->|read-only| LODO
+    LS <-->|authored blocks| LODO
     CFG --> LODO
     CAL -->|busy time + user edits| LODO
     LODO -->|Managed Events| CAL
     LODO <-->|assignments| DB
 ```
 
-* **Logseq is the interface.** Tasks and Time Maps live in the graph. Lodo never
-  writes Tasks back (except one prompted bootstrap, see below).
+* **Logseq and the TUI are the interfaces for intent.** Tasks and Time Maps live in
+  the graph. The TUI authors a Task and writes the block on save. A missing Time
+  Maps page is created on confirmation. The Schedule is not written back.
 * **The Schedule lives in SQLite.** The calendar is a projection of it.
 * **A CLI you invoke.** `check`, `forecast`, `schedule`, `refresh`, `explain <query>`,
   `auth google`. Cron calling `lodo schedule` is the intended deployment; `explain`
@@ -119,5 +120,5 @@ chains stay graph-local. See [Configuration](specs/configuration.md) and
 ## What Lodo is not (v0.1)
 
 Bundling, buffers, auto-defer, zones/budgets, recurring habits, Outlook/iCloud,
-write-back into the graph, NLP, any UI. Full list in
+a Schedule written back into the graph, NLP, any UI beyond the TUI. Full list in
 [Scope](specs/scope.md).

@@ -3,6 +3,7 @@ title: "Lodo is a single Go binary"
 weight: 90
 ---
 
+> Status: **accepted.**
 
 Lodo is implemented in Go and ships as one static binary, invoked by cron or by hand;
 there is no interpreter, no virtualenv and no daemon. Go's

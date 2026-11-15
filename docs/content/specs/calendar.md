@@ -74,7 +74,8 @@ Everything else on the write calendar, and everything on a read calendar, is an
 
 ### Task identity
 
-A Task is identified across runs by its **Logseq block UUID**, not its title. Renaming a
+A Task is identified across runs by its **Logseq block UUID**, not its title
+([ADR 0020](../ADRs/0020-task-identity-is-the-block-uuid.md)). Renaming a
 Task does not orphan its Blocks or its calendar events. Block UUIDs must be unique
 across every configured graph: Lodo refuses to run when two graphs (for example a
 cloned graph) report the same Task UUID, because event ids and local keys use that UUID
@@ -185,7 +186,8 @@ flowchart TD
     E2["Event without lodo=true<br/>any calendar"] --> BUSY2["External Event: busy time<br/>never moved"]
 ```
 
-Every `schedule` reconciles first. The rules:
+Every `schedule` reconciles first. A move, a delete, and an ended event are user
+intent ([ADR 0019](../ADRs/0019-calendar-edits-are-user-intent.md)). The rules:
 
 | Observed | Meaning | Lodo's response |
 | --- | --- | --- |
@@ -244,7 +246,11 @@ adopts. A crash after a patch leaves the old binding, but the event carries Lodo
 instead of inventing a user move. See
 [ADR 0007](../ADRs/0007-write-the-calendar-before-the-store.md).
 
+Shortfall suggestions are in v0.1. They are advice, and Lodo does not apply them
+([scheduling](./scheduling.md#infeasibility),
+[report, do not repair](../ADRs/#report-do-not-repair)).
+
 ## Deferred
 
-Auto-Defer; suggestions; writing completion back; free/busy-only calendar shares;
+Auto-Defer; writing completion back; free/busy-only calendar shares;
 per-event reminders; Outlook and iCloud.

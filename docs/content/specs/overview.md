@@ -22,7 +22,6 @@ flowchart LR
     Task -->|how long| Duration
     Task -->|ordering| Priority
     Task -->|belongs to| TimeMap["Time Map"]
-    Task -->|refuses to cross| Deadline
 
     TimeMap -->|constrains hours of| Scheduler
     Plan -->|constrains window of| Scheduler
@@ -41,7 +40,7 @@ flowchart LR
     LS[("Logseq graph<br/>Tasks = TODO blocks")]
     CFG[/"Lodo config<br/>Time Maps, granularity, window"/]
     CAL[("Google Calendar<br/>busy time + External Events")]
-    LODO{{"Lodo CLI<br/><code>schedule</code> / <code>refresh</code>"}}
+    LODO{{"Lodo CLI<br/><code>schedule</code> / <code>refresh</code><br/>TUI reads Tasks,<br/>writes blocks on save"}}
     DB[("Local state<br/>SQLite")]
     OUT["Managed Events<br/>(write)"]
 

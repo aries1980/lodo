@@ -95,6 +95,7 @@ compete; it does not override a Plan window or a Time Map.
 A hard, externally-imposed due date, for the user's benefit and for filtering. It never
 causes a Task to be placed — only a Plan does — and Lodo may schedule a Task after its
 Deadline if that is what the Plan says. Reuses Logseq's native `deadline::`.
+See [ADR 0018](../ADRs/0018-deadline-is-a-label.md).
 
 ### Dependencies — *what waits for what*
 
@@ -145,6 +146,7 @@ A Task's duration may span several Blocks when one contiguous window cannot hold
   Task only as far as the Plan window and Time Maps force it. When earliest fragmented
   placement competes with a later contiguous placement, contiguity wins within the same
   day — Lodo prefers fewer, larger Blocks over strictly earliest fragments.
+  The total order is the [placement comparator](./scheduling.md#placement-comparator).
 - **Minimum Block floor:** Lodo never emits a Block smaller than two granularity units
   (e.g. 30m at 15m granularity). Hours that would fragment below the floor are left
   unplaced and reported as shortfall rather than emitted as calendar confetti. The floor

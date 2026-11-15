@@ -10,8 +10,9 @@ Google Calendar.
 > specification; this site holds the specification and the decisions behind it.
 
 Lodo is a CLI you invoke; cron calling `lodo schedule` is the intended deployment.
-The Logseq graph is the single source of truth for intent, local SQLite state is the
-source of truth for the Schedule, and the calendar is a projection of it.
+Intent is authored in Logseq or in the TUI. A TUI save writes the block into the graph,
+and that graph is what scheduling reads. Local SQLite state is the source of truth for
+the Schedule, and the calendar is a projection of it.
 
 - [Features](features.md): what Lodo does, in one page.
 - [Getting Started](getting-started.md): from zero to the first `schedule`.

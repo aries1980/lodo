@@ -11,7 +11,7 @@ weight: 30
 The core loop: **read Tasks from Logseq → decide when → write Blocks to Google Calendar → reconcile on refresh.**
 
 - **Single-user, self-hosted, local-first.** No accounts, no multi-tenancy, no server. A CLI you invoke; cron calling `lodo schedule` is the intended deployment.
-- **Logseq as the source of truth for intent**, reached over the HTTP API, **read-only except one prompted bootstrap**: when the Time Maps page is missing, Lodo offers to create it with recommended defaults on explicit confirmation. File-based graph today; the DB graph after the planned upgrade.
+- **Intent is authored in Logseq or in the TUI.** The graph, reached over the HTTP API, is what a later run reads, with two explicit writes only: when the Time Maps page is missing, Lodo offers to create it with recommended defaults on explicit confirmation; and the TUI saves one full Logseq block on explicit `$EDITOR` quit after the per-Task validation gate (see [`tui.md`](./tui.md) and [ADR 0017](../ADRs/0017-tui-edits-logseq-blocks-on-explicit-save.md)). File-based graph today; the DB graph after the planned upgrade.
 - **Tasks** = `TODO`/`DOING` blocks with an explicit `duration::`. Duration is the gate.
 - **Plan** = optional `plan-start::`/`plan-end::` date bounds; absent bounds mean flexible ("as soon as possible").
 - **Pin** via Logseq's native `scheduled::`; **Deadline** via native `deadline::`; **Priority** via native `priority::` (A/B/C).
@@ -23,7 +23,7 @@ The core loop: **read Tasks from Logseq → decide when → write Blocks to Goog
   busy time. Managed Events identified by private extended properties; moves become
   Pinned Blocks, deletes stand the Task down, everything else is busy time.
 - **Configuration** in a file, secrets in a `0600` credentials file; no secrets in the graph.
-- **CLI**: `check`, `forecast`, `schedule`, `refresh`, `explain <task-id|uuid|query>`, `auth google`.
+- **CLI**: bare `lodo` TUI (list, raw-block view, `$EDITOR` editing with validation), `check`, `forecast`, `schedule`, `refresh`, `explain <task-id|uuid|query>`, `auth google`.
 
 ## Out of scope (roadmap, not v0.1)
 
@@ -41,4 +41,4 @@ soon they are likely to matter.
 - **Outlook and iCloud** calendars.
 - **A read-only projection into the graph** (`lodo-*` mirror).
 - **NLP** parsing of Task titles.
-- **Any Lodo UI** — Logseq is the interface; a Status Tracker / board / calendar views are not built.
+- **Any Lodo UI beyond the TUI** — a Status Tracker, board, or calendar view is not built. The TUI authors Task intent and edits blocks; it does not plan, and it does not touch the calendar or the store.

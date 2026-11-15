@@ -4,8 +4,9 @@ weight: 60
 ---
 
 
-> Status: **draft (v0.1).** Ordering and the placement objective are settled — the
-> comparator is in [ADR 0010](../ADRs/0010-placement-comparator.md).
+> Status: **draft (v0.1).** Ordering and the placement objective are settled. The
+> comparator's key order is [ADR 0010](../ADRs/0010-placement-comparator.md); the
+> candidate rules and examples are [below](#placement-comparator).
 
 How Lodo turns Tasks into Blocks. Inputs are Tasks ([`tasks.md`](./tasks.md)), their
 Time Maps ([`time-maps.md`](./time-maps.md)), the Calendar's busy time, and the
@@ -68,7 +69,8 @@ flowchart TD
   (page order, then tree order). It is free and deterministic, but it means
   *moving a block in your notes silently re-prioritises it*. This is accepted for v0.1;
   `forecast` / `schedule --verbose` states when the tie-break decided placement so the
-  re-prioritisation is visible rather than silent.
+  re-prioritisation is visible rather than silent
+  ([ADR 0022](../ADRs/0022-outline-order-is-a-priority.md)).
 
 ## Objective
 
@@ -80,9 +82,49 @@ yellow one ([ADR 0014](../ADRs/0014-preference-tiers-before-the-comparator.md)).
 A Task naming its own map prefers that map, then spills into the default map
 at the same tier or worse — never into a better tier than its own best.
 
-Inside one tier, completeness comes first, then the comparator in
-[ADR 0010](../ADRs/0010-placement-comparator.md): placed hours, start day, Block count,
-earliest start, largest-first sizes.
+Inside one tier the [placement comparator](#placement-comparator) chooses the
+arrangement. The order of its keys is
+[ADR 0010](../ADRs/0010-placement-comparator.md).
+
+### Placement comparator
+
+A Task needs `n = ceil(duration / granularity)` slots. A candidate placement is an
+arrangement of at most `n` slots into Blocks, drawn from the Task's free slots:
+
+- each Block is a run of consecutive free slots — free meaning inside the Task's Time
+  Maps and Plan window, not in the past, and not occupied by busy time, Pins, or Pinned
+  Blocks;
+- at most one Block per free run, starting at the run's first slot;
+- each Block is at least two granularity units (the Minimum Block floor), except a Task
+  whose whole duration rounds up to a single unit (`n = 1`), which is emitted as one
+  unit;
+- the Blocks' sizes sum to at most `n`.
+
+Candidates are compared lexicographically, best first:
+
+1. **Placed slots, descending.** Completeness comes first.
+2. **Start day, ascending.** An earlier day beats a tidier later day.
+3. **Block count, ascending.** Within a day, fewer Blocks beat earlier fragments.
+4. **Block start slots, ascending.** The earlier first Block wins.
+5. **Block sizes, descending.** The earliest free run is filled as far as it can be.
+
+The keys are total, so the planner needs no further tie-break. Completeness outranks
+contiguity. Contiguity is the rule among placements that place the same hours. Pins,
+Pinned Blocks, and stood-down Blocks shape the free slots before candidates exist.
+
+At 15m granularity, one day unless stated; runs written as `time@length`.
+
+| n | Free runs | Winner | Because |
+| --- | --- | --- | --- |
+| 2 | 09:00@15m, 13:00@15m | nothing placed | Fragments below the floor are never emitted; 30m of shortfall is reported. |
+| 4 | 09:00@30m, 13:00@45m | 09:00@30m + 13:00@30m | Completeness: 60m placed beats one 45m Block, because the extra 30m is a legal Block, not confetti. |
+| 5 | 09:00@30m, 13:00@45m | 09:00@30m + 13:00@45m | The only placement that places all 75m. |
+| 5 | 09:00@30m, 13:00@45m, 17:00@75m | 17:00@75m | Same-day contiguity: equal completeness, so one Block beats two that start earlier. |
+| 6 | 09:00@60m, 13:00@60m | 09:00@60m + 13:00@30m | Largest-first: equal placement, so the earliest run is filled as far as possible. |
+
+Across days, a 75m Task with only 30m available on day one and 75m available on day two
+is placed as 30m on day one plus 45m on day two. Contiguity wins only within the same
+day, so front-loading takes the earlier fragment.
 
 ### Placement decision for one Task
 
@@ -99,7 +141,7 @@ flowchart TD
     TM -->|None| SHORT["Shortfall: Time Map too thin"]
     TM -->|Hours free| BUSY{"Subtract busy time?<br/>External + Pins + Pinned Blocks"}
     BUSY -->|No room| FULL["Shortfall: window full"]
-    BUSY -->|Room| GRAN["Round up to granularity<br/>fewest, largest, contiguous first<br/>floor is 2 units"]
+    BUSY -->|Room| GRAN["Comparator: completeness, then earlier day,<br/>then fewer Blocks, then earlier start,<br/>then largest-first. Floor is 2 units"]
     GRAN --> PART{"All hours fit?"}
     PART -->|Yes| PLACE["Emit Blocks front-loaded"]
     PART -->|Partial| PARTIAL["Place what fits<br/>report shortfall, fragments below floor count as shortfall"]
@@ -192,4 +234,5 @@ thinnest eligible days, reduce duration, or fix blockers/maps) in human output
 and `--json` with stable `reason`/`change`/`impact`/`tier`.
 Blocked tasks get blocker fixes only (no `restore-stood-down` noise).
 Time Map hour advice is currently add-only; shifting hours stays future work.
-Lodo never applies them automatically.
+Lodo never applies them automatically
+([report, do not repair](../ADRs/#report-do-not-repair)).
