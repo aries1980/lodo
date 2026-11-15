@@ -1,0 +1,37 @@
+name: i18n
+
+on:
+  push:
+    paths:
+      - 'translations/**'
+      - 'internal/i18n/**'
+      - '.github/workflows/i18n.yml'
+  pull_request:
+    paths:
+      - 'translations/**'
+      - 'internal/i18n/**'
+      - '.github/workflows/i18n.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  msgfmt:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/library/alpine:3.21
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate PO syntax
+        run: |
+          set -eu
+          apk add --no-cache gettext >/dev/null
+          for f in translations/*.po; do msgfmt --check -o /dev/null "$f"; done
+      - name: Enforce lowercase filenames
+        run: |
+          set -eu
+          if ls translations | grep -q '[A-Z]'; then
+            echo "translations/ filenames must be lowercase"
+            ls translations
+            exit 1
+          fi

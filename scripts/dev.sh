@@ -15,6 +15,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 GO_IMAGE=${GO_IMAGE:-docker.io/library/golang:1.27.3}
 LINT_IMAGE=${LINT_IMAGE:-docker.io/golangci/golangci-lint:v2.15.0-alpine}
+GETTEXT_IMAGE=${GETTEXT_IMAGE:-docker.io/library/alpine:3.21}
 CLIFF_IMAGE=${CLIFF_IMAGE:-docker.io/orhunp/git-cliff:2.14.2} # keep the tag in sync with .github/workflows/release.yml
 HUGO_IMAGE=${HUGO_IMAGE:-ghcr.io/gohugoio/hugo:v0.168.0} # keep the tag in sync with .github/workflows/hugo.yml
 
@@ -40,6 +41,7 @@ Go:
   fmt     format ./cmd and ./internal with gofmt
   lint    run golangci-lint
   tidy    run go mod tidy
+  i18n-lint  validate translations/*.po with msgfmt --check (Alpine + gettext)
 
 Changelog:
   changelog  regenerate CHANGELOG.md from the commit history
@@ -82,6 +84,29 @@ ctrun() {
 	fi
 	# shellcheck disable=SC2086
 	$RUNTIME run --rm $userns --user "$(id -u):$(id -g)" "$@"
+}
+
+# ctrun_root runs a container as root. Only for images that need it at
+# runtime (i18n-lint installs gettext via apk); everything else uses
+# ctrun so written files stay owned by the invoking user.
+ctrun_root() {
+	RUNTIME=${CONTAINER_RUNTIME:-}
+	if [ -z "$RUNTIME" ]; then
+		if command -v podman >/dev/null 2>&1; then
+			RUNTIME=podman
+		elif command -v docker >/dev/null 2>&1; then
+			RUNTIME=docker
+		else
+			die "podman or docker is required"
+		fi
+	fi
+	case "$RUNTIME" in
+	podman | docker) ;;
+	*) die "unknown CONTAINER_RUNTIME: $RUNTIME (want podman or docker)" ;;
+	esac
+	command -v "$RUNTIME" >/dev/null 2>&1 || die "$RUNTIME is required (CONTAINER_RUNTIME=$RUNTIME)"
+	# shellcheck disable=SC2086
+	$RUNTIME run --rm --user 0:0 "$@"
 }
 
 go_run() {
@@ -180,6 +205,12 @@ lint)
 	;;
 tidy)
 	go_run "$GO_IMAGE" go mod tidy
+	;;
+i18n-lint)
+	ctrun_root \
+		-v "$ROOT:/app" \
+		-w /app "$GETTEXT_IMAGE" \
+		sh -c 'apk add --no-cache gettext >/dev/null && for f in translations/*.po; do msgfmt --check -o /dev/null "$f" || exit 1; done'
 	;;
 changelog)
 	cliff_run --output CHANGELOG.md
