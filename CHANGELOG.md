@@ -3,6 +3,14 @@
 All notable changes to Lodo, generated from the commit history by
 [git-cliff](https://git-cliff.org).
 
+## 0.2.1 - 2026-11-15
+
+### Features
+
+- Zip windows archives and publish deb rpm apk packages ([7d40279](https://github.com/aries1980/lodo/commit/7d40279ed3b4202a756feca174b9f1197d8ce5d7))
+
+[Full changelog](https://github.com/aries1980/lodo/compare/0.2.0...0.2.1)
+
 ## 0.2.0 - 2026-11-15
 
 ### Features
