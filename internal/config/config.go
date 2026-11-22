@@ -222,7 +222,7 @@ func validate(cfg Config) (Config, error) {
 	cfg.UI.Theme = strings.TrimSpace(cfg.UI.Theme)
 
 	if len(cfg.Logseq.Graphs) == 0 && cfg.Logseq.APIURL == "" && len(cfg.Keep.Sources) == 0 {
-		return Config{}, fmt.Errorf("logseq.api_url: required")
+		return Config{}, fmt.Errorf("no task source configured: set logseq.api_url, logseq.graphs, or keep.sources")
 	}
 	if cfg.Logseq.APIURL != "" {
 		if err := checkAPIURL(cfg.Logseq.APIURL); err != nil {
@@ -368,8 +368,8 @@ func checkKeepSyncURL(raw string) error {
 	return nil
 }
 
-// the first graph time_maps_page override, else the global one.
 // PrimaryTimeMapsPage is the canonical page Time Maps are read from:
+// the first graph time_maps_page override, else the global one.
 func (l Logseq) PrimaryTimeMapsPage() string {
 	if len(l.Graphs) > 0 && strings.TrimSpace(l.Graphs[0].TimeMapsPage) != "" {
 		return strings.TrimSpace(l.Graphs[0].TimeMapsPage)

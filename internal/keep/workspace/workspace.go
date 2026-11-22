@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -435,7 +436,7 @@ func freshness(n keep.Note, index int) (*graph.Block, error) {
 // newItemID synthesizes a client-side item id for an appended item; the
 // API answers with the canonical one, which putNote reconciles.
 func newItemID(n keep.Note) string {
-	return "items/" + itoa(len(n.Items)+1)
+	return "items/" + strconv.Itoa(len(n.Items)+1)
 }
 
 // UpdateBlock replaces a block's content in place, syncing the checklist
@@ -587,27 +588,4 @@ func (c *Client) updateTextBlock(ctx context.Context, noteID string, idx int, mu
 	n.Text = keep.RenderTextNote(tree)
 	_, err = c.putNote(ctx, n, "body.text.text")
 	return err
-}
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	neg := false
-	if i < 0 {
-		neg = true
-		i = -i
-	}
-	var b [20]byte
-	p := len(b)
-	for i > 0 {
-		p--
-		b[p] = byte('0' + i%10)
-		i /= 10
-	}
-	if neg {
-		p--
-		b[p] = '-'
-	}
-	return string(b[p:])
 }

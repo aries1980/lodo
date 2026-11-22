@@ -1,6 +1,8 @@
 package keep
 
 import (
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/aries1980/lodo/internal/graph"
@@ -12,12 +14,6 @@ import (
 // (key:: value) attach to the current block and are also parsed into
 // PropsText so the resolver reads them unchanged.
 
-func splitLines(s string) []string { return strings.Split(s, "\n") }
-
-func trimSpace(s string) string { return strings.TrimSpace(s) }
-
-func upper(s string) string { return strings.ToUpper(s) }
-
 func firstField(s string) string {
 	if i := strings.IndexAny(s, " \t"); i >= 0 {
 		return s[:i]
@@ -26,7 +22,7 @@ func firstField(s string) string {
 }
 
 func isHintLine(line string) bool {
-	return strings.HasPrefix(trimSpace(line), "# lodo-tui:")
+	return strings.HasPrefix(strings.TrimSpace(line), "# lodo-tui:")
 }
 
 // isPropLine mirrors the resolver's property-line rule: a short key plus
@@ -72,7 +68,7 @@ func indentOf(line string) int {
 // cross-run identity (only Tasks do), so read-time indexes suffice; every
 // mutating op re-reads before writing.
 func TextUUID(noteID string, index int) string {
-	return noteID + "#L" + itoa(index)
+	return noteID + "#L" + strconv.Itoa(index)
 }
 
 // SplitTextUUID reverses TextUUID into its note id and preorder index.
@@ -110,8 +106,8 @@ func ParseTextNote(noteID, text string) []*graph.Block {
 		b.UUID = TextUUID(noteID, index)
 		index++
 	}
-	for _, raw := range splitLines(text) {
-		if trimSpace(raw) == "" {
+	for _, raw := range strings.Split(text, "\n") {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
 		indent := indentOf(raw)
@@ -182,7 +178,7 @@ func RenderTextNote(blocks []*graph.Block) string {
 // embedded property lines.
 func splitContentProps(content string) (header string, props []string) {
 	var kept []string
-	for _, line := range splitLines(content) {
+	for _, line := range strings.Split(content, "\n") {
 		if isPropLine(line) {
 			props = append(props, strings.TrimSpace(line))
 			continue
@@ -202,11 +198,7 @@ func sortedProps(m map[string]any) [][2]string {
 		}
 		out = append(out, [2]string{k, s})
 	}
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j][0] < out[j-1][0]; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
+	slices.SortFunc(out, func(a, b [2]string) int { return strings.Compare(a[0], b[0]) })
 	return out
 }
 
@@ -225,27 +217,4 @@ func propText(v any) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	neg := false
-	if i < 0 {
-		neg = true
-		i = -i
-	}
-	var b [20]byte
-	p := len(b)
-	for i > 0 {
-		p--
-		b[p] = byte('0' + i%10)
-		i /= 10
-	}
-	if neg {
-		p--
-		b[p] = '-'
-	}
-	return string(b[p:])
 }

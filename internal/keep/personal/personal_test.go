@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,7 +28,7 @@ func (f *miniFake) add(title string, items ...map[string]any) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.next++
-	id := "notes/" + itoa(f.next)
+	id := "notes/" + strconv.Itoa(f.next)
 	body := map[string]any{"list": map[string]any{"listItems": items}}
 	if items == nil {
 		body = map[string]any{"text": ""}
@@ -68,7 +69,7 @@ func (f *miniFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.next++
-		in["name"] = "notes/" + itoa(f.next)
+		in["name"] = "notes/" + strconv.Itoa(f.next)
 		f.notes[in["name"].(string)] = in
 		f.order = append(f.order, in["name"].(string))
 		write(in)
@@ -107,20 +108,6 @@ func mustRead(r *http.Request) []byte {
 		}
 	}
 	return []byte(b.String())
-}
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var b [20]byte
-	p := len(b)
-	for i > 0 {
-		p--
-		b[p] = byte('0' + i%10)
-		i /= 10
-	}
-	return string(b[p:])
 }
 
 func TestUnconfigured(t *testing.T) {

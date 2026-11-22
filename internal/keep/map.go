@@ -49,7 +49,7 @@ func ItemToBlock(noteID string, it Item) *graph.Block {
 // ParsePropLines extracts key:: value lines from raw item text.
 func ParsePropLines(content string) map[string]any {
 	var out map[string]any
-	for _, line := range splitLines(content) {
+	for _, line := range strings.Split(content, "\n") {
 		if !isPropLine(line) {
 			continue
 		}
@@ -74,9 +74,9 @@ func SetItemProp(text, key string, value any) string {
 	want := strings.TrimSpace(key) + ":: " + v
 	var out []string
 	replaced := false
-	for _, line := range splitLines(text) {
+	for _, line := range strings.Split(text, "\n") {
 		if isPropLine(line) {
-			if k, _ := propKeyValue(line); equalFold(k, strings.TrimSpace(key)) && !replaced {
+			if k, _ := propKeyValue(line); strings.EqualFold(k, strings.TrimSpace(key)) && !replaced {
 				out = append(out, want)
 				replaced = true
 				continue
@@ -94,8 +94,4 @@ func SetItemProp(text, key string, value any) string {
 // Text notes and list items share the convention.
 func AppendPropLine(content, key string, value any) string {
 	return SetItemProp(content, key, value)
-}
-
-func equalFold(a, b string) bool {
-	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }

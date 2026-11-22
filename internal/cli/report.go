@@ -78,7 +78,7 @@ func buildSources(ctx context.Context, cfg config.Config, creds config.Credentia
 		return nil, fmt.Errorf("locate the credentials file: %w", err)
 	}
 	if len(cfg.Logseq.Graphs) == 0 && cfg.Logseq.APIURL == "" && len(cfg.Keep.Sources) == 0 {
-		return nil, missingLogseqTokenError(credPath)
+		return nil, fmt.Errorf("no task source configured: set logseq.api_url, logseq.graphs, or keep.sources")
 	}
 
 	hc := httpClient(cfg)

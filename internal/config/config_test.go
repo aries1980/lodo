@@ -181,7 +181,7 @@ scheduling:
 calendar:
   provider: google
 `,
-			"logseq.api_url: required",
+			"no task source configured: set logseq.api_url, logseq.graphs, or keep.sources",
 		},
 		{
 			"relative api_url",

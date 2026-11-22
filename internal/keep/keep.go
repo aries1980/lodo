@@ -20,6 +20,10 @@
 // back into a tree, so Time Map windows keep working.
 package keep
 
+import (
+	"strings"
+)
+
 // Backend names the Keep adapters for diagnostics, config validation and
 // run.Source.Backend. The split is by account type, because the two access
 // paths are entirely different protocols: keep-workspace (official REST,
@@ -77,20 +81,11 @@ func ItemID(noteID, itemID string) string {
 
 // SplitItemID reverses ItemID into its note and item parts.
 func SplitItemID(uuid string) (noteID, itemID string, ok bool) {
-	i := lastIndexByte(uuid, '#')
+	i := strings.LastIndexByte(uuid, '#')
 	if i <= 0 || i == len(uuid)-1 {
 		return "", "", false
 	}
 	return uuid[:i], uuid[i+1:], true
-}
-
-func lastIndexByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
 }
 
 // MarkerFor maps a checklist state to a task marker. Keep has no native
@@ -108,21 +103,25 @@ func MarkerFor(checked bool) string {
 // DONE/CANCELLED marker checks the item, anything else unchecks it. The
 // text itself is kept verbatim so the marker stays visible in Keep.
 func CheckedFor(content string) bool {
-	return MarkerForText(content) == "DONE" || MarkerForText(content) == "CANCELLED"
+	switch MarkerForText(content) {
+	case "DONE", "CANCELLED":
+		return true
+	}
+	return false
 }
 
 // MarkerForText reads the leading task marker of raw block text, or ""
 // when the first content line carries none.
 func MarkerForText(content string) string {
-	for _, line := range splitLines(content) {
-		t := trimSpace(line)
+	for _, line := range strings.Split(content, "\n") {
+		t := strings.TrimSpace(line)
 		if t == "" || isPropLine(t) || isHintLine(t) {
 			continue
 		}
-		first := firstField(t)
-		switch upper(first) {
+		first := strings.ToUpper(firstField(t))
+		switch first {
 		case "TODO", "DOING", "DONE", "CANCELLED":
-			return upper(first)
+			return first
 		default:
 			return ""
 		}

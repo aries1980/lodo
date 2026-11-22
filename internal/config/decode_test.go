@@ -138,7 +138,7 @@ func TestWhitespaceOnlyValues(t *testing.T) {
 scheduling: {granularity: 15m, window_days: 14, timezone: Europe/London}
 calendar: {provider: google}
 `,
-			"logseq.api_url: required",
+			"no task source configured: set logseq.api_url, logseq.graphs, or keep.sources",
 		},
 		{
 			"granularity",
