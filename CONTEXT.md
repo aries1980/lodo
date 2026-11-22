@@ -84,6 +84,8 @@ not resolve the graph or recompute the Schedule.
 - `internal/gauth`: Google OAuth loopback for `lodo auth`.
 - `internal/logseq`: Logseq HTTP API client, one implementation of the graph seam.
 - `internal/graph`: the backend-neutral seam (`Page`, `Block`, `Client`, `Walk`).
+  `Page`/`Tree` reads take the page id `Pages` returned, so id-addressed
+  backends fetch one resource instead of re-resolving titles.
 - `internal/keep`: shared Keep mapping (note/item model, Time Maps outline engine);
   `internal/keep/workspace` (official REST, Workspace accounts) and
   `internal/keep/personal` (sync transport, personal accounts) implement the seam.

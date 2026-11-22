@@ -47,7 +47,7 @@ func TestClientConcurrentTrees(t *testing.T) {
 	for i := range calls {
 		wg.Go(func() {
 			name := fmt.Sprintf("page-%d", i)
-			tree, err := client.Tree(t.Context(), name)
+			tree, err := client.Tree(t.Context(), "", name)
 			if err != nil {
 				errs <- err
 				return

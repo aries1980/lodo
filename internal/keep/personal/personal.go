@@ -97,20 +97,20 @@ func (c *Client) Pages(ctx context.Context) ([]*graph.Page, error) {
 }
 
 // Page returns one note's page, or nil when no note carries the title.
-func (c *Client) Page(ctx context.Context, name string) (*graph.Page, error) {
+func (c *Client) Page(ctx context.Context, uuid, name string) (*graph.Page, error) {
 	if err := c.checkConfigured(); err != nil {
 		return nil, err
 	}
-	return c.inner.Page(ctx, name)
+	return c.inner.Page(ctx, uuid, name)
 }
 
 // Tree returns a note's block tree; nil when the note is missing or
 // holds no blocks.
-func (c *Client) Tree(ctx context.Context, name string) ([]*graph.Block, error) {
+func (c *Client) Tree(ctx context.Context, uuid, name string) ([]*graph.Block, error) {
 	if err := c.checkConfigured(); err != nil {
 		return nil, err
 	}
-	return c.inner.Tree(ctx, name)
+	return c.inner.Tree(ctx, uuid, name)
 }
 
 // CreatePage creates a text note titled name.

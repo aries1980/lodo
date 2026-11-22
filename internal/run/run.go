@@ -230,3 +230,24 @@ func sortPages(pages []*graph.Page) {
 		return cmp.Or(cmp.Compare(norm.ID(a.Name), norm.ID(b.Name)), cmp.Compare(a.Name, b.Name))
 	})
 }
+
+// validatePageNames refuses duplicate page names within one source,
+// compared case-insensitively like page names everywhere else. The
+// resolver indexes trees by name, so two pages sharing one would collapse
+// into a single tree; id-addressed reads (ADR 0026) mean no backend title
+// lookup guards this anymore, so the caller does, once, for every backend.
+func validatePageNames(source string, pages []*graph.Page) error {
+	counts := make(map[string]int, len(pages))
+	for _, p := range pages {
+		if key := norm.ID(p.Name); key != "" {
+			counts[key]++
+		}
+	}
+	for _, p := range pages {
+		if counts[norm.ID(p.Name)] > 1 {
+			return fmt.Errorf("%s: %d pages named %q; page names must be unique within a source",
+				graphLabel(source), counts[norm.ID(p.Name)], p.Name)
+		}
+	}
+	return nil
+}

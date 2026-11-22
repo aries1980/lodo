@@ -69,7 +69,7 @@ func (c *stubClient) Pages(context.Context) ([]*logseq.Page, error) {
 
 func (c *stubClient) Ping(context.Context) error { return nil }
 
-func (c *stubClient) Page(_ context.Context, name string) (*logseq.Page, error) {
+func (c *stubClient) Page(_ context.Context, _, name string) (*logseq.Page, error) {
 	c.mu.Lock()
 	c.pageCalls = append(c.pageCalls, name)
 	c.mu.Unlock()
@@ -86,7 +86,7 @@ func (c *stubClient) PageCalls() []string {
 	return append([]string(nil), c.pageCalls...)
 }
 
-func (c *stubClient) Tree(_ context.Context, name string) ([]*logseq.Block, error) {
+func (c *stubClient) Tree(_ context.Context, _, name string) ([]*logseq.Block, error) {
 	tree, ok := c.trees[name]
 	if !ok {
 		return nil, errors.New("no such page: " + name)

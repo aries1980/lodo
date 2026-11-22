@@ -121,7 +121,7 @@ func TestUnconfigured(t *testing.T) {
 	if _, err := c.Pages(context.Background()); err == nil {
 		t.Fatal("want unconfigured error")
 	}
-	if _, err := c.Tree(context.Background(), "x"); err == nil {
+	if _, err := c.Tree(context.Background(), "", "x"); err == nil {
 		t.Fatal("want unconfigured error")
 	}
 }
@@ -151,7 +151,7 @@ func TestConfiguredPassthrough(t *testing.T) {
 	if len(pages) != 1 || pages[0].Name != "day" {
 		t.Fatalf("pages: %+v", pages)
 	}
-	tree, err := c.Tree(context.Background(), "day")
+	tree, err := c.Tree(context.Background(), "", "day")
 	if err != nil {
 		t.Fatal(err)
 	}

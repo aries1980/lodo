@@ -112,7 +112,7 @@ func TestPageFoundAndMissing(t *testing.T) {
 		return testdataBody(t, "page-journal.json"), http.StatusOK
 	})
 
-	page, err := client.Page(t.Context(), "2026-10-15")
+	page, err := client.Page(t.Context(), "", "2026-10-15")
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestPageFoundAndMissing(t *testing.T) {
 		t.Fatalf("page = %+v, want the captured shape with nil properties", page)
 	}
 
-	page, err = client.Page(t.Context(), "ghost")
+	page, err = client.Page(t.Context(), "", "ghost")
 	if err != nil {
 		t.Fatalf("Page(ghost): %v", err)
 	}
@@ -145,7 +145,7 @@ func TestTree(t *testing.T) {
 		}
 	})
 
-	tree, err := client.Tree(t.Context(), "2026-10-15")
+	tree, err := client.Tree(t.Context(), "", "2026-10-15")
 	if err != nil {
 		t.Fatalf("Tree: %v", err)
 	}
@@ -186,10 +186,10 @@ func TestTree(t *testing.T) {
 		t.Fatalf("Tree mismatch (-want +got):\n%s", diff)
 	}
 
-	if tree, _ := client.Tree(t.Context(), "empty"); tree != nil {
+	if tree, _ := client.Tree(t.Context(), "", "empty"); tree != nil {
 		t.Fatalf("Tree(empty) = %+v, want nil", tree)
 	}
-	if tree, _ := client.Tree(t.Context(), "missing"); tree != nil {
+	if tree, _ := client.Tree(t.Context(), "", "missing"); tree != nil {
 		t.Fatalf("Tree(missing) = %+v, want nil", tree)
 	}
 }

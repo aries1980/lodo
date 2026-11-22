@@ -72,11 +72,14 @@ type Client interface {
 	// Pages lists every page in the source.
 	Pages(ctx context.Context) ([]*Page, error)
 	// Page returns one page's properties, or nil when the page does not
-	// exist.
-	Page(ctx context.Context, name string) (*Page, error)
+	// exist. uuid is the page id Pages reported, when the caller has
+	// one; adapters that address pages by id use it to fetch directly,
+	// and fall back to name when it is empty.
+	Page(ctx context.Context, uuid, name string) (*Page, error)
 	// Tree returns a page's block tree, top-level blocks with children
-	// nested; nil when the page is empty.
-	Tree(ctx context.Context, name string) ([]*Block, error)
+	// nested; nil when the page is empty or missing. uuid is as for
+	// Page.
+	Tree(ctx context.Context, uuid, name string) ([]*Block, error)
 
 	// CreatePage creates a page with no blocks yet.
 	CreatePage(ctx context.Context, name string) (*Page, error)

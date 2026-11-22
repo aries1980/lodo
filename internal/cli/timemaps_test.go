@@ -41,14 +41,14 @@ func (c *memClient) Pages(context.Context) ([]*logseq.Page, error) {
 
 func (c *memClient) Ping(context.Context) error { return nil }
 
-func (c *memClient) Page(_ context.Context, name string) (*logseq.Page, error) {
+func (c *memClient) Page(_ context.Context, _, name string) (*logseq.Page, error) {
 	if p, ok := c.pages[name]; ok {
 		return &logseq.Page{Name: p.Name}, nil
 	}
 	return nil, nil
 }
 
-func (c *memClient) Tree(_ context.Context, name string) ([]*logseq.Block, error) {
+func (c *memClient) Tree(_ context.Context, _, name string) ([]*logseq.Block, error) {
 	return c.trees[name], nil
 }
 

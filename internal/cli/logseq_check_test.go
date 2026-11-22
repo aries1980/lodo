@@ -34,11 +34,11 @@ func (c *pingClient) Pages(context.Context) ([]*logseq.Page, error) {
 	return nil, errors.New("unreachable")
 }
 
-func (c *pingClient) Page(context.Context, string) (*logseq.Page, error) {
+func (c *pingClient) Page(context.Context, string, string) (*logseq.Page, error) {
 	return nil, errors.New("unreachable")
 }
 
-func (c *pingClient) Tree(context.Context, string) ([]*logseq.Block, error) {
+func (c *pingClient) Tree(context.Context, string, string) ([]*logseq.Block, error) {
 	return nil, errors.New("unreachable")
 }
 
@@ -215,11 +215,11 @@ func (c *hungClient) Pages(context.Context) ([]*logseq.Page, error) {
 	return nil, errors.New("unreachable")
 }
 
-func (c *hungClient) Page(context.Context, string) (*logseq.Page, error) {
+func (c *hungClient) Page(context.Context, string, string) (*logseq.Page, error) {
 	return nil, errors.New("unreachable")
 }
 
-func (c *hungClient) Tree(context.Context, string) ([]*logseq.Block, error) {
+func (c *hungClient) Tree(context.Context, string, string) ([]*logseq.Block, error) {
 	return nil, errors.New("unreachable")
 }
 

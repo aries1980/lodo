@@ -49,7 +49,7 @@ func defaultTimeMaps() []timeMapSeed {
 // the page. Prompts and notes go to errW, so --json stdout stays
 // machine-readable.
 func ensureTimeMapsPage(ctx context.Context, client graph.Client, page string, yes bool, errW io.Writer, st styler) (bool, error) {
-	found, err := client.Page(ctx, page)
+	found, err := client.Page(ctx, "", page)
 	if err != nil {
 		return false, err
 	}
@@ -116,7 +116,7 @@ func createTimeMapsPage(ctx context.Context, client graph.Client, page string) e
 // it in place, since an extra blank block would read as a map with no name.
 func placeMapBlock(ctx context.Context, client graph.Client, page, name string, first bool) (string, error) {
 	if first {
-		tree, err := client.Tree(ctx, page)
+		tree, err := client.Tree(ctx, "", page)
 		if err != nil {
 			return "", fmt.Errorf("read fresh Time Maps page %q: %w", page, err)
 		}

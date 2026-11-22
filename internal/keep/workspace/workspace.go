@@ -9,6 +9,7 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -290,6 +291,23 @@ func (c *Client) getNote(ctx context.Context, name string) (keep.Note, error) {
 	return toNote(w), nil
 }
 
+// visibleNote fetches one note by id for a page read. A missing note and
+// one that left the visible set since Pages listed it (trashed or
+// archived) both read as "no page", like a title that matches nothing.
+func (c *Client) visibleNote(ctx context.Context, id string) (*wireNote, error) {
+	var w wireNote
+	if err := c.call(ctx, http.MethodGet, "/v1/"+id, nil, nil, &w); err != nil {
+		if apiErr, ok := errors.AsType[*keep.APIError](err); ok && apiErr.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if w.Trashed || w.Archived {
+		return nil, nil
+	}
+	return &w, nil
+}
+
 // putNote replaces one note's title and body.
 func (c *Client) putNote(ctx context.Context, n keep.Note, mask string) (keep.Note, error) {
 	q := url.Values{}
@@ -331,7 +349,16 @@ func (c *Client) Pages(ctx context.Context) ([]*graph.Page, error) {
 }
 
 // Page returns one note's page, or nil when no note carries the title.
-func (c *Client) Page(ctx context.Context, name string) (*graph.Page, error) {
+// A known note id (uuid) fetches the note directly; an empty uuid falls
+// back to a title lookup over the full note list.
+func (c *Client) Page(ctx context.Context, uuid, name string) (*graph.Page, error) {
+	if uuid != "" {
+		w, err := c.visibleNote(ctx, uuid)
+		if err != nil || w == nil {
+			return nil, err
+		}
+		return keep.NoteToPage(toNote(*w)), nil
+	}
 	notes, err := c.listNotes(ctx)
 	if err != nil {
 		return nil, err
@@ -347,8 +374,20 @@ func (c *Client) Page(ctx context.Context, name string) (*graph.Page, error) {
 }
 
 // Tree returns a note's block tree; nil when the note is missing or
-// holds no blocks.
-func (c *Client) Tree(ctx context.Context, name string) ([]*graph.Block, error) {
+// holds no blocks. A known note id (uuid) fetches the note directly; an
+// empty uuid falls back to a title lookup over the full note list.
+func (c *Client) Tree(ctx context.Context, uuid, name string) ([]*graph.Block, error) {
+	if uuid != "" {
+		w, err := c.visibleNote(ctx, uuid)
+		if err != nil || w == nil {
+			return nil, err
+		}
+		tree := keep.NoteToTree(toNote(*w))
+		if len(tree) == 0 {
+			return nil, nil
+		}
+		return tree, nil
+	}
 	notes, err := c.listNotes(ctx)
 	if err != nil {
 		return nil, err

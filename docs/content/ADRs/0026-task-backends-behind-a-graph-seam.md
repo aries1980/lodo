@@ -21,7 +21,10 @@ The alternative was one resolver input per backend, each building
 `resolve.Input` its own way. That duplicates the read strategy (page
 enumeration, tree assembly, Time Maps validation) per backend and lets
 the strategies drift. The 7-method client (`Ping/Pages/Page/Tree` plus
-the four writes) keeps what-to-read with the caller and faithful
+the four writes; `Page`/`Tree` take the page id `Pages` returned, so
+backends addressable by id fetch one resource instead of re-resolving
+the title, and fall back to the name when the caller has no id yet)
+keeps what-to-read with the caller and faithful
 transport with the adapter, so `resolve`, `planner`, `reconcile` and the
 store never learn a backend exists. A new backend is one package
 implementing seven methods plus config/credential plumbing — no resolver
@@ -52,6 +55,9 @@ checklists so the Keep UI checkbox remains the task marker.
 - `run.Source.Backend` names the adapter in diagnostics; probe messages
   and `keep.retry` warn records are backend-aware, Logseq wording
   byte-identical.
+- Page-name uniqueness is the caller's guard: with reads addressed by the
+  id `Pages` returned, no adapter title lookup checks page reads anymore,
+  so `run.LoadGraph` refuses duplicate page names once, for every backend.
 - Credentials: official Keep reuses the Google grant (the `keep` scope
   joins the `auth google` flow); personal Keep uses `LODO_KEEP_TOKEN*`
   like Logseq tokens. Sync roots are machine-bound config

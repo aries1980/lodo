@@ -63,6 +63,9 @@ func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *tim
 		return resolve.Result{}, resolve.Input{}, nil, nil, err
 	}
 	sortPages(pages)
+	if err := validatePageNames(source.Name, pages); err != nil {
+		return resolve.Result{}, resolve.Input{}, nil, nil, err
+	}
 
 	tmName := lowerTrim(timeMapsPage)
 	input := resolve.Input{
@@ -76,7 +79,7 @@ func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *tim
 	}
 	reads, err := fanout.Do(ctx, len(pages), readWorkers, func(ctx context.Context, i int) (pageRead, error) {
 		p := pages[i]
-		tree, err := source.Client.Tree(ctx, p.Name)
+		tree, err := source.Client.Tree(ctx, p.UUID, p.Name)
 		if err != nil {
 			return pageRead{}, err
 		}
@@ -84,7 +87,7 @@ func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *tim
 		if lowerTrim(p.Name) != tmName && !hasCandidate(tree) {
 			return read, nil
 		}
-		info, err := source.Client.Page(ctx, p.Name)
+		info, err := source.Client.Page(ctx, p.UUID, p.Name)
 		if err != nil {
 			return pageRead{}, err
 		}

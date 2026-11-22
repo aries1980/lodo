@@ -24,14 +24,14 @@ func (c *latencyClient) Pages(context.Context) ([]*logseq.Page, error) { return 
 
 func (c *latencyClient) Ping(context.Context) error { return nil }
 
-func (c *latencyClient) Page(ctx context.Context, name string) (*logseq.Page, error) {
+func (c *latencyClient) Page(ctx context.Context, _, name string) (*logseq.Page, error) {
 	if err := sleepCtx(ctx, c.pageDelay); err != nil {
 		return nil, err
 	}
 	return &logseq.Page{Name: name}, nil
 }
 
-func (c *latencyClient) Tree(ctx context.Context, name string) ([]*logseq.Block, error) {
+func (c *latencyClient) Tree(ctx context.Context, _, name string) ([]*logseq.Block, error) {
 	if err := sleepCtx(ctx, c.treeDelay); err != nil {
 		return nil, err
 	}

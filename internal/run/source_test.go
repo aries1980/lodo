@@ -41,7 +41,7 @@ func loadGraphSequential(ctx context.Context, source run.Source, timeMapsPage st
 		Location:       loc,
 	}
 	for _, p := range pages {
-		tree, err := source.Client.Tree(ctx, p.Name)
+		tree, err := source.Client.Tree(ctx, p.UUID, p.Name)
 		if err != nil {
 			return resolve.Result{}, resolve.Input{}, nil, nil, err
 		}
@@ -49,7 +49,7 @@ func loadGraphSequential(ctx context.Context, source run.Source, timeMapsPage st
 		if norm.ID(p.Name) != tmName && !hasCandidateForTest(tree) {
 			continue
 		}
-		info, err := source.Client.Page(ctx, p.Name)
+		info, err := source.Client.Page(ctx, p.UUID, p.Name)
 		if err != nil {
 			return resolve.Result{}, resolve.Input{}, nil, nil, err
 		}
@@ -147,10 +147,10 @@ type barrierClient struct {
 	release <-chan struct{}
 }
 
-func (c *barrierClient) Tree(ctx context.Context, name string) ([]*logseq.Block, error) {
+func (c *barrierClient) Tree(ctx context.Context, uuid, name string) ([]*logseq.Block, error) {
 	c.started <- name
 	<-c.release
-	return c.stubClient.Tree(ctx, name)
+	return c.stubClient.Tree(ctx, uuid, name)
 }
 
 func TestLoadGraphReadsPagesConcurrently(t *testing.T) {
@@ -189,6 +189,23 @@ func TestLoadGraphReadsPagesConcurrently(t *testing.T) {
 	})
 }
 
+// TestLoadGraphRefusesDuplicatePageNames pins the caller-side guard:
+// id-addressed reads mean no backend title lookup guards page reads
+// anymore, so two pages sharing one name fail the run naming both.
+func TestLoadGraphRefusesDuplicatePageNames(t *testing.T) {
+	fixture := graphFixture{
+		pages: []*logseq.Page{memPage("day"), memPage("Day")},
+		trees: map[string][]*logseq.Block{
+			"day": {marked("TODO", "t-1", "TODO One")},
+			"Day": {marked("TODO", "t-2", "TODO Two")},
+		},
+	}
+	_, _, _, _, err := run.LoadGraph(t.Context(), graphSource("work", 0, fixture, ""), "Time Maps", london)
+	if err == nil || !strings.Contains(err.Error(), "2 pages named") || !strings.Contains(err.Error(), "unique within a source") {
+		t.Fatalf("LoadGraph err = %v, want the duplicate page-name refusal", err)
+	}
+}
+
 // failingClient fails the first sorted page and lets every other tree read
 // block until the fan-out cancels it.
 type failingClient struct {
@@ -201,11 +218,11 @@ func (c *failingClient) Pages(context.Context) ([]*logseq.Page, error) { return 
 
 func (c *failingClient) Ping(context.Context) error { return nil }
 
-func (c *failingClient) Page(context.Context, string) (*logseq.Page, error) {
+func (c *failingClient) Page(context.Context, string, string) (*logseq.Page, error) {
 	return &logseq.Page{}, nil
 }
 
-func (c *failingClient) Tree(ctx context.Context, name string) ([]*logseq.Block, error) {
+func (c *failingClient) Tree(ctx context.Context, _, name string) ([]*logseq.Block, error) {
 	if name == "a" {
 		return nil, c.err
 	}
@@ -265,11 +282,11 @@ func (c *blockingClient) Pages(context.Context) ([]*logseq.Page, error) { return
 
 func (c *blockingClient) Ping(context.Context) error { return nil }
 
-func (c *blockingClient) Page(context.Context, string) (*logseq.Page, error) {
+func (c *blockingClient) Page(context.Context, string, string) (*logseq.Page, error) {
 	return &logseq.Page{}, nil
 }
 
-func (c *blockingClient) Tree(ctx context.Context, _ string) ([]*logseq.Block, error) {
+func (c *blockingClient) Tree(ctx context.Context, _, _ string) ([]*logseq.Block, error) {
 	c.started <- struct{}{}
 	<-ctx.Done()
 	return nil, ctx.Err()

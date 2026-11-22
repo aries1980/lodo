@@ -171,8 +171,9 @@ func (c *apiClient) Pages(ctx context.Context) ([]*Page, error) {
 }
 
 // Page returns one page's properties by calling editor_get_page, nil when
-// the page does not exist (the app answers JSON null).
-func (c *apiClient) Page(ctx context.Context, name string) (*Page, error) {
+// the page does not exist (the app answers JSON null). The page id is
+// unused: the app addresses pages by name.
+func (c *apiClient) Page(ctx context.Context, _, name string) (*Page, error) {
 	var p *Page
 	if err := c.call(ctx, "logseq.Editor.get_page", []any{name}, &p); err != nil {
 		return nil, err
@@ -182,8 +183,9 @@ func (c *apiClient) Page(ctx context.Context, name string) (*Page, error) {
 
 // Tree returns a page's block tree by calling editor_get_page_blocks_tree.
 // The app answers null for a missing page and [] for an empty one; the
-// adapter returns nil for both so callers never distinguish.
-func (c *apiClient) Tree(ctx context.Context, name string) ([]*Block, error) {
+// adapter returns nil for both so callers never distinguish. The page id
+// is unused: the app addresses pages by name.
+func (c *apiClient) Tree(ctx context.Context, _, name string) ([]*Block, error) {
 	var tree []*Block
 	if err := c.call(ctx, "logseq.Editor.get_page_blocks_tree", []any{name}, &tree); err != nil {
 		return nil, err

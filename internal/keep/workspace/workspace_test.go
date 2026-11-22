@@ -15,11 +15,12 @@ import (
 // fakeKeep is an in-memory Keep API fake: notes.list (paginated),
 // labels.list, notes.get/create/update.
 type fakeKeep struct {
-	mu     sync.Mutex
-	notes  map[string]*wireNote
-	order  []string
-	labels map[string]string // id -> title
-	next   int
+	mu       sync.Mutex
+	notes    map[string]*wireNote
+	order    []string
+	labels   map[string]string // id -> title
+	next     int
+	requests int
 }
 
 func newFakeKeep() *fakeKeep {
@@ -41,6 +42,7 @@ func (f *fakeKeep) add(n wireNote) string {
 func (f *fakeKeep) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.requests++
 	p := r.URL.Path
 	switch {
 	case r.Method == http.MethodGet && p == "/v1/notes":
@@ -150,6 +152,13 @@ func testClient(t *testing.T, fk *fakeKeep, label string) *Client {
 	return c
 }
 
+// requestCount reports how many HTTP requests reached the fake.
+func (f *fakeKeep) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests
+}
+
 func TestListAndTree(t *testing.T) {
 	fk := newFakeKeep()
 	fk.add(listNote("2026-11-01",
@@ -167,7 +176,7 @@ func TestListAndTree(t *testing.T) {
 	if len(pages) != 2 {
 		t.Fatalf("want 2 pages, got %d", len(pages))
 	}
-	tree, err := c.Tree(ctx, "2026-11-01")
+	tree, err := c.Tree(ctx, "", "2026-11-01")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +234,7 @@ func TestTimeMapsBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tree, err := c.Tree(ctx, "Time Maps")
+	tree, err := c.Tree(ctx, "", "Time Maps")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +255,7 @@ func TestTextUpdate(t *testing.T) {
 	c := testClient(t, fk, "")
 	ctx := context.Background()
 
-	tree, err := c.Tree(ctx, "Time Maps")
+	tree, err := c.Tree(ctx, "", "Time Maps")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +265,7 @@ func TestTextUpdate(t *testing.T) {
 	if err := c.UpdateBlock(ctx, tree[0].Children[0].UUID, "Mon-Fri 09:00-12:00"); err != nil {
 		t.Fatal(err)
 	}
-	again, err := c.Tree(ctx, "Time Maps")
+	again, err := c.Tree(ctx, "", "Time Maps")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,14 +280,14 @@ func TestItemUpdateSyncsChecked(t *testing.T) {
 	c := testClient(t, fk, "")
 	ctx := context.Background()
 
-	tree, err := c.Tree(ctx, "day")
+	tree, err := c.Tree(ctx, "", "day")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := c.UpdateBlock(ctx, tree[0].UUID, "DONE Write\nduration:: 30m"); err != nil {
 		t.Fatal(err)
 	}
-	again, err := c.Tree(ctx, "day")
+	again, err := c.Tree(ctx, "", "day")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +301,134 @@ func TestDuplicateTitles(t *testing.T) {
 	fk.add(listNote("day"))
 	fk.add(listNote("Day"))
 	c := testClient(t, fk, "")
-	if _, err := c.Tree(context.Background(), "day"); err == nil {
+	if _, err := c.Tree(context.Background(), "", "day"); err == nil {
 		t.Fatal("want duplicate-title error")
 	}
+}
+
+// TestPageReadsByUUIDSkipsTheNoteList pins the read cost: every page read
+// with the id Pages reported is one notes.get, never a re-list of every
+// note (ADR 0026 id-addressed reads). Pages itself is one list call.
+func TestPageReadsByUUIDSkipTheNoteList(t *testing.T) {
+	fk := newFakeKeep()
+	for _, name := range []string{"day", "week", "Time Maps"} {
+		fk.add(listNote(name, li("notes/1/listItems/1", "TODO Write\nduration:: 30m", false)))
+	}
+	c := testClient(t, fk, "")
+	ctx := context.Background()
+
+	pages, err := c.Pages(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCalls := fk.requestCount()
+	for _, p := range pages {
+		if _, err := c.Tree(ctx, p.UUID, p.Name); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Page(ctx, p.UUID, p.Name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := fk.requestCount()-listCalls, 2*len(pages); got != want {
+		t.Fatalf("page reads issued %d requests, want %d (one get per read)", got, want)
+	}
+}
+
+func TestPageReadByUUID(t *testing.T) {
+	fk := newFakeKeep()
+	id := fk.add(listNote("day", li("notes/1/listItems/1", "TODO Write", false)))
+	c := testClient(t, fk, "")
+	ctx := context.Background()
+
+	page, err := c.Page(ctx, id, "day")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page == nil || page.Name != "day" || page.UUID != id {
+		t.Fatalf("page: %+v", page)
+	}
+	tree, err := c.Tree(ctx, id, "day")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tree) != 1 || tree[0].Marker != "TODO" {
+		t.Fatalf("tree: %+v", tree)
+	}
+}
+
+func TestPageReadByUUIDMissingNote(t *testing.T) {
+	fk := newFakeKeep()
+	fk.add(listNote("day"))
+	c := testClient(t, fk, "")
+	ctx := context.Background()
+
+	page, err := c.Page(ctx, "notes/999", "day")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page != nil {
+		t.Fatalf("missing note: %+v, want nil", page)
+	}
+	tree, err := c.Tree(ctx, "notes/999", "day")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree != nil {
+		t.Fatalf("missing note tree: %+v, want nil", tree)
+	}
+}
+
+func TestPageReadByUUIDTrashedNote(t *testing.T) {
+	fk := newFakeKeep()
+	id := fk.add(wireNote{Trashed: true, Title: "gone", Body: &wireBody{Text: &wireText{Text: "x"}}})
+	c := testClient(t, fk, "")
+	ctx := context.Background()
+
+	page, err := c.Page(ctx, id, "gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page != nil {
+		t.Fatalf("trashed note: %+v, want nil", page)
+	}
+}
+
+// BenchmarkTreeReads contrasts the two Tree addressing modes over a fake
+// Keep with 100 notes: by-name re-lists every note per read (the cost
+// before id-addressed reads), by-uuid fetches only the note asked for.
+func BenchmarkTreeReads(b *testing.B) {
+	fk := newFakeKeep()
+	for i := range 100 {
+		fk.add(listNote(fmt.Sprintf("day-%03d", i),
+			li(fmt.Sprintf("notes/1/listItems/%d", i+1), "TODO Write\nduration:: 30m", false)))
+	}
+	srv := httptest.NewTestServer(b, fk)
+	c, err := NewClient(srv.Client(), srv.URL, "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	ctx := context.Background()
+	pages, err := c.Pages(ctx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("by-name", func(b *testing.B) {
+		for b.Loop() {
+			for _, p := range pages {
+				if _, err := c.Tree(ctx, "", p.Name); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+	b.Run("by-uuid", func(b *testing.B) {
+		for b.Loop() {
+			for _, p := range pages {
+				if _, err := c.Tree(ctx, p.UUID, p.Name); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
 }
