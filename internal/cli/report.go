@@ -7,14 +7,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/gauth"
+	"github.com/aries1980/lodo/internal/graph"
+	"github.com/aries1980/lodo/internal/keep"
+	"github.com/aries1980/lodo/internal/keep/personal"
+	"github.com/aries1980/lodo/internal/keep/workspace"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/planner"
@@ -58,53 +66,131 @@ func loadConfig(opts *options, ov configOverrides) (config.Config, config.Creden
 	return cfg, creds.WithCredentialOverrides(ov.credentialOverrides()), nil
 }
 
-// buildSources resolves the Logseq token for every configured graph
-// (file/LODO_LOGSEQ_TOKEN_<GRAPH>/global fallback) and constructs one
-// run.Source per graph (ADR 0021). Single-graph mode returns one source with an
-// empty name. It demands a token: a command that never reads the graph
-// (refresh) must not call it.
-func buildSources(cfg config.Config, creds config.Credentials) ([]run.Source, error) {
+// buildSources resolves the credentials for every configured source
+// (file/env/flag fallbacks per backend) and constructs one run.Source per
+// source (ADR 0021, ADR 0026): Logseq graphs first, Keep note sets after,
+// each with its own client. Single-source mode returns one source with an
+// empty name. It demands a credential per source: a command that never
+// reads the graph (refresh) must not call it.
+func buildSources(ctx context.Context, cfg config.Config, creds config.Credentials) ([]run.Source, error) {
 	credPath, err := config.DefaultCredentialsPath()
 	if err != nil {
 		return nil, fmt.Errorf("locate the credentials file: %w", err)
 	}
-	if !creds.HasAnyLogseqToken() {
+	if len(cfg.Logseq.Graphs) == 0 && cfg.Logseq.APIURL == "" && len(cfg.Keep.Sources) == 0 {
 		return nil, missingLogseqTokenError(credPath)
 	}
 
 	hc := httpClient(cfg)
+	var sources []run.Source
 	if len(cfg.Logseq.Graphs) == 0 {
-		tok := creds.TokenForGraph("")
-		if tok == "" {
-			return nil, missingLogseqTokenError(credPath)
+		if cfg.Logseq.APIURL != "" {
+			tok := creds.TokenForGraph("")
+			if tok == "" {
+				return nil, missingLogseqTokenError(credPath)
+			}
+			client, err := logseq.NewClient(cfg.Logseq.APIURL, tok, hc)
+			if err != nil {
+				return nil, err
+			}
+			sources = append(sources, run.Source{Client: client, APIURL: cfg.Logseq.APIURL, Backend: logseqBackend})
 		}
-		client, err := logseq.NewClient(cfg.Logseq.APIURL, tok, hc)
+	} else {
+		for i, g := range cfg.Logseq.Graphs {
+			tok := creds.TokenForGraph(g.Name)
+			if tok == "" {
+				return nil, fmt.Errorf("graph %s: no Logseq token; set logseq.graphs.%s.token in %s or %s", g.Name, g.Name, credPath, config.GraphTokenEnvVar(g.Name))
+			}
+			client, err := logseq.NewClient(g.APIURL, tok, hc)
+			if err != nil {
+				return nil, fmt.Errorf("graph %s: %w", g.Name, err)
+			}
+			sources = append(sources, run.Source{
+				Name:           g.Name,
+				Order:          i,
+				Client:         client,
+				DefaultTimeMap: cfg.Logseq.GraphDefault(g.Name),
+				APIURL:         g.APIURL,
+				Backend:        logseqBackend,
+			})
+		}
+	}
+
+	for _, s := range cfg.Keep.Sources {
+		client, endpoint, err := buildKeepClient(ctx, cfg, creds, s)
 		if err != nil {
 			return nil, err
 		}
-		sources := []run.Source{{Client: client, APIURL: cfg.Logseq.APIURL}}
-		return sources, nil
-	}
-
-	sources := make([]run.Source, 0, len(cfg.Logseq.Graphs))
-	for i, g := range cfg.Logseq.Graphs {
-		tok := creds.TokenForGraph(g.Name)
-		if tok == "" {
-			return nil, fmt.Errorf("graph %s: no Logseq token; set logseq.graphs.%s.token in %s or %s", g.Name, g.Name, credPath, config.GraphTokenEnvVar(g.Name))
-		}
-		client, err := logseq.NewClient(g.APIURL, tok, hc)
-		if err != nil {
-			return nil, fmt.Errorf("graph %s: %w", g.Name, err)
-		}
 		sources = append(sources, run.Source{
-			Name:           g.Name,
-			Order:          i,
+			Name:           s.Name,
 			Client:         client,
-			DefaultTimeMap: cfg.Logseq.GraphDefault(g.Name),
-			APIURL:         g.APIURL,
+			DefaultTimeMap: cfg.SourceDefault(s.Name),
+			APIURL:         endpoint,
+			Backend:        s.Backend,
 		})
 	}
+	for i := range sources {
+		sources[i].Order = i
+	}
 	return sources, nil
+}
+
+// logseqBackend names the Logseq adapter in run.Source.Backend.
+const logseqBackend = "logseq"
+
+// buildKeepClient constructs one Keep adapter from the source's backend:
+// official over the OAuth grant (keep scope), unofficial over the sync
+// token. The returned endpoint names the source in diagnostics.
+func buildKeepClient(ctx context.Context, cfg config.Config, creds config.Credentials, s config.KeepSource) (graph.Client, string, error) {
+	credPath, err := config.DefaultCredentialsPath()
+	if err != nil {
+		return nil, "", fmt.Errorf("locate the credentials file: %w", err)
+	}
+	switch s.Backend {
+	case keep.BackendWorkspace:
+		g, err := creds.GoogleAuth()
+		if err != nil {
+			return nil, "", fmt.Errorf("keep source %s: %w; the keep-workspace backend needs the keep scope — re-run `lodo auth google` once", s.Name, err)
+		}
+		src, err := gauth.TokenSourceWithScopes(ctx, googleEndpoint, g, gauth.KeepScope)
+		if err != nil {
+			return nil, "", fmt.Errorf("keep source %s: %w", s.Name, err)
+		}
+		hc := oauth2Client(ctx, src)
+		client, err := workspace.NewClient(hc, workspace.KeepBase, s.Label)
+		if err != nil {
+			return nil, "", fmt.Errorf("keep source %s: %w", s.Name, err)
+		}
+		return client, workspace.KeepBase, nil
+	case keep.BackendPersonal:
+		tok := creds.TokenForKeepSource(s.Name)
+		if tok == "" {
+			return nil, "", fmt.Errorf("keep source %s: no sync token; set keep.sources.%s.token in %s or %s", s.Name, s.Name, credPath, config.KeepTokenEnvVar(s.Name))
+		}
+		syncURL := cfg.Keep.SyncURL
+		if v := strings.TrimSpace(os.Getenv(config.EnvKeepSyncURL)); v != "" {
+			syncURL = v
+		}
+		client, err := personal.NewClient(tok, syncURL, s.Label, nil)
+		if err != nil {
+			return nil, "", fmt.Errorf("keep source %s: %w", s.Name, err)
+		}
+		endpoint := syncURL
+		if endpoint == "" {
+			endpoint = "(unconfigured sync_url)"
+		}
+		return client, endpoint, nil
+	default:
+		return nil, "", fmt.Errorf("keep source %s: backend %q: want %q or %q", s.Name, s.Backend, keep.BackendWorkspace, keep.BackendPersonal)
+	}
+}
+
+// oauth2Client wraps an OAuth token source in an HTTP client with the
+// Keep adapter's per-call ceiling, like the Calendar client.
+func oauth2Client(ctx context.Context, src oauth2.TokenSource) *http.Client {
+	hc := oauth2.NewClient(ctx, src)
+	hc.Timeout = workspace.DefaultTimeout
+	return hc
 }
 
 // missingLogseqTokenError names the credential file and the three ways to fill

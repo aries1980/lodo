@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/planner"
 	"github.com/aries1980/lodo/internal/reconcile"
@@ -84,7 +84,7 @@ func resolveAndPlanSources(ctx context.Context, sources []Source, state calendar
 // active dispositions, diffs the plan against observed Managed events,
 // writes the calendar, then commits the store. Calendar writes precede the
 // store commit (ADR 0007); a crash between them is adopted on the next run.
-func Schedule(ctx context.Context, client logseq.Client, cal Calendar, runStore Store, cfg config.Config, now time.Time) (ScheduleOutcome, error) {
+func Schedule(ctx context.Context, client graph.Client, cal Calendar, runStore Store, cfg config.Config, now time.Time) (ScheduleOutcome, error) {
 	sources := []Source{{Client: client}}
 	return ScheduleSources(ctx, sources, cal, runStore, cfg, now)
 }

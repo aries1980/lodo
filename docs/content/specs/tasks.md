@@ -7,7 +7,9 @@ weight: 40
 > Status: **draft (v0.1).** Definitions live in [`glossary.md`](./glossary.md).
 
 A Task is a unit of work Lodo schedules. Tasks are Logseq blocks; the rest of the graph
-is notes.
+is notes. On the Keep backends one checklist item is one Task-candidate with
+the same gate; see [`keep-integration.md`](./keep-integration.md) for the mapping
+(flat items, no hierarchy) and [`backends.md`](./backends.md) for choosing.
 
 ## What makes a block a Task
 

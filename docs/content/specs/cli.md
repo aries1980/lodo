@@ -57,8 +57,10 @@ pipes, CI, or `--json` runs.
 | `--no-launch-browser` | `auth google` | Headless machines: finish the grant on another device, paste the redirect back. |
 | `--window-days N`, `--timezone TZ`, … | `schedule`, `forecast` | One-run overrides of config. Not persisted. |
 | `--read-calendar ID` | `schedule`, `forecast`, `refresh` | Repeatable: replaces `calendar.read_calendars` for one run when given at least once. Not persisted. |
-| `--logseq-token TOKEN` | `check`, `schedule`, `forecast`, `refresh` | One-run Logseq token (overrides file and `LODO_LOGSEQ_TOKEN`). Not persisted. |
-| `--logseq-graph-token NAME=TOKEN` | `check`, `schedule`, `forecast`, `refresh` | Repeatable per-graph token (overrides file and `LODO_LOGSEQ_TOKEN_<GRAPH>`). Not persisted. |
+| `--logseq-token TOKEN` | `check`, `schedule`, `forecast`, `refresh`, `explain` | One-run Logseq token (overrides file and `LODO_LOGSEQ_TOKEN`). Not persisted. |
+| `--logseq-graph-token NAME=TOKEN` | `check`, `schedule`, `forecast`, `refresh`, `explain` | Repeatable per-graph token (overrides file and `LODO_LOGSEQ_TOKEN_<GRAPH>`). Not persisted. |
+| `--keep-token TOKEN` | `check`, `schedule`, `forecast`, `refresh`, `explain` | One-run unofficial Keep sync token (overrides file and `LODO_KEEP_TOKEN`). Not persisted. |
+| `--keep-source-token NAME=TOKEN` | `check`, `schedule`, `forecast`, `refresh`, `explain` | Repeatable per-source Keep token (overrides file and `LODO_KEEP_TOKEN_<SOURCE>`). Not persisted. |
 | `--google-client-id ID`, `--google-client-secret SECRET`, `--google-refresh-token TOKEN` | `check`, `schedule`, `forecast`, `refresh` | One-run Google credentials (override file and `LODO_GOOGLE_*`). Not persisted. |
 | `--google-client-id ID`, `--google-client-secret SECRET` | `auth google` | Client pair for the flow (overrides file and env). |
 | `--google-refresh-token TOKEN` | `auth google` | Store this grant directly without running the browser flow. |
@@ -72,11 +74,11 @@ pipes, CI, or `--json` runs.
 default `Time Maps`). When it is missing, Lodo offers to create it with the
 recommended defaults — a `Deep Work` map marked `default:: true`, plus `Errands`
 and `Weekends` windows (see [`time-maps.md`](./time-maps.md)) — which the user
-then edits in Logseq. Anything but an explicit `y`/`yes` declines (including
+then edits in the backend (Logseq graph or Keep note). Anything but an explicit `y`/`yes` declines (including
 end-of-input, so a non-interactive run without `-y` never hangs), and the run
 continues without the page, reporting `missing-time-maps-page` as before.
 This confirmation is the bootstrap write; the TUI's explicit per-Task saves are
-the second graph write path
+the second backend write path
 (see [ADR 0017](../ADRs/0017-tui-edits-logseq-blocks-on-explicit-save.md) and
 [`tui.md`](./tui.md));
 `check` otherwise writes nowhere.

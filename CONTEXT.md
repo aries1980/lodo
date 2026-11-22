@@ -23,11 +23,16 @@ flowchart LR
   gridPkg --> modelPkg
 ```
 
-1. **Read** Logseq graph payloads (`internal/logseq`) — HTTP only (ADR 0002).
-   Two writes share that API: a missing Time Maps page is created on confirmation
-   (ADR 0015), and the TUI saves one validated block (ADR 0017).
-   `internal/run` walks pages and block trees. One Logseq graph is a `run.Source`;
-   several sources are read the same way (ADR 0021).
+1. **Read** task-backend payloads over a neutral seam (`internal/graph`, ADR 0026):
+   Logseq over its HTTP API (ADR 0002) via `internal/logseq`, Google Keep
+   Workspace/Personal (`keep-workspace`/`keep-personal`) via
+   `internal/keep/{workspace,personal}` sharing one mapping in
+   `internal/keep`. Only two writes exist per backend: a missing Time Maps
+   page is created on confirmation (ADR 0015), and the TUI saves one
+   validated block (ADR 0017).
+   `internal/run` walks pages and block trees. One task backend (a Logseq graph or
+   a Keep note set) is a `run.Source`; several sources are read the same way
+   (ADR 0021, ADR 0026).
 2. **Resolve** (`internal/resolve`) turns those payloads into Tasks, Time Maps,
    dependencies, provenance, and validation issues. Resolution is deterministic and
    reports an issue when data is unparseable or ambiguous. Parsing lives in
@@ -77,7 +82,11 @@ not resolve the graph or recompute the Schedule.
   One calendar is written; the others are busy-only reads, fetched concurrently with
   audit rows and warnings kept in config order.
 - `internal/gauth`: Google OAuth loopback for `lodo auth`.
-- `internal/logseq`: Logseq HTTP API client.
+- `internal/logseq`: Logseq HTTP API client, one implementation of the graph seam.
+- `internal/graph`: the backend-neutral seam (`Page`, `Block`, `Client`, `Walk`).
+- `internal/keep`: shared Keep mapping (note/item model, Time Maps outline engine);
+  `internal/keep/workspace` (official REST, Workspace accounts) and
+  `internal/keep/personal` (sync transport, personal accounts) implement the seam.
 - `internal/store`: SQLite (`${XDG_STATE_HOME:-~/.local/state}/lodo/lodo.db` by
   default). Atomic `Commit`; opened per run (no daemon, ADR 0009). Schema is v0.1
   create-if-not-exists (no migration framework).

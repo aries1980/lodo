@@ -5,7 +5,7 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/set"
@@ -80,11 +80,11 @@ func inferMarker(content string) string {
 	return ""
 }
 
-func deepCopyBlock(b *logseq.Block) *logseq.Block {
+func deepCopyBlock(b *graph.Block) *graph.Block {
 	if b == nil {
 		return nil
 	}
-	out := &logseq.Block{
+	out := &graph.Block{
 		UUID:     b.UUID,
 		Content:  b.Content,
 		Marker:   b.Marker,
@@ -97,7 +97,7 @@ func deepCopyBlock(b *logseq.Block) *logseq.Block {
 		out.PropsText = maps.Clone(b.PropsText)
 	}
 	if b.Children != nil {
-		out.Children = make([]*logseq.Block, 0, len(b.Children))
+		out.Children = make([]*graph.Block, 0, len(b.Children))
 		for _, c := range b.Children {
 			out.Children = append(out.Children, deepCopyBlock(c))
 		}
@@ -105,10 +105,10 @@ func deepCopyBlock(b *logseq.Block) *logseq.Block {
 	return out
 }
 
-func deepCopyTrees(trees map[string][]*logseq.Block) map[string][]*logseq.Block {
-	out := make(map[string][]*logseq.Block, len(trees))
+func deepCopyTrees(trees map[string][]*graph.Block) map[string][]*graph.Block {
+	out := make(map[string][]*graph.Block, len(trees))
 	for k, v := range trees {
-		cp := make([]*logseq.Block, 0, len(v))
+		cp := make([]*graph.Block, 0, len(v))
 		for _, b := range v {
 			cp = append(cp, deepCopyBlock(b))
 		}
@@ -117,10 +117,10 @@ func deepCopyTrees(trees map[string][]*logseq.Block) map[string][]*logseq.Block 
 	return out
 }
 
-func findBlock(trees map[string][]*logseq.Block, uuid string) *logseq.Block {
-	var found *logseq.Block
+func findBlock(trees map[string][]*graph.Block, uuid string) *graph.Block {
+	var found *graph.Block
 	for _, tree := range trees {
-		_ = logseq.Walk(tree, func(b *logseq.Block) error {
+		_ = graph.Walk(tree, func(b *graph.Block) error {
 			if b.UUID == uuid {
 				found = b
 			}

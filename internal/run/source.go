@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/aries1980/lodo/internal/fanout"
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/set"
@@ -45,8 +45,8 @@ func ValidateTaskIDs(tasks []model.Task) error {
 // pageRead is one page's concurrent read: its block tree and, when the page
 // can pass on properties, its page info.
 type pageRead struct {
-	tree []*logseq.Block
-	info *logseq.Page
+	tree []*graph.Block
+	info *graph.Page
 }
 
 // LoadGraph reads one graph: enumerate pages, fetch each page's block tree
@@ -57,7 +57,7 @@ type pageRead struct {
 // Page trees are fetched concurrently with a bounded fan-out. The tree map and
 // page properties are assembled in page order after the reads, so the result
 // matches a serial read byte for byte.
-func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *time.Location) (resolve.Result, resolve.Input, map[string]*logseq.Block, map[string]string, error) {
+func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *time.Location) (resolve.Result, resolve.Input, map[string]*graph.Block, map[string]string, error) {
 	pages, err := source.Client.Pages(ctx)
 	if err != nil {
 		return resolve.Result{}, resolve.Input{}, nil, nil, err
@@ -70,7 +70,7 @@ func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *tim
 		GraphOrder:     source.Order,
 		DefaultTimeMap: source.DefaultTimeMap,
 		Pages:          pages,
-		Trees:          make(map[string][]*logseq.Block, len(pages)),
+		Trees:          make(map[string][]*graph.Block, len(pages)),
 		TimeMapsPage:   timeMapsPage,
 		Location:       loc,
 	}
@@ -104,11 +104,11 @@ func LoadGraph(ctx context.Context, source Source, timeMapsPage string, loc *tim
 	if err != nil {
 		return resolve.Result{}, resolve.Input{}, nil, nil, err
 	}
-	blocks := make(map[string]*logseq.Block, len(res.Tasks))
+	blocks := make(map[string]*graph.Block, len(res.Tasks))
 	pageOf := make(map[string]string, len(res.Tasks))
 	for _, p := range pages {
 		tree := input.Trees[p.Name]
-		_ = logseq.Walk(tree, func(b *logseq.Block) error {
+		_ = graph.Walk(tree, func(b *graph.Block) error {
 			if b.UUID == "" {
 				return nil
 			}

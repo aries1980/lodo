@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/resolve"
 )
@@ -27,7 +27,7 @@ type CheckOutcome struct {
 // plans with active dispositions — all read-only. It reconciles in memory
 // (without committing) so fresh moves shape the plan it judges, but nothing
 // is written anywhere.
-func Check(ctx context.Context, client logseq.Client, cal CalendarReader, runStore Store, cfg config.Config, now time.Time) (CheckOutcome, error) {
+func Check(ctx context.Context, client graph.Client, cal CalendarReader, runStore Store, cfg config.Config, now time.Time) (CheckOutcome, error) {
 	sources := []Source{{Client: client}}
 	return CheckSources(ctx, sources, cal, runStore, cfg, now)
 }

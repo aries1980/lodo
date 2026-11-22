@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/keep"
 	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/run"
 	"github.com/aries1980/lodo/internal/theme"
@@ -127,7 +128,11 @@ func makeLogseqProbeNotify(opts *options, command string, th theme.Theme) func(l
 		if a.Source.Name != "" {
 			attrs["graph"] = a.Source.Name
 		}
-		logRunWarn(opts, command, "logseq.retry", msg, attrs)
+		event := "logseq.retry"
+		if keepBackend(a.Source.Backend) {
+			event = "keep.retry"
+		}
+		logRunWarn(opts, command, event, msg, attrs)
 	}
 }
 
@@ -138,8 +143,21 @@ func logseqProbeRetryMessage(a logseqProbeAttempt) string {
 	if a.Source.Name != "" {
 		where = fmt.Sprintf("graph %q at %s", a.Source.Name, where)
 	}
+	if keepBackend(a.Source.Backend) {
+		where = displayLogseqEndpoint(a.Source)
+		if a.Source.Name != "" {
+			where = fmt.Sprintf("keep source %q at %s", a.Source.Name, where)
+		}
+		return fmt.Sprintf("keep: no answer from %s after %s (attempt %d of %d); retrying with a %s timeout...",
+			where, a.Timeout, a.Attempt, a.Attempts, a.NextTimeout)
+	}
 	return fmt.Sprintf("logseq: no answer from %s after %s (attempt %d of %d); retrying with a %s timeout...",
 		where, a.Timeout, a.Attempt, a.Attempts, a.NextTimeout)
+}
+
+// keepBackend reports whether the source is a Keep backend (any flavour).
+func keepBackend(backend string) bool {
+	return backend == keep.BackendWorkspace || backend == keep.BackendPersonal
 }
 
 // logseqUnavailableError wraps the last Ping failure with where to look:
@@ -154,6 +172,9 @@ func logseqUnavailableError(s run.Source, err error, attempts int) error {
 		cause += fmt.Sprintf(" (timed out after %s, %d attempt(s))", logseqProbeTimeoutForAttempt(attempts-1), attempts)
 	} else if attempts > 1 {
 		cause += fmt.Sprintf(" (after %d attempt(s))", attempts)
+	}
+	if keepBackend(s.Backend) {
+		return keepUnavailableError(s, err, cause)
 	}
 	if isLogseqAuthFailure(err) {
 		if s.Name != "" {
@@ -171,6 +192,27 @@ func logseqUnavailableError(s run.Source, err error, attempts int) error {
 		displayLogseqEndpoint(s), cause)
 }
 
+// keepUnavailableError wraps the last Ping failure for a Keep source:
+// auth rejections name the token or the OAuth re-grant, everything else
+// names the endpoint and the sync setup docs.
+func keepUnavailableError(s run.Source, err error, cause string) error {
+	endpoint := displayLogseqEndpoint(s)
+	where := fmt.Sprintf("keep source %q at %s", s.Name, endpoint)
+	if s.Name == "" {
+		where = fmt.Sprintf("keep at %s", endpoint)
+	}
+	if isLogseqAuthFailure(err) {
+		if s.Backend == keep.BackendPersonal {
+			return fmt.Errorf("%s: keep denied access: %s; check keep.sources.%s.token, %s, or pass --keep-source-token %s=TOKEN (personal setup, keep-integration.md)",
+				where, cause, s.Name, config.KeepTokenEnvVar(s.Name), s.Name)
+		}
+		return fmt.Errorf("%s: keep denied access: %s; the keep-workspace backend needs the keep scope — re-run `lodo auth google` once, or check the Workspace admin's third-party app policy (keep-integration.md)",
+			where, cause)
+	}
+	return fmt.Errorf("%s: keep unavailable: %s; check the endpoint and keep.sync_url (personal) or the OAuth grant (workspace); see keep-integration.md",
+		where, cause)
+}
+
 // displayLogseqEndpoint names the endpoint in diagnostics; sources built
 // by hand in tests may carry none.
 func displayLogseqEndpoint(s run.Source) string {
@@ -180,10 +222,15 @@ func displayLogseqEndpoint(s run.Source) string {
 	return "(unknown api_url)"
 }
 
-// isLogseqAuthFailure recognizes HTTP 401/403 and the app's denial messages,
-// which Logseq may also return with HTTP 500 or in a successful HTTP response.
+// isLogseqAuthFailure recognizes HTTP 401/403 and the denial messages,
+// which a backend may also return with HTTP 500 or in a successful HTTP
+// response. It covers the Logseq and Keep adapters alike.
 func isLogseqAuthFailure(err error) bool {
 	if apiErr, ok := errors.AsType[*logseq.APIError](err); ok &&
+		(apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
+		return true
+	}
+	if apiErr, ok := errors.AsType[*keep.APIError](err); ok &&
 		(apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
 		return true
 	}

@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/aries1980/lodo/internal/jsonx"
+	"github.com/aries1980/lodo/internal/keep"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/parse"
 	"github.com/aries1980/lodo/internal/set"
@@ -30,6 +31,7 @@ import (
 // owns trimming, defaults and errors.
 type Config struct {
 	Logseq     Logseq     `json:"logseq" yaml:"logseq"`
+	Keep       Keep       `json:"keep" yaml:"keep"`
 	Scheduling Scheduling `json:"scheduling" yaml:"scheduling"`
 	Calendar   Calendar   `json:"calendar" yaml:"calendar"`
 	UI         UI         `json:"ui" yaml:"ui"`
@@ -72,6 +74,36 @@ type GraphSource struct {
 	// DefaultTimeMap is the graph-level fallback Time Map slug.
 	// Explicit time-map:: on block, parent or page wins over it; it wins
 	// over the global default:: true map.
+	DefaultTimeMap string `yaml:"default_time_map"`
+}
+
+// Keep is the Google Keep backend source (keep-integration.md,
+// ADR 0026): note sets read through the official Workspace API or the
+// unofficial personal-account sync transport, merged like Logseq graphs.
+type Keep struct {
+	// SyncURL is the unofficial sync transport root (personal accounts).
+	// Empty means unconfigured: unofficial sources fail closed with an
+	// actionable error instead of dialing a guessed host.
+	SyncURL string `yaml:"sync_url"`
+	// Sources lists the Keep note sets to merge, in priority order after
+	// the Logseq graphs. Empty means no Keep backend.
+	Sources []KeepSource `yaml:"sources"`
+}
+
+// KeepSource is one Keep note set in a mixed-source setup.
+type KeepSource struct {
+	// Name is the source slug (personal, family). It fills Task.Graph,
+	// check/forecast output and the calendar graph field, like a graph.
+	Name string `yaml:"name"`
+	// Backend is keep-official (Workspace, OAuth) or keep-unofficial
+	// (personal, sync token). Required per source.
+	Backend string `yaml:"backend"`
+	// Label selects the notes: only notes carrying this Keep label are
+	// read. Empty means every untrashed, unarchived note.
+	Label string `yaml:"label"`
+	// DefaultTimeMap is the source-level fallback Time Map slug.
+	// Explicit time-map:: on a block wins over it; it wins over the
+	// global default:: true map.
 	DefaultTimeMap string `yaml:"default_time_map"`
 }
 
@@ -168,6 +200,14 @@ const (
 func validate(cfg Config) (Config, error) {
 	cfg.Logseq.APIURL = strings.TrimSpace(cfg.Logseq.APIURL)
 	cfg.Logseq.TimeMapsPage = strings.TrimSpace(cfg.Logseq.TimeMapsPage)
+	cfg.Keep.SyncURL = strings.TrimSpace(cfg.Keep.SyncURL)
+	for i := range cfg.Keep.Sources {
+		s := &cfg.Keep.Sources[i]
+		s.Name = strings.TrimSpace(s.Name)
+		s.Backend = strings.TrimSpace(s.Backend)
+		s.Label = strings.TrimSpace(s.Label)
+		s.DefaultTimeMap = strings.TrimSpace(s.DefaultTimeMap)
+	}
 	for i := range cfg.Logseq.Graphs {
 		g := &cfg.Logseq.Graphs[i]
 		g.Name = strings.TrimSpace(g.Name)
@@ -181,21 +221,25 @@ func validate(cfg Config) (Config, error) {
 	cfg.Calendar.ID = strings.TrimSpace(cfg.Calendar.ID)
 	cfg.UI.Theme = strings.TrimSpace(cfg.UI.Theme)
 
-	if len(cfg.Logseq.Graphs) == 0 {
-		if cfg.Logseq.APIURL == "" {
-			return Config{}, fmt.Errorf("logseq.api_url: required")
-		}
+	if len(cfg.Logseq.Graphs) == 0 && cfg.Logseq.APIURL == "" && len(cfg.Keep.Sources) == 0 {
+		return Config{}, fmt.Errorf("logseq.api_url: required")
+	}
+	if cfg.Logseq.APIURL != "" {
 		if err := checkAPIURL(cfg.Logseq.APIURL); err != nil {
 			return Config{}, err
 		}
-	} else {
+	}
+	if len(cfg.Logseq.Graphs) > 0 {
 		if err := validateGraphs(cfg.Logseq.Graphs); err != nil {
 			return Config{}, err
 		}
-		// Single api_url stays allowed as documentation/fallback but is
-		// otherwise unused when graphs: is set; still validate its shape.
-		if cfg.Logseq.APIURL != "" {
-			if err := checkAPIURL(cfg.Logseq.APIURL); err != nil {
+	}
+	if len(cfg.Keep.Sources) > 0 {
+		if err := validateKeepSources(cfg.Logseq.Graphs, cfg.Keep.Sources); err != nil {
+			return Config{}, err
+		}
+		if cfg.Keep.SyncURL != "" {
+			if err := checkKeepSyncURL(cfg.Keep.SyncURL); err != nil {
 				return Config{}, err
 			}
 		}
@@ -280,8 +324,52 @@ func validateGraphs(graphs []GraphSource) error {
 	return nil
 }
 
-// PrimaryTimeMapsPage is the canonical page Time Maps are read from:
+// validateKeepSources checks Keep source names (required, slugifiable,
+// unique — including against Logseq graph names, which share the Task.Graph
+// namespace), backends (keep-official or keep-unofficial) and default
+// time-map slugs.
+func validateKeepSources(graphs []GraphSource, sources []KeepSource) error {
+	taken := set.New[string]()
+	for _, g := range graphs {
+		if slug := parse.Slugify(g.Name); slug != "" {
+			taken.Add(slug)
+		}
+	}
+	for i, s := range sources {
+		if strings.TrimSpace(s.Name) == "" {
+			return fmt.Errorf("keep.sources[%d].name: required (e.g. personal)", i)
+		}
+		slug := parse.Slugify(s.Name)
+		if slug == "" {
+			return fmt.Errorf("keep.sources[%d].name %q: must slugify to a non-empty key", i, s.Name)
+		}
+		if !taken.Add(slug) {
+			return fmt.Errorf("keep.sources[%d].name %q: duplicate source name (slug %s)", i, s.Name, slug)
+		}
+		if s.Backend == "" {
+			return fmt.Errorf("keep.sources[%d].backend: required (want %q or %q)", i, keep.BackendWorkspace, keep.BackendPersonal)
+		}
+		if !keep.ValidBackend(s.Backend) {
+			return fmt.Errorf("keep.sources[%d].backend %q: want %q or %q", i, s.Backend, keep.BackendWorkspace, keep.BackendPersonal)
+		}
+		if s.DefaultTimeMap != "" && parse.Slugify(s.DefaultTimeMap) == "" {
+			return fmt.Errorf("keep.sources[%d].default_time_map %q: must slugify to a non-empty key", i, s.DefaultTimeMap)
+		}
+	}
+	return nil
+}
+
+// checkKeepSyncURL validates one absolute http(s) sync URL.
+func checkKeepSyncURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("keep.sync_url %q: must be an absolute http(s) URL", raw)
+	}
+	return nil
+}
+
 // the first graph time_maps_page override, else the global one.
+// PrimaryTimeMapsPage is the canonical page Time Maps are read from:
 func (l Logseq) PrimaryTimeMapsPage() string {
 	if len(l.Graphs) > 0 && strings.TrimSpace(l.Graphs[0].TimeMapsPage) != "" {
 		return strings.TrimSpace(l.Graphs[0].TimeMapsPage)
@@ -292,13 +380,29 @@ func (l Logseq) PrimaryTimeMapsPage() string {
 	return DefaultTimeMapsPage
 }
 
-// GraphDefault returns the graph-level fallback Time Map slug for name,
-// slugified, or empty when none is configured. Lookup is case-insensitive.
+// GraphDefault returns the source-level fallback Time Map slug for name,
+// slugified, or empty when none is configured. Lookup is case-insensitive
+// across Logseq graphs and Keep sources.
 func (l Logseq) GraphDefault(name string) string {
 	want := parse.Slugify(name)
 	for _, g := range l.Graphs {
 		if parse.Slugify(g.Name) == want {
 			return parse.Slugify(g.DefaultTimeMap)
+		}
+	}
+	return ""
+}
+
+// SourceDefault returns the fallback Time Map slug for any source name,
+// Logseq graph or Keep source.
+func (c Config) SourceDefault(name string) string {
+	if slug := c.Logseq.GraphDefault(name); slug != "" {
+		return slug
+	}
+	want := parse.Slugify(name)
+	for _, s := range c.Keep.Sources {
+		if parse.Slugify(s.Name) == want {
+			return parse.Slugify(s.DefaultTimeMap)
 		}
 	}
 	return ""
@@ -314,6 +418,27 @@ func (l Logseq) GraphOrder(name string) int {
 	for i, g := range l.Graphs {
 		if parse.Slugify(g.Name) == want {
 			return i
+		}
+	}
+	return -1
+}
+
+// SourceOrder returns the deterministic cross-source index of name:
+// Logseq graphs first, Keep sources after, or -1 when unknown.
+// Single-source mode returns 0 for any name.
+func (c Config) SourceOrder(name string) int {
+	if len(c.Logseq.Graphs) == 0 && len(c.Keep.Sources) == 0 {
+		return 0
+	}
+	want := parse.Slugify(name)
+	for i, g := range c.Logseq.Graphs {
+		if parse.Slugify(g.Name) == want {
+			return i
+		}
+	}
+	for i, s := range c.Keep.Sources {
+		if parse.Slugify(s.Name) == want {
+			return len(c.Logseq.Graphs) + i
 		}
 	}
 	return -1
@@ -370,12 +495,16 @@ func Apply(cfg Config, o Overrides) (Config, error) {
 // adding one does not invalidate the file.
 type Credentials struct {
 	Logseq LogseqCredentials  `json:"logseq"`
+	Keep   KeepCredentials    `json:"keep,omitempty"`
 	Google *GoogleCredentials `json:"google,omitempty"`
 
 	// FlagGraphTokens holds one-run CLI flag overrides for per-graph tokens,
 	// keyed by slug. Flags win over environment and file (configuration.md
 	// Precedence). Runtime only, never persisted.
 	FlagGraphTokens map[string]string `json:"-"`
+	// FlagKeepTokens holds one-run CLI flag overrides for per-source Keep
+	// tokens, keyed by slug. Runtime only, never persisted.
+	FlagKeepTokens map[string]string `json:"-"`
 }
 
 // LogseqCredentials carries the Logseq HTTP API token.
@@ -387,6 +516,19 @@ type LogseqCredentials struct {
 
 // LogseqGraphCredentials is one graph token.
 type LogseqGraphCredentials struct {
+	Token string `json:"token"`
+}
+
+// KeepCredentials carries the unofficial Keep sync token (personal
+// accounts). The official backend reuses the google section instead.
+type KeepCredentials struct {
+	Token string `json:"token,omitempty"`
+	// Sources holds per-source tokens, keyed by source name.
+	Sources map[string]KeepSourceCredentials `json:"sources,omitempty"`
+}
+
+// KeepSourceCredentials is one Keep source token.
+type KeepSourceCredentials struct {
 	Token string `json:"token"`
 }
 
@@ -418,6 +560,11 @@ const (
 	// EnvGoogleRefreshToken carries the Google OAuth refresh token that
 	// `lodo auth google` would otherwise store in the file.
 	EnvGoogleRefreshToken = "LODO_GOOGLE_REFRESH_TOKEN"
+	// EnvKeepToken carries the unofficial Keep sync token (personal
+	// accounts). The official backend reuses the Google grant instead.
+	EnvKeepToken = "LODO_KEEP_TOKEN"
+	// EnvKeepSyncURL carries the unofficial Keep sync endpoint root.
+	EnvKeepSyncURL = "LODO_KEEP_SYNC_URL"
 )
 
 // GraphTokenEnvVar names the per-graph token variable:
@@ -455,6 +602,42 @@ func (c Credentials) TokenForGraph(graph string) string {
 	return strings.TrimSpace(c.Logseq.Token)
 }
 
+// KeepTokenEnvVar names the per-source Keep token variable:
+// personal -> LODO_KEEP_TOKEN_PERSONAL.
+func KeepTokenEnvVar(source string) string {
+	slug := parse.Slugify(source)
+	slug = strings.ReplaceAll(slug, "-", "_")
+	return EnvKeepToken + "_" + strings.ToUpper(slug)
+}
+
+// TokenForKeepSource resolves the effective unofficial sync token for one
+// Keep source: one-run CLI flags win, then per-source env, then the
+// per-source file entry (case-insensitive), then the global token.
+// Empty means unconfigured (or the official backend, which needs no
+// token).
+func (c Credentials) TokenForKeepSource(source string) string {
+	want := parse.Slugify(source)
+	if want != "" && c.FlagKeepTokens != nil {
+		if v, ok := c.FlagKeepTokens[want]; ok {
+			if t := strings.TrimSpace(v); t != "" {
+				return t
+			}
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(KeepTokenEnvVar(source))); v != "" {
+		return v
+	}
+	for name, g := range c.Keep.Sources {
+		if parse.Slugify(name) == want {
+			if v := strings.TrimSpace(g.Token); v != "" {
+				return v
+			}
+			break
+		}
+	}
+	return strings.TrimSpace(c.Keep.Token)
+}
+
 // HasAnyLogseqToken reports whether any Logseq token exists: global file,
 // per-graph file, global env or any LODO_LOGSEQ_TOKEN_* env var.
 func (c Credentials) HasAnyLogseqToken() bool {
@@ -486,6 +669,40 @@ func (c Credentials) HasAnyLogseqToken() bool {
 	return false
 }
 
+// HasAnyKeepToken reports whether any unofficial Keep sync token exists:
+// global file, per-source file, global env or any LODO_KEEP_TOKEN_* env
+// var. The official backend needs no token (it reuses the Google grant).
+func (c Credentials) HasAnyKeepToken() bool {
+	if strings.TrimSpace(c.Keep.Token) != "" {
+		return true
+	}
+	for _, g := range c.Keep.Sources {
+		if strings.TrimSpace(g.Token) != "" {
+			return true
+		}
+	}
+	for _, v := range c.FlagKeepTokens {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	for _, e := range os.Environ() {
+		k, v, ok := strings.Cut(e, "=")
+		if !ok || strings.TrimSpace(v) == "" {
+			continue
+		}
+		if k == EnvKeepToken {
+			return true
+		}
+		if _, ok := strings.CutPrefix(k, EnvKeepToken+"_"); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// trimmed variable becomes its field. A Google section is present when any
+// of its three variables is non-empty.
 // CredentialsFromEnv reads the credential environment: each non-empty,
 // trimmed variable becomes its field. A Google section is present when any
 // of its three variables is non-empty.
@@ -513,6 +730,28 @@ func CredentialsFromEnv() Credentials {
 		// Key by slug; TokenForGraph matches case-insensitively anyway.
 		c.Logseq.Graphs[suffix] = LogseqGraphCredentials{Token: strings.TrimSpace(value)}
 	}
+	c.Keep.Token = strings.TrimSpace(os.Getenv(EnvKeepToken))
+	for _, e := range os.Environ() {
+		const keepPrefix = EnvKeepToken + "_"
+		key, value, ok := strings.Cut(e, "=")
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		suffix, ok := strings.CutPrefix(key, keepPrefix)
+		if !ok {
+			continue
+		}
+		suffix = strings.ToLower(strings.TrimSpace(suffix))
+		suffix = strings.ReplaceAll(suffix, "_", "-")
+		if parse.Slugify(suffix) == "" {
+			continue
+		}
+		if c.Keep.Sources == nil {
+			c.Keep.Sources = map[string]KeepSourceCredentials{}
+		}
+		// Key by slug; TokenForKeepSource matches case-insensitively anyway.
+		c.Keep.Sources[suffix] = KeepSourceCredentials{Token: strings.TrimSpace(value)}
+	}
 	if id := strings.TrimSpace(os.Getenv(EnvGoogleClientID)); id != "" {
 		if c.Google == nil {
 			c.Google = &GoogleCredentials{}
@@ -535,12 +774,20 @@ func CredentialsFromEnv() Credentials {
 }
 
 // isEmpty reports whether neither the file nor the environment supplied a
-// secret: no Logseq token and no Google field at all.
+// secret: no Logseq token, no Keep token and no Google field at all.
 func (c Credentials) isEmpty() bool {
 	if c.Logseq.Token != "" {
 		return false
 	}
 	for _, g := range c.Logseq.Graphs {
+		if strings.TrimSpace(g.Token) != "" {
+			return false
+		}
+	}
+	if strings.TrimSpace(c.Keep.Token) != "" {
+		return false
+	}
+	for _, g := range c.Keep.Sources {
 		if strings.TrimSpace(g.Token) != "" {
 			return false
 		}
@@ -560,6 +807,24 @@ func canonicalGraphTokens(in map[string]LogseqGraphCredentials) map[string]Logse
 		return nil
 	}
 	out := make(map[string]LogseqGraphCredentials, len(in))
+	keys := slices.Sorted(maps.Keys(in))
+	for _, k := range keys {
+		slug := parse.Slugify(k)
+		if slug == "" {
+			continue
+		}
+		out[slug] = in[k]
+	}
+	return out
+}
+
+// canonicalKeepTokens rekeys per-source Keep tokens by slug, like
+// canonicalGraphTokens.
+func canonicalKeepTokens(in map[string]KeepSourceCredentials) map[string]KeepSourceCredentials {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]KeepSourceCredentials, len(in))
 	keys := slices.Sorted(maps.Keys(in))
 	for _, k := range keys {
 		slug := parse.Slugify(k)
@@ -595,6 +860,26 @@ func (c Credentials) withEnv() Credentials {
 		maps.Copy(cp, c.FlagGraphTokens)
 		c.FlagGraphTokens = cp
 	}
+	if env.Keep.Token != "" {
+		c.Keep.Token = env.Keep.Token
+	}
+	if len(env.Keep.Sources) > 0 {
+		merged := make(map[string]KeepSourceCredentials, len(c.Keep.Sources)+len(env.Keep.Sources))
+		for k, v := range canonicalKeepTokens(c.Keep.Sources) {
+			merged[k] = v
+		}
+		for k, v := range env.Keep.Sources {
+			merged[k] = v
+		}
+		c.Keep.Sources = merged
+	} else if len(c.Keep.Sources) > 0 {
+		c.Keep.Sources = canonicalKeepTokens(c.Keep.Sources)
+	}
+	if c.FlagKeepTokens != nil {
+		cp := make(map[string]string, len(c.FlagKeepTokens))
+		maps.Copy(cp, c.FlagKeepTokens)
+		c.FlagKeepTokens = cp
+	}
 	if env.Google != nil {
 		if c.Google == nil {
 			c.Google = &GoogleCredentials{}
@@ -624,6 +909,12 @@ type CredentialOverrides struct {
 	// LogseqGraphTokens overrides per-graph tokens by graph name (slug,
 	// case-insensitive); empty values are ignored. Never persisted.
 	LogseqGraphTokens map[string]string
+	// KeepToken overrides keep.token (unofficial sync token); "" keeps the
+	// file/environment value.
+	KeepToken string
+	// KeepSourceTokens overrides per-source Keep tokens by source name
+	// (slug, case-insensitive); empty values are ignored. Never persisted.
+	KeepSourceTokens map[string]string
 	// GoogleClientID overrides google.client_id; "" keeps the file/environment value.
 	GoogleClientID string
 	// GoogleClientSecret overrides google.client_secret; "" keeps the file/environment value.
@@ -668,6 +959,39 @@ func (c Credentials) WithCredentialOverrides(o CredentialOverrides) Credentials 
 		}
 	} else if len(c.Logseq.Graphs) > 0 {
 		c.Logseq.Graphs = canonicalGraphTokens(c.Logseq.Graphs)
+	}
+	if v := strings.TrimSpace(o.KeepToken); v != "" {
+		c.Keep.Token = v
+	}
+	if len(o.KeepSourceTokens) > 0 {
+		flags := make(map[string]string, len(o.KeepSourceTokens))
+		if c.FlagKeepTokens != nil {
+			maps.Copy(flags, c.FlagKeepTokens)
+		}
+		merged := canonicalKeepTokens(c.Keep.Sources)
+		if merged == nil {
+			merged = map[string]KeepSourceCredentials{}
+		}
+		keys := slices.Sorted(maps.Keys(o.KeepSourceTokens))
+		for _, k := range keys {
+			if vv := strings.TrimSpace(o.KeepSourceTokens[k]); vv != "" {
+				if slug := parse.Slugify(k); slug != "" {
+					flags[slug] = vv
+					merged[slug] = KeepSourceCredentials{Token: vv}
+				}
+			}
+		}
+		c.FlagKeepTokens = flags
+		c.Keep.Sources = merged
+	} else if c.FlagKeepTokens != nil {
+		cp := make(map[string]string, len(c.FlagKeepTokens))
+		maps.Copy(cp, c.FlagKeepTokens)
+		c.FlagKeepTokens = cp
+		if len(c.Keep.Sources) > 0 {
+			c.Keep.Sources = canonicalKeepTokens(c.Keep.Sources)
+		}
+	} else if len(c.Keep.Sources) > 0 {
+		c.Keep.Sources = canonicalKeepTokens(c.Keep.Sources)
 	}
 	if v := strings.TrimSpace(o.GoogleClientID); v != "" {
 		if c.Google == nil {
@@ -759,15 +1083,17 @@ func ReadFileCredentials(path string) (Credentials, error) {
 }
 
 // ReadCredentials reads credentials.json at path and overlays the
-// credential environment (LODO_LOGSEQ_TOKEN, LODO_GOOGLE_CLIENT_ID,
-// LODO_GOOGLE_CLIENT_SECRET, LODO_GOOGLE_REFRESH_TOKEN): non-empty
+// credential environment (LODO_LOGSEQ_TOKEN, LODO_KEEP_TOKEN,
+// LODO_GOOGLE_CLIENT_ID, LODO_GOOGLE_CLIENT_SECRET,
+// LODO_GOOGLE_REFRESH_TOKEN, plus per-graph/source suffixed tokens):
+// non-empty
 // variables win per field. The file must be 0600 when present: a
 // credentials file readable by group or others is a refusal, not a warning.
 // A missing file plus a non-empty environment is valid, so containers can
 // run without a file at all. Nothing else is demanded here: which section
-// is required is the caller's call — the loop commands need a Logseq token,
-// `auth google` needs the Google client pair, and both live in the same
-// file or environment.
+// is required is the caller's call — the loop commands need a task-backend
+// credential, `auth google` needs the Google client pair, and both live in
+// the same file or environment.
 func ReadCredentials(path string) (Credentials, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if env := CredentialsFromEnv(); !env.isEmpty() {
@@ -783,16 +1109,21 @@ func ReadCredentials(path string) (Credentials, error) {
 }
 
 // LoadCredentials reads credentials.json at path for the loop commands: the
-// 0600 file (or LODO_LOGSEQ_TOKEN) plus a non-empty Logseq API token. The
-// google section travels along as it is written; the Calendar side validates
-// its own completeness.
+// 0600 file (or environment) plus a usable task-backend credential — a
+// Logseq token, an unofficial Keep sync token, or a complete Google grant
+// (which serves the official Keep backend and the Calendar). Per-source
+// requirements are enforced later by buildSources, which names the exact
+// source and variable. The google section travels along as it is written;
+// the Calendar side validates its own completeness.
 func LoadCredentials(path string) (Credentials, error) {
 	c, err := ReadCredentials(path)
 	if err != nil {
 		return Credentials{}, err
 	}
-	if !c.HasAnyLogseqToken() {
-		return Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or add per-graph tokens (logseq.graphs.*.token / LODO_LOGSEQ_TOKEN_<GRAPH>)", path, EnvLogseqToken)
+	if !c.HasAnyLogseqToken() && !c.HasAnyKeepToken() {
+		if _, gerr := c.GoogleAuth(); gerr != nil {
+			return Credentials{}, fmt.Errorf("credentials file %s: logseq.token is empty; paste the Logseq API token from the app (Settings → Integrations), set %s, or add per-graph tokens (logseq.graphs.*.token / LODO_LOGSEQ_TOKEN_<GRAPH>); for Keep, set %s (unofficial) or complete the Google grant (official, keep scope)", path, EnvLogseqToken, EnvKeepToken)
+		}
 	}
 	return c, nil
 }

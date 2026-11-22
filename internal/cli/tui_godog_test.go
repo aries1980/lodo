@@ -94,7 +94,7 @@ func (w *tuiWorld) loadData() (tui.Data, error) {
 	if err != nil {
 		return tui.Data{}, err
 	}
-	sources, err := buildSources(cfg, creds)
+	sources, err := buildSources(w.ctx, cfg, creds)
 	if err != nil {
 		return tui.Data{}, err
 	}

@@ -1,5 +1,10 @@
 // Package logseq talks to a Logseq graph over its HTTP API (ADR 0002: HTTP
-// only). Reads are the common path. The two writes are the Time Maps bootstrap
+// only). It is one implementation of the backend-neutral seam in
+// internal/graph (ADR 0026): Page, Block and Client are canonical there,
+// and this package re-exports them as aliases so existing callers and
+// tests keep compiling while new code imports internal/graph directly.
+//
+// Reads are the common path. The two writes are the Time Maps bootstrap
 // (ADR 0015) and a validated TUI block save (ADR 0017).
 //
 // The Client is an interface with one adapter per graph flavour: the
@@ -14,45 +19,19 @@
 package logseq
 
 import (
-	"context"
+	"github.com/aries1980/lodo/internal/graph"
 )
 
-// Page is one page of the graph.
-type Page struct {
-	// Name is the page's canonical name, e.g. "2026-10-15" or "projects/mgi".
-	Name string `json:"name"`
-	// UUID is the page's id; empty for pages Logseq has not materialised.
-	UUID string `json:"uuid,omitempty"`
-	// Properties are the page's parsed properties (the frontmatter), or nil.
-	// They are the inheritance source for Tasks on the page.
-	Properties map[string]any `json:"properties,omitempty"`
-}
+// Page is one page of the graph. Canonical definition: graph.Page.
+type Page = graph.Page
 
-// Block is one block of a block tree. Tree endpoints return top-level blocks
-// with their children nested recursively.
-type Block struct {
-	// UUID identifies the block across runs; it is a Task's identity.
-	UUID string `json:"uuid"`
-	// Content is the block's raw markdown: the text, a task marker, property
-	// lines and logbook lines.
-	Content string `json:"content"`
-	// Marker is the block's task marker ("TODO", "DOING", …) present only
-	// when the block carries one.
-	Marker string `json:"marker,omitempty"`
-	// Properties are the block's parsed property values, as the app typed
-	// them (strings, numbers, booleans, lists).
-	Properties map[string]any `json:"properties,omitempty"`
-	// PropsText are the same properties' raw text values, when the app
-	// exposes them; parsed Properties take precedence.
-	PropsText map[string]any `json:"propertiesTextValues,omitempty"`
+// Block is one block of a block tree. Canonical definition: graph.Block.
+type Block = graph.Block
 
-	// Children are the nested child blocks in sidecar order.
-	Children []*Block `json:"children,omitempty"`
-}
-
-// Client reads from one Logseq app instance over the HTTP API. One adapter
-// per graph flavour (logseq-integration.md); the file-based-graph adapter
-// below is the only one in v0.1.
+// Client reads from one Logseq app instance over the HTTP API. Canonical
+// definition: graph.Client — one adapter per backend flavour
+// (logseq-integration.md, keep-integration.md); the file-based-graph
+// adapter below is the only Logseq one in v0.1.
 //
 // Implementations must be safe for concurrent use: callers may fetch
 // independent pages at the same time, and the adapter must correlate the
@@ -62,43 +41,11 @@ type Block struct {
 // a missing Time Maps page (internal/cli), which creates the page and its
 // recommended defaults through the same adapter. Lodo never edits the
 // user's Tasks, Blocks, or properties.
-type Client interface {
-	// Ping probes whether the app answers at all. It is the fail-early
-	// gate the CLI runs before calendar/store I/O: a refused or hung
-	// endpoint fails here with an actionable hint instead of surfacing
-	// mid-read as a bare transport error.
-	Ping(ctx context.Context) error
-	// Pages lists every page in the graph.
-	Pages(ctx context.Context) ([]*Page, error)
-	// Page returns one page's properties, or nil when the page does not
-	// exist.
-	Page(ctx context.Context, name string) (*Page, error)
-	// Tree returns a page's block tree, top-level blocks with children
-	// nested; nil when the page is empty.
-	Tree(ctx context.Context, name string) ([]*Block, error)
-
-	// CreatePage creates a page with no blocks yet.
-	CreatePage(ctx context.Context, name string) (*Page, error)
-	// AppendBlock appends one top-level block to a page.
-	AppendBlock(ctx context.Context, page, content string) (*Block, error)
-	// UpdateBlock replaces a block's content in place.
-	UpdateBlock(ctx context.Context, uuid, content string) error
-	// InsertBlock inserts a block as the last child of its parent.
-	InsertBlock(ctx context.Context, parentUUID, content string) (*Block, error)
-	// SetBlockProperty sets one block property (e.g. default:: true).
-	SetBlockProperty(ctx context.Context, uuid, key string, value any) error
-}
+type Client = graph.Client
 
 // Walk visits every block in depth-first, top-to-bottom display order —
 // the order the Outline shows and the source of Task.OutlineOrder.
+// Canonical definition: graph.Walk.
 func Walk(blocks []*Block, visit func(*Block) error) error {
-	for _, b := range blocks {
-		if err := visit(b); err != nil {
-			return err
-		}
-		if err := Walk(b.Children, visit); err != nil {
-			return err
-		}
-	}
-	return nil
+	return graph.Walk(blocks, visit)
 }

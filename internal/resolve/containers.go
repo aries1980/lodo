@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"slices"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/set"
@@ -14,9 +14,9 @@ import (
 // container expansion and sequential chaining.
 type resolvedTask struct {
 	task      model.Task
-	page      *logseq.Page
-	block     *logseq.Block
-	ancestors []*logseq.Block
+	page      *graph.Page
+	block     *graph.Block
+	ancestors []*graph.Block
 	explicit  []string
 }
 

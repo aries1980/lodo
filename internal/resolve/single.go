@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/parse"
@@ -15,7 +15,7 @@ import (
 // inheritance: time-map, priority, plan-start/end and order cascade
 // block > ancestors (nearest first) > page; duration, deadline, scheduled
 // and depends never inherit.
-func (r *resolver) taskWithAncestors(page *logseq.Page, block *logseq.Block, ancestors []*logseq.Block) (model.Task, bool, *Issue) {
+func (r *resolver) taskWithAncestors(page *graph.Page, block *graph.Block, ancestors []*graph.Block) (model.Task, bool, *Issue) {
 	task := model.Task{
 		ID:         strings.TrimSpace(block.UUID),
 		Graph:      r.in.Graph,
@@ -205,7 +205,7 @@ func (r *resolver) taskWithAncestors(page *logseq.Page, block *logseq.Block, anc
 // ancestors nearest-first, then the page default. A blank explicit value
 // falls through; a malformed block value issues and stops (ancestors are
 // skipped, matching historic behavior).
-func (r *resolver) inheritedValue(page *logseq.Page, block *logseq.Block, ancestors []*logseq.Block, key string) (text, source, sourceID string) {
+func (r *resolver) inheritedValue(page *graph.Page, block *graph.Block, ancestors []*graph.Block, key string) (text, source, sourceID string) {
 	if raw, ok := blockProps(block)[key]; ok {
 		t, okT := propsText(raw)
 		if !okT {
@@ -232,7 +232,7 @@ func (r *resolver) inheritedValue(page *logseq.Page, block *logseq.Block, ancest
 }
 
 // blockValue is the block-level value only — for keys that never inherit.
-func (r *resolver) blockValue(page *logseq.Page, block *logseq.Block, key string) (text, source string) {
+func (r *resolver) blockValue(page *graph.Page, block *graph.Block, key string) (text, source string) {
 	t := r.blockText(page, block, key, true)
 	if t != "" {
 		return t, "direct"
@@ -241,7 +241,7 @@ func (r *resolver) blockValue(page *logseq.Page, block *logseq.Block, key string
 }
 
 // blockText reads one block's property text, reporting malformed values.
-func (r *resolver) blockText(page *logseq.Page, block *logseq.Block, key string, report bool) string {
+func (r *resolver) blockText(page *graph.Page, block *graph.Block, key string, report bool) string {
 	raw, ok := blockProps(block)[key]
 	if !ok {
 		return ""
@@ -257,7 +257,7 @@ func (r *resolver) blockText(page *logseq.Page, block *logseq.Block, key string,
 	return strings.TrimSpace(text)
 }
 
-func blockTextOnly(block *logseq.Block, key string) string {
+func blockTextOnly(block *graph.Block, key string) string {
 	raw, ok := blockProps(block)[key]
 	if !ok {
 		return ""
@@ -301,7 +301,7 @@ func parseDate(s string) (model.CivilDate, error) {
 
 // taskText is the block's display text: its first non-property line with
 // the marker prefix removed.
-func taskText(block *logseq.Block) string {
+func taskText(block *graph.Block) string {
 	text := stripProps(block.Content)
 	if text == "" {
 		return ""

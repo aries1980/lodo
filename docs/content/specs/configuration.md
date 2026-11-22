@@ -34,6 +34,14 @@ logseq:
   time_maps_page: Time Maps   # configurable so `lodo/time-maps` is a one-line change
   insecure: false             # true for an app serving a self-signed certificate
 
+keep:                         # Google Keep backends (keep-integration.md); omit when unused
+  sync_url: ""                # personal sync transport root (keep-personal only)
+  sources:                    # note sets to merge, in priority order after logseq.graphs
+    - name: personal
+      backend: keep-workspace  # keep-workspace (Workspace, OAuth) | keep-personal (personal, token)
+      label: lodo              # only notes with this Keep label; empty means all visible notes
+      # default_time_map: deep-work
+
 scheduling:
   granularity: 15m      # the calendar's quantum, and the floor for small Tasks
   window_days: 14       # rolling Scheduling window
@@ -75,6 +83,19 @@ ui:
 - **`logseq.insecure`** — skip TLS verification for an app serving a self-signed
   certificate. It is machine-bound, so it lives in this file rather than a flag: writing
   `true` here is the acceptance of that one certificate.
+- **`keep.sources`** — Keep note sets to merge, in priority order after
+  the Logseq graphs ([`backends.md`](./backends.md),
+  [`keep-integration.md`](./keep-integration.md)). Each entry needs
+  `name` (source slug, unique across graphs and sources,
+  case-insensitively), `backend` (`keep-workspace` for paid Workspace
+  accounts over OAuth, `keep-personal` for free personal accounts over
+  the sync token), optional `label` (only notes with that Keep label;
+  empty means every untrashed, unarchived note) and optional
+  `default_time_map` (source-level fallback, like the graph one).
+- **`keep.sync_url`** — the personal sync transport root
+  (`keep-personal` only). Machine-bound, so file (or `LODO_KEEP_SYNC_URL`)
+  rather than a flag. Empty means unconfigured: personal sources fail
+  closed. The Workspace backend ignores it.
 - **`ui.theme`** — named color scheme for human output (default `concrete`, plain
   no-color). Shipped schemes: `monokai`, `tokyonight`, `solarized-dark`,
   `solarized-light`, `synthwave`, `gruvbox`, `dracula`, `nord`,
@@ -116,6 +137,11 @@ logseq:
   `Time Maps` pages are skipped for tasks and contribute no maps.
 - **`depends::` and `order::` stay graph-local.** A ref to another graph
   reports `unknown-dependency` and blocks — cross-graph chains are unsupported.
+- **Keep sources merge after the graphs.** `keep.sources` entries read in
+  config order with indexes continuing past the graphs; canonical Time
+  Maps still come from the first source overall. Cross-source
+  `depends::`/`order::` report `unknown-dependency`, like cross-graph
+  chains. Source slugs share one namespace with graph slugs.
 
 ## `credentials.json`
 
@@ -146,6 +172,27 @@ Resolution per graph: `LODO_LOGSEQ_TOKEN_<GRAPH>` wins (e.g.
 `--logseq-token`). A missing token for a configured graph fails the run
 naming the graph and its env var.
 
+Per-source Keep tokens (unofficial `keep-personal` backend; `keep-workspace`
+reuses the Google grant instead):
+
+```json
+{
+  "keep": {
+    "token": "…",
+    "sources": {
+      "personal": { "token": "…" }
+    }
+  }
+}
+```
+
+Resolution per source: `LODO_KEEP_TOKEN_<SOURCE>` wins (e.g.
+`LODO_KEEP_TOKEN_PERSONAL`), then the per-source file entry
+(case-insensitive), then the global token (file, env, or `--keep-token`).
+`keep.sync_url` (file or `LODO_KEEP_SYNC_URL`) selects the personal sync
+transport; the Workspace backend needs the `keep` OAuth scope instead —
+re-run `lodo auth google` once.
+
 Never committed, never synced, never written into the graph. The OAuth flow is
 device/loopback-based and writes the refresh token here on first run.
 
@@ -156,6 +203,8 @@ which is what containers and CI use:
 | Environment variable | File field it replaces |
 | --- | --- |
 | `LODO_LOGSEQ_TOKEN` | `logseq.token` |
+| `LODO_KEEP_TOKEN` | `keep.token` |
+| `LODO_KEEP_SYNC_URL` | `keep.sync_url` |
 | `LODO_GOOGLE_CLIENT_ID` | `google.client_id` |
 | `LODO_GOOGLE_CLIENT_SECRET` | `google.client_secret` |
 | `LODO_GOOGLE_REFRESH_TOKEN` | `google.refresh_token` |
@@ -175,6 +224,9 @@ Lowest to highest, per field, for one run. Nothing but the files persists:
    | CLI flag | Replaces |
    | --- | --- |
    | `--logseq-token` | `LODO_LOGSEQ_TOKEN` / `logseq.token` |
+   | `--logseq-graph-token NAME=TOKEN` | per-graph Logseq token |
+   | `--keep-token` | `LODO_KEEP_TOKEN` / `keep.token` |
+   | `--keep-source-token NAME=TOKEN` | per-source Keep token |
    | `--google-client-id` | `LODO_GOOGLE_CLIENT_ID` / `google.client_id` |
    | `--google-client-secret` | `LODO_GOOGLE_CLIENT_SECRET` / `google.client_secret` |
    | `--google-refresh-token` | `LODO_GOOGLE_REFRESH_TOKEN` / `google.refresh_token` |

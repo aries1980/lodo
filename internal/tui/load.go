@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/aries1980/lodo/internal/config"
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/resolve"
 	"github.com/aries1980/lodo/internal/run"
@@ -17,7 +17,7 @@ type Data struct {
 	TimeMaps     []model.TimeMap
 	Issues       []resolve.Issue
 	Provenance   map[string]resolve.TaskProvenance
-	Blocks       map[string]*logseq.Block
+	Blocks       map[string]*graph.Block
 	PageOf       map[string]string
 	GraphOf      map[string]string
 	Inputs       map[string]resolve.Input
@@ -34,7 +34,7 @@ func Load(ctx context.Context, cfg config.Config, sources []run.Source) (Data, e
 	timeMapsPage := cfg.Logseq.PrimaryTimeMapsPage()
 	out := Data{
 		Provenance:   map[string]resolve.TaskProvenance{},
-		Blocks:       map[string]*logseq.Block{},
+		Blocks:       map[string]*graph.Block{},
 		PageOf:       map[string]string{},
 		GraphOf:      map[string]string{},
 		Inputs:       map[string]resolve.Input{},

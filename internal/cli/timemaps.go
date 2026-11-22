@@ -13,7 +13,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 )
 
 // timeMapSeed is one recommended Time Map: a name, its window lines, and
@@ -48,7 +48,7 @@ func defaultTimeMaps() []timeMapSeed {
 // explicit y/yes — including EOF — declines, and the run continues without
 // the page. Prompts and notes go to errW, so --json stdout stays
 // machine-readable.
-func ensureTimeMapsPage(ctx context.Context, client logseq.Client, page string, yes bool, errW io.Writer, st styler) (bool, error) {
+func ensureTimeMapsPage(ctx context.Context, client graph.Client, page string, yes bool, errW io.Writer, st styler) (bool, error) {
 	found, err := client.Page(ctx, page)
 	if err != nil {
 		return false, err
@@ -88,7 +88,7 @@ func confirmCreateTimeMaps(page string, errW io.Writer, st styler) bool {
 // createTimeMapsPage writes the recommended defaults onto a fresh page: one
 // top-level block per map (ADR 0003), one child block per window line, and
 // default:: true on exactly one map.
-func createTimeMapsPage(ctx context.Context, client logseq.Client, page string) error {
+func createTimeMapsPage(ctx context.Context, client graph.Client, page string) error {
 	if _, err := client.CreatePage(ctx, page); err != nil {
 		return fmt.Errorf("create Time Maps page %q: %w", page, err)
 	}
@@ -114,7 +114,7 @@ func createTimeMapsPage(ctx context.Context, client logseq.Client, page string) 
 // placeMapBlock writes one top-level map block. A freshly created page may
 // already hold one empty block (the file graph does); the first map reuses
 // it in place, since an extra blank block would read as a map with no name.
-func placeMapBlock(ctx context.Context, client logseq.Client, page, name string, first bool) (string, error) {
+func placeMapBlock(ctx context.Context, client graph.Client, page, name string, first bool) (string, error) {
 	if first {
 		tree, err := client.Tree(ctx, page)
 		if err != nil {

@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/parse"
@@ -14,15 +14,15 @@ import (
 
 // orderCache parses explicit order:: values once per block.
 type orderCache struct {
-	modes map[*logseq.Block]model.OrderMode
-	has   map[*logseq.Block]bool
+	modes map[*graph.Block]model.OrderMode
+	has   map[*graph.Block]bool
 }
 
 func newOrderCache() *orderCache {
-	return &orderCache{modes: make(map[*logseq.Block]model.OrderMode), has: make(map[*logseq.Block]bool)}
+	return &orderCache{modes: make(map[*graph.Block]model.OrderMode), has: make(map[*graph.Block]bool)}
 }
 
-func (c *orderCache) explicitOrder(block *logseq.Block) (model.OrderMode, bool) {
+func (c *orderCache) explicitOrder(block *graph.Block) (model.OrderMode, bool) {
 	if block == nil {
 		return "", false
 	}
@@ -36,7 +36,7 @@ func (c *orderCache) explicitOrder(block *logseq.Block) (model.OrderMode, bool) 
 }
 
 // effectiveOrder resolves block explicit > ancestors > page > parallel.
-func (r *resolver) effectiveOrder(cache *orderCache, page *logseq.Page, ancestors []*logseq.Block, block *logseq.Block) model.OrderMode {
+func (r *resolver) effectiveOrder(cache *orderCache, page *graph.Page, ancestors []*graph.Block, block *graph.Block) model.OrderMode {
 	if mode, ok := cache.explicitOrder(block); ok {
 		return mode
 	}
@@ -129,7 +129,7 @@ func (r *resolver) chainPageSequential(graph *taskGraph) {
 // parseExplicitOrder parses a block's own order:: value without inheritance.
 // ok is false when the block carries no usable value (absent, blank or
 // unparseable), in which case callers fall through to ancestors/page.
-func parseExplicitOrder(block *logseq.Block) (model.OrderMode, bool) {
+func parseExplicitOrder(block *graph.Block) (model.OrderMode, bool) {
 	raw, ok := blockProps(block)["order"]
 	if !ok {
 		return "", false

@@ -19,8 +19,8 @@ import (
 
 	"github.com/aries1980/lodo/internal/calendar"
 	"github.com/aries1980/lodo/internal/config"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/grid"
-	"github.com/aries1980/lodo/internal/logseq"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/planner"
@@ -36,17 +36,20 @@ type BusySource interface {
 	Busy(ctx context.Context, g *grid.Grid, now time.Time) (busy grid.Mask, managed []calendar.Event, report calendar.BusyReport, err error)
 }
 
-// Source is one Logseq graph to read: its client plus identity.
-// Name is the graph slug (empty in single-graph mode), Order the config
-// index for deterministic cross-graph ordering, DefaultTimeMap the
-// graph-level fallback Time Map slug. APIURL is the endpoint the client
-// dials; it is carried for diagnostics so an unreachable graph names itself.
+// Source is one task backend to read: its client plus identity.
+// Name is the source slug (empty in single-source mode), Order the config
+// index for deterministic cross-source ordering, DefaultTimeMap the
+// source-level fallback Time Map slug. APIURL is the endpoint the client
+// dials; it is carried for diagnostics so an unreachable source names
+// itself. Backend names the adapter ("logseq", "keep-official",
+// "keep-unofficial", …) for diagnostics and probe messages.
 type Source struct {
 	Name           string
 	Order          int
-	Client         logseq.Client
+	Client         graph.Client
 	DefaultTimeMap string
 	APIURL         string
+	Backend        string
 }
 
 // Scheduled is the core forecast, check, and schedule share: the Tasks that
@@ -144,7 +147,7 @@ func ReadSources(ctx context.Context, sources []Source, timeMapsPage string, loc
 
 // Forecast reads one graph and plans the Schedule without touching the
 // store. It is the single-graph convenience wrapper around ForecastSources.
-func Forecast(ctx context.Context, client logseq.Client, busy BusySource, cfg config.Config, now time.Time) (ForecastOutcome, error) {
+func Forecast(ctx context.Context, client graph.Client, busy BusySource, cfg config.Config, now time.Time) (ForecastOutcome, error) {
 	return ForecastSources(ctx, []Source{{Client: client}}, busy, cfg, now)
 }
 
@@ -201,9 +204,9 @@ func ForecastSources(ctx context.Context, sources []Source, busy BusySource, cfg
 // hasCandidate reports whether any block in the tree is marked TODO or
 // DOING — exactly the gate halves (ADR 0004) a page can pass on via its
 // properties.
-func hasCandidate(tree []*logseq.Block) bool {
+func hasCandidate(tree []*graph.Block) bool {
 	found := false
-	if err := logseq.Walk(tree, func(b *logseq.Block) error {
+	if err := graph.Walk(tree, func(b *graph.Block) error {
 		switch strings.ToUpper(strings.TrimSpace(b.Marker)) {
 		case "TODO", "DOING":
 			found = true
@@ -222,8 +225,8 @@ func lowerTrim(s string) string {
 
 // sortPages fixes the enumeration order lexicographically so outline order
 // never depends on the app's internal page order.
-func sortPages(pages []*logseq.Page) {
-	slices.SortFunc(pages, func(a, b *logseq.Page) int {
+func sortPages(pages []*graph.Page) {
+	slices.SortFunc(pages, func(a, b *graph.Page) int {
 		return cmp.Or(cmp.Compare(norm.ID(a.Name), norm.ID(b.Name)), cmp.Compare(a.Name, b.Name))
 	})
 }

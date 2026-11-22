@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/parse"
 )
@@ -87,7 +87,7 @@ func (r *resolver) timeMaps() {
 
 // isTrue resolves a boolean-valued property on a block: any of true/false,
 // or empty (absent). Other values are a malformed flag.
-func isTrue(b *logseq.Block, key string) (bool, error) {
+func isTrue(b *graph.Block, key string) (bool, error) {
 	props := blockProps(b)
 	raw, ok := props[key]
 	if !ok {

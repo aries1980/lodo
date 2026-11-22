@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/set"
@@ -13,16 +13,16 @@ import (
 // candidate is one TODO/DOING block that may become a Task, with its
 // root-first ancestor stack for inheritance and order chaining.
 type candidate struct {
-	page      *logseq.Page
-	block     *logseq.Block
-	ancestors []*logseq.Block
+	page      *graph.Page
+	block     *graph.Block
+	ancestors []*graph.Block
 }
 
 // everyBlock is every block walked, for sequential order chaining.
 type everyBlock struct {
-	page      *logseq.Page
-	block     *logseq.Block
-	ancestors []*logseq.Block
+	page      *graph.Page
+	block     *graph.Block
+	ancestors []*graph.Block
 }
 
 // blockCollection is the raw walk output: candidates plus every block and
@@ -74,13 +74,13 @@ func (r *resolver) collectCandidates() blockCollection {
 			continue
 		}
 		page := page
-		var walk func(blocks []*logseq.Block, ancestors []*logseq.Block)
-		walk = func(blocks []*logseq.Block, ancestors []*logseq.Block) {
+		var walk func(blocks []*graph.Block, ancestors []*graph.Block)
+		walk = func(blocks []*graph.Block, ancestors []*graph.Block) {
 			for _, block := range blocks {
 				if block == nil {
 					continue
 				}
-				all = append(all, everyBlock{page: page, block: block, ancestors: append([]*logseq.Block(nil), ancestors...)})
+				all = append(all, everyBlock{page: page, block: block, ancestors: append([]*graph.Block(nil), ancestors...)})
 				marker := model.Marker(strings.ToUpper(strings.TrimSpace(block.Marker)))
 				if marker == model.MarkerDONE || marker == model.MarkerCANCELLED {
 					if id := norm.ID(block.UUID); id != "" {
@@ -99,7 +99,7 @@ func (r *resolver) collectCandidates() blockCollection {
 				switch marker {
 				case model.MarkerTODO, model.MarkerDOING:
 					if !suppressed {
-						cands = append(cands, candidate{page: page, block: block, ancestors: append([]*logseq.Block(nil), ancestors...)})
+						cands = append(cands, candidate{page: page, block: block, ancestors: append([]*graph.Block(nil), ancestors...)})
 					}
 				}
 				walk(block.Children, append(ancestors, block))

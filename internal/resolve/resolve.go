@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/model"
 	"github.com/aries1980/lodo/internal/norm"
 	"github.com/aries1980/lodo/internal/set"
@@ -27,11 +27,11 @@ type Input struct {
 	DefaultTimeMap string
 	// Pages enumerates the graph's pages; Properties may carry inheritable
 	// defaults for the blocks on the page.
-	Pages []*logseq.Page
+	Pages []*graph.Page
 	// Trees maps a page name (spelled as in Pages) to its block tree.
-	Trees map[string][]*logseq.Block
+	Trees map[string][]*graph.Block
 	// TimeMapsPage is the configured page name Time Maps are authored on
-	// (logseq.time_maps_page, default "Time Maps").
+	// (graph.time_maps_page, default "Time Maps").
 	TimeMapsPage string
 	// Location is the scheduling timezone: Pins and org stamps resolve in
 	// it.
@@ -118,7 +118,7 @@ func (r *resolver) pageIndex(name string) int {
 }
 
 // treeFor finds the block tree of a case-insensitive page name.
-func (r *resolver) treeFor(name string) []*logseq.Block {
+func (r *resolver) treeFor(name string) []*graph.Block {
 	want := norm.ID(name)
 	for key, tree := range r.in.Trees {
 		if norm.ID(key) == want {
@@ -130,10 +130,10 @@ func (r *resolver) treeFor(name string) []*logseq.Block {
 
 // sortedPages orders pages so the walk is deterministic, whichever order
 // the app enumerated them in.
-func (r *resolver) sortedPages() []*logseq.Page {
-	pages := make([]*logseq.Page, len(r.in.Pages))
+func (r *resolver) sortedPages() []*graph.Page {
+	pages := make([]*graph.Page, len(r.in.Pages))
 	copy(pages, r.in.Pages)
-	slices.SortFunc(pages, func(a, b *logseq.Page) int {
+	slices.SortFunc(pages, func(a, b *graph.Page) int {
 		return cmp.Or(cmp.Compare(norm.ID(a.Name), norm.ID(b.Name)), cmp.Compare(a.Name, b.Name))
 	})
 	return pages
@@ -154,12 +154,12 @@ func (r *resolver) pageContext(name string) string {
 }
 
 // blockContext locates a block for an Issue: the page and the block UUID.
-func (r *resolver) blockContext(page *logseq.Page, b *logseq.Block) string {
+func (r *resolver) blockContext(page *graph.Page, b *graph.Block) string {
 	return fmt.Sprintf("%spage %s, block %s", r.graphPrefix(), page.Name, b.UUID)
 }
 
 // tmBlockContext locates a block on the Time Maps page.
-func (r *resolver) tmBlockContext(b *logseq.Block) string {
+func (r *resolver) tmBlockContext(b *graph.Block) string {
 	return fmt.Sprintf("%spage %s, block %s", r.graphPrefix(), r.in.TimeMapsPage, b.UUID)
 }
 

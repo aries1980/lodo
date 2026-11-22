@@ -98,7 +98,7 @@ func prepare(ctx context.Context, opts *options, ov configOverrides, yes bool, n
 		cfg:   cfg,
 	}
 	if n.graph {
-		if c.sources, err = buildSources(cfg, creds); err != nil {
+		if c.sources, err = buildSources(ctx, cfg, creds); err != nil {
 			return nil, err
 		}
 	}

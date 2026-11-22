@@ -40,6 +40,7 @@ user's notes and calendar alone:
 - [ADR 0018](./0018-deadline-is-a-label.md) — a deadline is a label, not a constraint.
 - [ADR 0020](./0020-task-identity-is-the-block-uuid.md) — a Task's identity is its Logseq block UUID.
 - [ADR 0021](./0021-each-graph-is-its-own-logseq-client.md) — each graph is its own Logseq client.
+- [ADR 0026](./0026-task-backends-behind-a-graph-seam.md) — every task backend implements the graph seam.
 
 ## Planning
 

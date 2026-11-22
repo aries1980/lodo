@@ -295,6 +295,8 @@ type configOverrides struct {
 
 	logseqToken        string
 	logseqGraphTokens  []string
+	keepToken          string
+	keepSourceTokens   []string
 	googleClientID     string
 	googleClientSecret string
 	googleRefreshToken string
@@ -305,6 +307,8 @@ func (o configOverrides) credentialOverrides() config.CredentialOverrides {
 	return config.CredentialOverrides{
 		LogseqToken:        o.logseqToken,
 		LogseqGraphTokens:  parseGraphTokens(o.logseqGraphTokens),
+		KeepToken:          o.keepToken,
+		KeepSourceTokens:   parseGraphTokens(o.keepSourceTokens),
 		GoogleClientID:     o.googleClientID,
 		GoogleClientSecret: o.googleClientSecret,
 		GoogleRefreshToken: o.googleRefreshToken,
@@ -341,6 +345,8 @@ func parseGraphTokens(in []string) map[string]string {
 func addCredentialOverrideFlags(cmd *cobra.Command, overrides *configOverrides) {
 	cmd.Flags().StringVar(&overrides.logseqToken, "logseq-token", "", i18n.T("Logseq API token for one run (overrides file and env)"))
 	cmd.Flags().StringArrayVar(&overrides.logseqGraphTokens, "logseq-graph-token", nil, i18n.T("per-graph Logseq token NAME=TOKEN; repeatable, overrides file and env for that graph"))
+	cmd.Flags().StringVar(&overrides.keepToken, "keep-token", "", i18n.T("unofficial Keep sync token for one run (overrides file and env)"))
+	cmd.Flags().StringArrayVar(&overrides.keepSourceTokens, "keep-source-token", nil, i18n.T("per-source Keep token NAME=TOKEN; repeatable, overrides file and env for that source"))
 	cmd.Flags().StringVar(&overrides.googleClientID, "google-client-id", "", i18n.T("Google OAuth client_id for one run (overrides file and env)"))
 	cmd.Flags().StringVar(&overrides.googleClientSecret, "google-client-secret", "", i18n.T("Google OAuth client_secret for one run (overrides file and env)"))
 	cmd.Flags().StringVar(&overrides.googleRefreshToken, "google-refresh-token", "", i18n.T("Google refresh token for one run (overrides file and env)"))

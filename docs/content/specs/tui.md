@@ -7,9 +7,10 @@ weight: 110
 > Status: **draft (v0.1).** Definitions live in [`glossary.md`](./glossary.md).
 
 Bare `lodo` opens an interactive terminal UI over the same resolved Tasks the
-CLI commands use. The TUI is an interface for intent, beside Logseq: a Task
+CLI commands use. The TUI is an interface for intent, beside the backend
+(Logseq or Keep): a Task
 list, a raw-block viewer, and a validated editor. A save writes the block into
-the graph ([ADR 0017](../ADRs/0017-tui-edits-logseq-blocks-on-explicit-save.md)).
+the backend ([ADR 0017](../ADRs/0017-tui-edits-logseq-blocks-on-explicit-save.md)).
 It does not plan, and it does not touch the calendar or the store.
 
 ## Entry
@@ -30,23 +31,24 @@ in outline order; graph issues are counted, not listed (see `lodo check`).
 
 ## View (`enter`)
 
-`enter` shows the selected Logseq block's full raw `Content` in a scrollable
+`enter` shows the selected block's full raw `Content` in a scrollable
 viewport with syntax highlighting layered on, never transformed: `**bold**`,
 `` `code` ``, `[[links]]`, `((uuid))` block refs and `key:: value` property
 lines stay verbatim, only colorized. A footer shows the resolved effective
 properties (duration, Time Maps, priority, deadline) and marks inherited
-values with their source. Viewing is read-only: no calendar, store, or graph
+values with their source. Viewing is read-only: no calendar, store, or backend
 I/O.
 
 ## Edit (`e`)
 
-`e` edits the full Logseq block in `$VISUAL` / `$EDITOR` (fallback `vi`):
+`e` edits the full block in `$VISUAL` / `$EDITOR` (fallback `vi`):
 
 1. The full block `Content` is written to a temp file with `# lodo-tui:`
    hint lines, which are stripped on return and never saved.
 2. The TUI suspends, the editor runs, and the edited file is read back.
-3. The edit is validated (see below) before any Logseq write.
-4. A clean edit saves with `logseq.Editor.update_block` and the list
+3. The edit is validated (see below) before any backend write.
+4. A clean edit saves through the backend (Logseq `update_block`, Keep
+   note update) and the list
    re-resolves with the cursor kept on the same Task.
 5. A blocked edit stays in the TUI with the issues listed: `e` re-edits,
    `t` fixes `time-map::` from a dropdown of resolved slugs

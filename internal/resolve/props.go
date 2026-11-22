@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aries1980/lodo/internal/logseq"
+	"github.com/aries1980/lodo/internal/graph"
 	"github.com/aries1980/lodo/internal/set"
 )
 
@@ -40,7 +40,7 @@ func normKey(k string) string {
 // blockProps collects a block's properties into one permissive map: parsed
 // values (which carry types) first, raw text values as fallback, both
 // under normalised keys.
-func blockProps(b *logseq.Block) map[string]any {
+func blockProps(b *graph.Block) map[string]any {
 	out := make(map[string]any, len(b.Properties)+len(b.PropsText))
 	for k, v := range b.PropsText {
 		out[normKey(k)] = v
@@ -53,7 +53,7 @@ func blockProps(b *logseq.Block) map[string]any {
 
 // normPageProps returns the page's properties under normalised keys: like
 // block properties, the app exposes parsed page properties camelCased.
-func normPageProps(page *logseq.Page) map[string]any {
+func normPageProps(page *graph.Page) map[string]any {
 	out := make(map[string]any, len(page.Properties))
 	for k, v := range page.Properties {
 		out[normKey(k)] = v

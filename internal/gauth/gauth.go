@@ -30,6 +30,17 @@ import (
 // on the calendar the config names.
 const Scope = "https://www.googleapis.com/auth/calendar.events"
 
+// KeepScope is what the official Keep backend needs: full access to the
+// user's Keep notes (keep-integration.md). It is granted through the same
+// `lodo auth google` loopback flow as the Calendar scope; adding Keep to
+// an existing setup means running the flow once more for the new scope.
+const KeepScope = "https://www.googleapis.com/auth/keep"
+
+// KeepReadOnlyScope is the read-only twin. Lodo writes Time Maps pages
+// and TUI saves, so the full scope is the default; the constant names
+// the least-privilege alternative for read-only deployments.
+const KeepReadOnlyScope = "https://www.googleapis.com/auth/keep.readonly"
+
 // Endpoint is Google's OAuth endpoints. The client secret goes in the POST
 // body (that is what Google serves; AuthStyleInParams for determinism).
 var Endpoint = oauth2.Endpoint{
@@ -150,7 +161,7 @@ func Run(ctx context.Context, in Inputs) (Result, error) {
 		ClientID:     in.Client.ClientID,
 		ClientSecret: in.Client.ClientSecret,
 		Endpoint:     in.Endpoint,
-		Scopes:       []string{Scope},
+		Scopes:       []string{Scope, KeepScope},
 		RedirectURL:  redirect,
 	}
 	authURL := conf.AuthCodeURL(state,
@@ -427,11 +438,18 @@ func containsNotFound(msg string) bool {
 // failed refresh surfaces on the client's first call — an operational
 // error, never a silently empty mask.
 func TokenSource(ctx context.Context, endpoint oauth2.Endpoint, g config.GoogleCredentials) (oauth2.TokenSource, error) {
+	return TokenSourceWithScopes(ctx, endpoint, g, Scope)
+}
+
+// TokenSourceWithScopes builds a token source for an explicit scope set:
+// the Calendar flow keeps Scope, the official Keep backend passes
+// KeepScope (keep-integration.md). Lazy like TokenSource.
+func TokenSourceWithScopes(ctx context.Context, endpoint oauth2.Endpoint, g config.GoogleCredentials, scopes ...string) (oauth2.TokenSource, error) {
 	conf := &oauth2.Config{
 		ClientID:     g.ClientID,
 		ClientSecret: g.ClientSecret,
 		Endpoint:     endpoint,
-		Scopes:       []string{Scope},
+		Scopes:       scopes,
 	}
 	return conf.TokenSource(ctx, &oauth2.Token{RefreshToken: g.RefreshToken}), nil
 }

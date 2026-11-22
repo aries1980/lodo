@@ -6,6 +6,12 @@ weight: 80
 
 > Status: **draft (v0.1).**
 
+Logseq is the default backend; Google Keep is an alternative
+([`backends.md`](./backends.md), [`keep-integration.md`](./keep-integration.md)).
+This page describes the Logseq path, which shares its read contract with
+every backend since [ADR 0026](../ADRs/0026-task-backends-behind-a-graph-seam.md):
+fresh reads per run, two explicit writes, and no write-back of the Schedule.
+
 ## Direction: reads, plus two explicit writes
 
 In v0.1 Lodo reads the Logseq graph, with two write paths, both explicit:
